@@ -222,13 +222,15 @@ class WorkerPool:
 
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
-        :param max_tasks_active: Int or None. Maximum number of active tasks in the queue. Use None to not limit the
-            queue
+        :param max_tasks_active: Int, 'n_jobs*2', or None. Maximum number of active tasks in the queue. Use None to not
+            limit the queue. Use 'n_jobs*2' to specify twice the number of jobs.
         :return: Generator yielding unordered results
         """
         # Process all args in the iterable. If maximum number of active tasks is None, we avoid all the if and
         # try-except clauses to speed up the process.
         n_active = 0
+        if max_tasks_active == 'n_jobs*2':
+            max_tasks_active = self.n_jobs * 2
         if max_tasks_active is None:
             for args in iterable_of_args:
                 self.add_task(args)
