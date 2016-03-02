@@ -339,7 +339,7 @@ class WorkerPool:
         # try-except clauses to speed up the process.
         n_active = 0
         if max_tasks_active == 'n_jobs*2':
-            max_tasks_active = self.n_jobs * 2
+            max_tasks_active = len(self.workers) * 2
         if max_tasks_active is None:
             for chunked_args in iterator_of_chunked_args:
                 self.add_task(chunked_args)
