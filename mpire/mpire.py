@@ -34,10 +34,21 @@ class Worker(Process):
         """
         Helper function which calls the function pointer but preserves the order index.
 
-        :param idx: order index (handled by the WorkerPool)
+        :param idx: Order index (handled by the WorkerPool)
         :param args: Task arguments
         """
         return idx, self.func_pointer(*args)
+
+    def helper_func_with_shared_objects(self, shared_objects, idx, args):
+        """
+        Helper function which calls the function pointer but preserves the order index.
+
+        :param shared_objects: An iterable of process-aware shared objects (e.g., multiprocessing.Array) to pass to the
+            function as the first argument.
+        :param idx: Order index (handled by the WorkerPool)
+        :param args: Task arguments
+        """
+        return idx, self.func_pointer(shared_objects, *args)
 
     def run(self):
         """
@@ -52,7 +63,10 @@ class Worker(Process):
                 break
 
             # Function to call
-            func = self.helper_func if self.keep_order_event.is_set() else self.func_pointer
+            if self.keep_order_event.is_set():
+                func = self.helper_func_with_shared_objects if self.shared_objects else self.helper_func
+            else:
+                func = self.func_pointer
 
             # Execute job
             if self.shared_objects is None:
@@ -63,6 +77,7 @@ class Worker(Process):
             else:
                 for args in next_chunked_args:
                     func(self.shared_objects, *args)
+                self.results_queue.put([None])
 
 class WorkerPool:
     """
@@ -81,16 +96,16 @@ class WorkerPool:
         self.shared_objects = None
         self.has_return_value_with_shared_objects = False
 
-    def set_shared_objects(self, shared_objects=None, has_return_value_with_shared_objects=False):
+    def set_shared_objects(self, shared_objects=None, has_return_value_with_shared_objects=True):
         """
         Set shared objects to pass to the workers.
 
         :param shared_objects: None or an iterable of process-aware shared objects (e.g., multiprocessing.Array) to pass
-            to the function as the first argument. When shared_object is specified it will assume the function to
-            execute will not have any return value. If it both uses shared objects and a return value, set
-            has_return_value_with_shared_objects to True.
+            to the function as the first argument. When shared_object is specified and the function to execute does not
+            have any return value, set has_return_value_with_shared_objects to False.
         :param has_return_value_with_shared_objects: Boolean. Whether or not the function has a return value when shared
-            objects are passed to it. If False, will not put any returned values in the results queue.
+            objects are passed to it. If False, will not put any returned values in the results queue. In this case, the
+            user has to check whether or not the workers are done processing.
         """
         self.shared_objects = shared_objects
         self.has_return_value_with_shared_objects = has_return_value_with_shared_objects

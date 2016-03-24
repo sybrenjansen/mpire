@@ -22,13 +22,13 @@ class ParallellTest(unittest.TestCase):
         """
         Tests the map related function of the worker pool class
         """
-        from workerpool import WorkerPool
+        from mpire import WorkerPool
+        from itertools import product
         import types
 
         # Test results for different number of jobs to run in parallel and the maximum number of active tasks in the
         # queue
-        for n_jobs, n_tasks_max_active in [(1, None), (1, 1), (1, 3), (2, None), (2, 1), (2, 3),
-                                           (3, None), (3, 1), (3, 3), (None, None), (None, 1), (None, 3)]:
+        for n_jobs, n_tasks_max_active in product([1, 2, None], [None, 1, 3]):
             with WorkerPool(n_jobs=n_jobs) as pool:
                 # Test if parallel map results in the same as ordinary map function. Should work both for generators
                 # and iterators. Also check if an empty list works as desired.

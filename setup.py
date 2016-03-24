@@ -1,10 +1,15 @@
 from setuptools import setup
 
+with open('README.rst') as file:
+    long_description = file.read()
+
 setup(
-    name = "workerpool",
-    version = "0.1.0",
+    name = "mpire",
+    version = "0.1.1",
     author = "Sybren Jansen (Target Holding)",
     author_email = "sybren.jansen@target-holding.nl",
-    packages = ["workerpool"],
+    description = "A Python package for multiprocessing, but faster than multiprocessing",
+    long_description = long_description,
+    packages = ["mpire"],
     test_suite = 'tests'
 )
