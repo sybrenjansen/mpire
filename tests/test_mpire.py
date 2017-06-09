@@ -105,39 +105,39 @@ class ParallellTest(unittest.TestCase):
                 self.assertEqual([], sorted(result_generator, key=lambda tup: tup[0]))
 
         # Zero (or a negative number of) active tasks/lifespan should result in a value error
-        for n in [-3, -1, 0]:
+        for n in [-3, -1, 0, 3.14]:
             with self.assertRaises(ValueError):
-                with WorkerPool(n_jobs=n_jobs) as pool:
+                with WorkerPool(n_jobs=4) as pool:
                     pool.map(square, self.test_data, max_tasks_active=n)
 
             with self.assertRaises(ValueError):
-                with WorkerPool(n_jobs=n_jobs) as pool:
+                with WorkerPool(n_jobs=4) as pool:
                     pool.map_unordered(square, self.test_data, max_tasks_active=n)
 
             with self.assertRaises(ValueError):
-                with WorkerPool(n_jobs=n_jobs) as pool:
+                with WorkerPool(n_jobs=4) as pool:
                     for _ in pool.imap(square, self.test_data, max_tasks_active=n):
                         pass
 
             with self.assertRaises(ValueError):
-                with WorkerPool(n_jobs=n_jobs) as pool:
+                with WorkerPool(n_jobs=4) as pool:
                     for _ in pool.imap_unordered(square, self.test_data, max_tasks_active=n):
                         pass
 
             with self.assertRaises(ValueError):
-                with WorkerPool(n_jobs=n_jobs) as pool:
+                with WorkerPool(n_jobs=4) as pool:
                     pool.map(square, self.test_data, worker_lifespan=n)
 
             with self.assertRaises(ValueError):
-                with WorkerPool(n_jobs=n_jobs) as pool:
+                with WorkerPool(n_jobs=4) as pool:
                     pool.map_unordered(square, self.test_data, worker_lifespan=n)
 
             with self.assertRaises(ValueError):
-                with WorkerPool(n_jobs=n_jobs) as pool:
+                with WorkerPool(n_jobs=4) as pool:
                     for _ in pool.imap(square, self.test_data, worker_lifespan=n):
                         pass
 
             with self.assertRaises(ValueError):
-                with WorkerPool(n_jobs=n_jobs) as pool:
+                with WorkerPool(n_jobs=4) as pool:
                     for _ in pool.imap_unordered(square, self.test_data, worker_lifespan=n):
                         pass

@@ -23,8 +23,8 @@ class Worker(Process):
             execute will not have any return value. If it both uses shared objects and a return value, set
             has_return_value_with_shared_objects to True.
         :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
-            workers will stay alive the entire time. Use this when using workers use up too much memory over the course
-            of time.
+            workers will stay alive the entire time. Use this when workers use up too much memory over the course of
+            time.
         :param has_return_value_with_shared_objects: Boolean. Whether or not the function has a return value when shared
             objects are passed to it. If False, will not put any returned values in the results queue.
         """
@@ -137,14 +137,14 @@ class WorkerPool:
 
         :param func_pointer: Function pointer to call each time new task arguments become available
         :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
-            workers will stay alive the entire time. Use this when using workers use up too much memory over the course
-            of time.
+            workers will stay alive the entire time. Use this when workers use up too much memory over the course of
+            time.
         """
         # If there are workers, join them first
         self.stop_and_join()
 
         # If worker lifespan is not None or not a positive integer, raise
-        if not (worker_lifespan is None or (isinstance(worker_lifespan, int) and worker_lifespan > 0)):
+        if worker_lifespan is not None and not (isinstance(worker_lifespan, int) and worker_lifespan > 0):
             raise ValueError("worker_lifespan should be either None or a positive integer (> 0)")
 
         # Save params for later reference (for example, when restarting workers)
@@ -280,8 +280,8 @@ class WorkerPool:
             Note: in the latter case the func_pointer parameter will have no effect. Will start workers either way when
             there are none.
         :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
-            workers will stay alive the entire time. Use this when using workers use up too much memory over the course
-            of time.
+            workers will stay alive the entire time. Use this when workers use up too much memory over the course of
+            time.
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
@@ -319,8 +319,8 @@ class WorkerPool:
             Note: in the latter case the func_pointer parameter will have no effect. Will start workers either way when
             there are none.
         :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
-            workers will stay alive the entire time. Use this when using workers use up too much memory over the course
-            of time.
+            workers will stay alive the entire time. Use this when workers use up too much memory over the course of
+            time.
         :return: List with unordered results
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
@@ -347,8 +347,8 @@ class WorkerPool:
             Note: in the latter case the func_pointer parameter will have no effect. Will start workers either way when
             there are none.
         :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
-            workers will stay alive the entire time. Use this when using workers use up too much memory over the course
-            of time.
+            workers will stay alive the entire time. Use this when workers use up too much memory over the course of
+            time.
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
@@ -406,8 +406,8 @@ class WorkerPool:
             Note: in the latter case the func_pointer parameter will have no effect. Will start workers either way when
             there are none.
         :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
-            workers will stay alive the entire time. Use this when using workers use up too much memory over the course
-            of time.
+            workers will stay alive the entire time. Use this when workers use up too much memory over the course of
+            time.
         :return: Generator yielding unordered results
         """
         # Start workers
@@ -429,7 +429,7 @@ class WorkerPool:
 
                 # Restart workers if necessary
                 self._restart_workers()
-        elif max_tasks_active > 0:
+        elif isinstance(max_tasks_active, int) and max_tasks_active > 0:
             while True:
                 # Add task, only if allowed and if there are any
                 if n_active < max_tasks_active:
@@ -450,10 +450,6 @@ class WorkerPool:
                 self._restart_workers()
         else:
             raise ValueError("Maximum number of active tasks must be at least 1")
-
-        # Obtain the results not yet obtained
-        # for _ in range(n_active):
-        #     yield from self.results_queue.get(block=True)
 
         # Obtain the results not yet obtained
         while n_active != 0:
