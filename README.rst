@@ -5,7 +5,8 @@ MPIRE
 MPIRE (MultiProcessing: Insanely Rapid Execution)
 -------------------------------------------------
 
-A Python package for multiprocessing, but faster than multiprocessing.
+A Python package for multiprocessing, but faster than multiprocessing. It combines the convenient map like functions
+of multiprocessing.Pool with the benefits of using copy-on-write shared objects of multiprocessing.Process.
 
 Features
 --------
@@ -14,7 +15,7 @@ Features
 - Automatic task chunking for all available map functions to speed up processing
 - Functions are only pickled once when workers are started
 - Adjustable maximum number of active tasks
-- Support for shared objects (which are only passed once to each worker)
+- Support for shared objects (which are only passed once to each worker and are copy-on-write)
 
 Installation
 ------------
@@ -57,7 +58,8 @@ Usage
         with WorkerPool(n_jobs=4) as pool:
             # We need to specify the length of the iterable such that the chunker can automatically determine the chunk 
             # size (not needed when the container implements __len__).
-            results = pool.map(square, ((x,) for x in range(1000000)), iterable_len=1000000, max_tasks_active=None)
+            results = pool.map(square, ((x,) for x in range(1000000)), iterable_len=1000000, max_tasks_active=None,
+                               worker_lifespan=None)
             
             # Use a shared array to store the results. Note that we need to use map here (not imap) as map ensures the 
             # jobs are completed after the statement. If we did not change the shared objects and the function to 
@@ -73,7 +75,7 @@ Usage
             root_container = Array('f', 1000000, lock=False)
             pool.set_shared_objects([square_container, root_container], has_return_value_with_shared_objects=True)
             modulo_results = pool.map(square_root_modulo, [(idx, x) for idx, x in enumerate(range(1000000))], 
-                                      max_tasks_active=2, restart_workers=True)
+                                      max_tasks_active=2, restart_workers=True, worker_lifespan=1)
     
     if __name__ == '__main__':
         example()
