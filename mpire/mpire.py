@@ -1,17 +1,20 @@
 import itertools
-from multiprocessing import cpu_count, Event, Process, Queue
 import queue
+from multiprocessing import cpu_count, Event, Process, Queue
+
 
 class Worker(Process):
     """
     A multiprocessing helper class which continuously asks the queue for new jobs, until a poison pill is inserted
     """
 
-    def __init__(self, tasks_queue, results_queue, func_pointer, keep_order_event, shared_objects=None,
-                 has_return_value_with_shared_objects=False):
+    def __init__(self, worker_id, tasks_queue, results_queue, restart_queue, func_pointer, keep_order_event,
+                 shared_objects=None, has_return_value_with_shared_objects=False, worker_lifespan=None):
         """
+        :param worker_id: Worker id
         :param tasks_queue: Queue object for retrieving new task arguments
         :param results_queue: Queue object for storing the results
+        :param restart_queue: Queue object for notifying the WorkerPool to restart this worker
         :param func_pointer: Function pointer to call each time new task arguments become available
         :param keep_order_event: Event object which signals if the task arguments contain an order index which should
             be preserved and not fed to the function pointer (e.g., used in map)
@@ -19,16 +22,22 @@ class Worker(Process):
             to the function as the first argument. When shared_object is specified it will assume the function to
             execute will not have any return value. If it both uses shared objects and a return value, set
             has_return_value_with_shared_objects to True.
+        :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
+            workers will stay alive the entire time. Use this when using workers use up too much memory over the course
+            of time.
         :param has_return_value_with_shared_objects: Boolean. Whether or not the function has a return value when shared
             objects are passed to it. If False, will not put any returned values in the results queue.
         """
         super().__init__()
+        self.worker_id = worker_id
         self.tasks_queue = tasks_queue
         self.results_queue = results_queue
+        self.restart_queue = restart_queue
         self.func_pointer = func_pointer
         self.keep_order_event = keep_order_event
         self.shared_objects = shared_objects
         self.has_return_value_with_shared_objects = has_return_value_with_shared_objects
+        self.worker_lifespan = worker_lifespan
 
     def helper_func(self, idx, args):
         """
@@ -52,10 +61,11 @@ class Worker(Process):
 
     def run(self):
         """
-        Continuously asks the tasks queue for new task arguments. When not receiving a poisonous pill it will execute
-        the new task and put the results in the results queue.
+        Continuously asks the tasks queue for new task arguments. When not receiving a poisonous pill or when the max
+        life span is not yet reached it will execute the new task and put the results in the results queue.
         """
-        while True:
+        n_chunks_executed = 0
+        while self.worker_lifespan is None or n_chunks_executed < self.worker_lifespan:
             # Obtain new job
             next_chunked_args = self.tasks_queue.get()
             if next_chunked_args is None:
@@ -79,6 +89,14 @@ class Worker(Process):
                     func(self.shared_objects, *args)
                 self.results_queue.put([None])
 
+            # Increment counter
+            n_chunks_executed += 1
+
+        # Notify WorkerPool to start a new worker if max lifespan is reached
+        if self.worker_lifespan is not None and n_chunks_executed == self.worker_lifespan:
+            self.restart_queue.put(self.worker_id)
+
+
 class WorkerPool:
     """
     A multiprocessing worker pool which acts like a multiprocessing.Pool, but is faster.
@@ -91,10 +109,13 @@ class WorkerPool:
         self.n_jobs = n_jobs
         self.tasks_queue = None
         self.results_queue = None
+        self.restart_queue = None
         self.keep_order_event = Event()
         self.workers = []
         self.shared_objects = None
         self.has_return_value_with_shared_objects = False
+        self.func_pointer = None
+        self.worker_lifespan = None
 
     def set_shared_objects(self, shared_objects=None, has_return_value_with_shared_objects=True):
         """
@@ -110,24 +131,58 @@ class WorkerPool:
         self.shared_objects = shared_objects
         self.has_return_value_with_shared_objects = has_return_value_with_shared_objects
 
-    def start_workers(self, func_pointer):
+    def start_workers(self, func_pointer, worker_lifespan):
         """
         Spawns the workers and starts them so they're ready to start reading from the tasks queue
 
         :param func_pointer: Function pointer to call each time new task arguments become available
+        :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
+            workers will stay alive the entire time. Use this when using workers use up too much memory over the course
+            of time.
         """
         # If there are workers, join them first
         self.stop_and_join()
 
+        # If worker lifespan is not None or not a positive integer, raise
+        if not (worker_lifespan is None or (isinstance(worker_lifespan, int) and worker_lifespan > 0)):
+            raise ValueError("worker_lifespan should be either None or a positive integer (> 0)")
+
+        # Save params for later reference (for example, when restarting workers)
+        self.func_pointer = func_pointer
+        self.worker_lifespan = worker_lifespan
+
         # Start new workers
         self.tasks_queue = Queue()
         self.results_queue = Queue()
-        for _ in range(self.n_jobs if self.n_jobs is not None else cpu_count() - 1):
-            w = Worker(self.tasks_queue, self.results_queue, func_pointer, self.keep_order_event, self.shared_objects,
-                       self.has_return_value_with_shared_objects)
+        self.restart_queue = Queue()
+        for worker_id in range(self.n_jobs if self.n_jobs is not None else cpu_count() - 1):
+            w = Worker(worker_id, self.tasks_queue, self.results_queue, self.restart_queue, self.func_pointer,
+                       self.keep_order_event, self.shared_objects, self.has_return_value_with_shared_objects,
+                       self.worker_lifespan)
             w.daemon = True
             w.start()
             self.workers.append(w)
+
+    def _restart_workers(self):
+        """
+        Restarts workers that need to be restarted
+        """
+        while True:
+            try:
+                # Obtain worker id that needs to be restarted
+                worker_id = self.restart_queue.get(block=False)
+                self.workers[worker_id].join()
+
+                # Start worker
+                w = Worker(worker_id, self.tasks_queue, self.results_queue, self.restart_queue, self.func_pointer,
+                           self.keep_order_event, self.shared_objects, self.has_return_value_with_shared_objects,
+                           self.worker_lifespan)
+                w.daemon = True
+                w.start()
+                self.workers[worker_id] = w
+            except queue.Empty:
+                # There are no workers to be restarted, we're done here
+                break
 
     def add_task(self, args):
         """
@@ -206,7 +261,7 @@ class WorkerPool:
             self.stop_and_join()
 
     def map(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-            restart_workers=False):
+            restart_workers=False, worker_lifespan=None):
         """
         Same as multiprocessing.map(). Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
@@ -224,6 +279,9 @@ class WorkerPool:
         :param restart_workers: Boolean. Whether to restart the possibly already existing workers or use the old ones.
             Note: in the latter case the func_pointer parameter will have no effect. Will start workers either way when
             there are none.
+        :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
+            workers will stay alive the entire time. Use this when using workers use up too much memory over the course
+            of time.
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
@@ -233,7 +291,7 @@ class WorkerPool:
         if iterable_len is None and hasattr(iterable_of_args, '__len__'):
             iterable_len = len(iterable_of_args)
         results = self.map_unordered(func_pointer, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)),
-                                     iterable_len, max_tasks_active, chunk_size, restart_workers)
+                                     iterable_len, max_tasks_active, chunk_size, restart_workers, worker_lifespan)
 
         # Notify workers to forget about order
         self.keep_order_event.clear()
@@ -242,7 +300,7 @@ class WorkerPool:
         return [result[1] for result in sorted(results, key=lambda result: result[0])]
 
     def map_unordered(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-                      restart_workers=False):
+                      restart_workers=False, worker_lifespan=None):
         """
         Same as multiprocessing.map(), but then unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
@@ -260,14 +318,17 @@ class WorkerPool:
         :param restart_workers: Boolean. Whether to restart the possibly already existing workers or use the old ones.
             Note: in the latter case the func_pointer parameter will have no effect. Will start workers either way when
             there are none.
+        :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
+            workers will stay alive the entire time. Use this when using workers use up too much memory over the course
+            of time.
         :return: List with unordered results
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
         return list(self.imap_unordered(func_pointer, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
-                                        restart_workers))
+                                        restart_workers, worker_lifespan))
 
     def imap(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-             restart_workers=False):
+             restart_workers=False, worker_lifespan=None):
         """
         Same as multiprocessing.imap_unordered(), but then ordered. Also allows a user to set the maximum number of
         tasks available in the queue.
@@ -285,6 +346,9 @@ class WorkerPool:
         :param restart_workers: Boolean. Whether to restart the possibly already existing workers or use the old ones.
             Note: in the latter case the func_pointer parameter will have no effect. Will start workers either way when
             there are none.
+        :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
+            workers will stay alive the entire time. Use this when using workers use up too much memory over the course
+            of time.
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
@@ -297,7 +361,7 @@ class WorkerPool:
             iterable_len = len(iterable_of_args)
         for result_idx, result in self.imap_unordered(func_pointer, ((args_idx, args) for args_idx, args
                                                       in enumerate(iterable_of_args)), iterable_len, max_tasks_active,
-                                                      chunk_size, restart_workers):
+                                                      chunk_size, restart_workers, worker_lifespan):
             # Check if the next one(s) to return is/are temporarily stored. We use a while-true block with dict.pop() to
             # keep the temporary store as small as possible
             while True:
@@ -323,7 +387,7 @@ class WorkerPool:
         self.keep_order_event.clear()
 
     def imap_unordered(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-                       restart_workers=True):
+                       restart_workers=True, worker_lifespan=None):
         """
         Same as multiprocessing.imap_unordered(). Also allows a user to set the maximum number of tasks available in the
         queue.
@@ -341,11 +405,14 @@ class WorkerPool:
         :param restart_workers: Boolean. Whether to restart the possibly already existing workers or use the old ones.
             Note: in the latter case the func_pointer parameter will have no effect. Will start workers either way when
             there are none.
+        :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
+            workers will stay alive the entire time. Use this when using workers use up too much memory over the course
+            of time.
         :return: Generator yielding unordered results
         """
         # Start workers
         if not self.workers or restart_workers:
-            self.start_workers(func_pointer)
+            self.start_workers(func_pointer, worker_lifespan)
 
         # Chunk the function arguments
         iterator_of_chunked_args = self.chunk_tasks(iterable_of_args, iterable_len, chunk_size)
@@ -359,6 +426,9 @@ class WorkerPool:
             for chunked_args in iterator_of_chunked_args:
                 self.add_task(chunked_args)
                 n_active += 1
+
+                # Restart workers if necessary
+                self._restart_workers()
         elif max_tasks_active > 0:
             while True:
                 # Add task, only if allowed and if there are any
@@ -375,12 +445,26 @@ class WorkerPool:
                     n_active -= 1
                 except queue.Empty:
                     pass
+
+                # Restart workers if necessary
+                self._restart_workers()
         else:
             raise ValueError("Maximum number of active tasks must be at least 1")
 
         # Obtain the results not yet obtained
-        for _ in range(n_active):
-            yield from self.results_queue.get(block=True)
+        # for _ in range(n_active):
+        #     yield from self.results_queue.get(block=True)
+
+        # Obtain the results not yet obtained
+        while n_active != 0:
+            try:
+                yield from self.results_queue.get(block=True, timeout=0.1)
+                n_active -= 1
+            except queue.Empty:
+                pass
+
+            # Restart workers if necessary
+            self._restart_workers()
 
     def chunk_tasks(self, iterable_of_args, iterable_len=None, chunk_size=None):
         """
