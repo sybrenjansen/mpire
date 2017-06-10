@@ -1,7 +1,3 @@
-=====
-MPIRE
-=====
-
 MPIRE (MultiProcessing: Insanely Rapid Execution)
 -------------------------------------------------
 
