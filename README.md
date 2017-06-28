@@ -28,6 +28,31 @@ From source:
 python setup.py install
 ```
 
+Documentation
+-------------
+
+If you want to build the documentation, please install the following Python packages:
+
+ * Sphinx
+ * sphinx-rtd-theme
+
+Documentation can be build by executing:
+
+```
+python setup.py build_docs
+```
+
+Documentation can also be build from the ``docs`` folder directly. In that case MPIRE should be installed and available
+in your current working environment. Then execute:
+
+```
+make html
+```
+
+in the ``docs`` folder. For a pre-build version, please refer to
+[CI/Jenkins](http://ci:8080/job/attic/job/mpire/Documentation/).
+
+
 Usage
 -----
 
