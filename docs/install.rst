@@ -9,7 +9,7 @@ MPIRE can be installed through pip:
 
 .. code-block:: bash
 
-    pip install lexsys
+    pip install mpire
 
 .. note::
 
