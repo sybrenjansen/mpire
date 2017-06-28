@@ -1,7 +1,7 @@
 Installation
 ============
 
-MPIRE builds are currently distributed through Target Holding's (internal) localshop_.
+:ref:`MPIRE <secret>` builds are currently distributed through Target Holding's (internal) localshop_.
 
 .. _localshop: https://localshop.tgho.nl
 
