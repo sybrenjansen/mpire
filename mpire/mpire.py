@@ -121,9 +121,13 @@ class WorkerPool:
         """
         Set shared objects to pass to the workers.
 
-        :param shared_objects: None or an iterable of process-aware shared objects (e.g., multiprocessing.Array) to pass
-            to the function as the first argument. When shared_object is specified and the function to execute does not
-            have any return value, set has_return_value_with_shared_objects to False.
+        Shared objects will be copy-on-write. Process-aware shared objects (e.g., multiprocessing.Array) can be used to
+        write to the same object from multiple processes. When providing shared objects the provided function pointer in
+        the map function should receive the shared objects as its first argument.
+
+        :param shared_objects: None or any other type of object (multiple objects can be wrapped in a single tuple).
+            When shared_objects is specified and the function to execute does not have any return value, set
+            has_return_value_with_shared_objects to False.
         :param has_return_value_with_shared_objects: Boolean. Whether or not the function has a return value when shared
             objects are passed to it. If False, will not put any returned values in the results queue. In this case, the
             user has to check whether or not the workers are done processing.
@@ -133,7 +137,7 @@ class WorkerPool:
 
     def start_workers(self, func_pointer, worker_lifespan):
         """
-        Spawns the workers and starts them so they're ready to start reading from the tasks queue
+        Spawns the workers and starts them so they're ready to start reading from the tasks queue.
 
         :param func_pointer: Function pointer to call each time new task arguments become available
         :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
@@ -165,7 +169,7 @@ class WorkerPool:
 
     def _restart_workers(self):
         """
-        Restarts workers that need to be restarted
+        Restarts workers that need to be restarted.
         """
         while True:
             try:
@@ -186,7 +190,7 @@ class WorkerPool:
 
     def add_task(self, args):
         """
-        Add a task to the queue so a worker can process it
+        Add a task to the queue so a worker can process it.
 
         :param args: A tuple of arguments to pass to a worker, which passes it to the function pointer
         """
@@ -194,7 +198,7 @@ class WorkerPool:
 
     def get_result(self):
         """
-        Obtain the next result from the results queue
+        Obtain the next result from the results queue.
 
         :return: Various. The next result from the queue, which is the result of calling the function pointer.
         """
@@ -202,7 +206,7 @@ class WorkerPool:
 
     def insert_poison_pill(self):
         """
-        Tell the workers their job is done by killing them brutally
+        Tell the workers their job is done by killing them brutally.
         """
         for _ in range(len(self.workers)):
             self.tasks_queue.put(None)
@@ -211,7 +215,7 @@ class WorkerPool:
 
     def join(self):
         """
-        Waits until all workers are finished.
+        Blocks until all workers are finished working.
 
         Note that the results queue should be drained first before joining the workers, otherwise we can get a deadlock.
         For more information, see the warnings at:
@@ -247,13 +251,14 @@ class WorkerPool:
 
     def __enter__(self):
         """
-        Enable the use of a 'with' statement.
+        Enable the use of the 'with' statement.
         """
         return self
 
     def __exit__(self, *_):
         """
-        Enable the use of a 'with' statement. Waits until the workers are finished automatically.
+        Enable the use of the 'with' statement. Gracefully terminates workers when both the task and results queue is
+        empty, otherwise kills them without warning.
         """
         if self.tasks_queue is not None and (not self.tasks_queue.empty() or not self.results_queue.empty()):
             self.terminate()
