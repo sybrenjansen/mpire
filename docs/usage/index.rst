@@ -154,9 +154,10 @@ amount of active tasks.
 Worker lifespan
 ~~~~~~~~~~~~~~~
 
-Occasionally it can occur that workers who have to process multiple, memory intensive, tasks do not release their used
-up memory properly, which results in memory usage building up and up. To avoid this type of problem you can set the
-worker lifespan: the number of tasks (well, actually the number of chunks of tasks) after which a worker should restart.
+Occasionally, workers that process multiple, memory intensive tasks do not release their used up memory properly, which
+results in memory usage building up. This is not a bug in MPIRE, but a consequence of Python's poor garbage collection
+in child processes. To avoid this type of problem you can set the worker lifespan: the number of tasks (well, actually
+the number of chunks of tasks) after which a worker should restart.
 
 .. code-block:: python
 
@@ -171,7 +172,8 @@ Restarting workers
 
 The first time you call one of the ``map`` functions the pool of workers is started with the appropriate argument
 values, including the function pointer, lifespan, etc. When you want to call a ``map`` function for the second time the
-workers of the first call still exist and they can be reused if you don't want to change the settings of the first call:
+workers of the first call still exist and they can be reused if you don't want to change the settings of the first call.
+The main benefit to this is that the overhead of starting/terminating child processes is avoided:
 
 .. code-block:: python
 
@@ -201,7 +203,8 @@ MPIRE allows you to provide shared objects to the workers in a similar way as is
 ``multiprocessing.Process`` class. These shared objects are treated as ``copy-on-write``, they are only copied once
 changes are made to them, otherwise they share the same memory address. This is convenient if you want to let workers
 access a large dataset that wouldn't fit in memory when copied multiple times. When shared objects are copied they are
-only copied once for each worker.
+only copied once for each worker, in contrast to copying it for each task which is done when using a regular
+``multiprocessing.Pool``.
 
 By using a ``multiprocessing.Array``, ``multiprocessing.Value``, or another object with ``multiprocessing.Manager`` you
 could even store results in the same object from multiple processes. However, be aware of the possible locking behavior
