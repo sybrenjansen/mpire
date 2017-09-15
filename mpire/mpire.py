@@ -53,7 +53,7 @@ class Worker(Process):
             # Function to call
             if self.keep_order_event.is_set():
                 def func(_args, _additional_args):
-                    return self._helper_func(*_args, _additional_args)
+                    return self._helper_func(*itertools.chain(_args, [_additional_args]))
             else:
                 def func(_args, _additional_args):
                     return self.func_pointer(*itertools.chain(_additional_args, _args))
