@@ -83,7 +83,7 @@ class Worker(Process):
         :param args: Task arguments
         :param additional_args: Additional arguments like worker_id and shared objects
         """
-        return idx, self.func_pointer(*additional_args, *args)
+        return idx, self.func_pointer(*itertools.chain(additional_args, args))
 
 
 class WorkerPool:
