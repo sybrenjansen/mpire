@@ -52,12 +52,11 @@ class Worker(Process):
 
             # Function to call
             if self.keep_order_event.is_set():
-                # func = self.helper_func_with_shared_objects if self.shared_objects else self.helper_func
                 def func(_args, _additional_args):
                     return self._helper_func(*_args, _additional_args)
             else:
                 def func(_args, _additional_args):
-                    return self.func_pointer(*_additional_args, *_args)
+                    return self.func_pointer(*itertools.chain(_additional_args, _args))
 
             # Obtain additional args to pass to the function
             additional_args = []
