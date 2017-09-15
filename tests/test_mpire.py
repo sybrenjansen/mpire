@@ -1,4 +1,6 @@
 import unittest
+from itertools import product
+from mpire import WorkerPool
 
 
 def square(idx, x):
@@ -25,8 +27,6 @@ class ParallellTest(unittest.TestCase):
         """
         Tests the map related function of the worker pool class
         """
-        from mpire import WorkerPool
-        from itertools import product
         import types
 
         # Test results for different number of jobs to run in parallel and the maximum number of active tasks in the
@@ -141,3 +141,40 @@ class ParallellTest(unittest.TestCase):
                 with WorkerPool(n_jobs=4) as pool:
                     for _ in pool.imap_unordered(square, self.test_data, worker_lifespan=n):
                         pass
+
+    def test_worker_id_shared_objects(self):
+        """
+        """
+        for n_jobs, pass_worker_id, shared_objects in product([1, 2, 4], [False, True],
+                                                              [None, (37, 42), ({'1', '2', '3'})]):
+            # Function with worker ID and shared objects
+            def f1(_wid, _sobjects, _args):
+                self.assertTrue(isinstance(_wid, int))
+                self.assertGreaterEqual(_wid, 0)
+                self.assertLessEqual(_wid, n_jobs)
+                self.assertEqual(_sobjects, _args)
+
+            # Function with worker ID
+            def f2(_wid, _):
+                self.assertTrue(isinstance(_wid, int))
+                self.assertGreaterEqual(_wid, 0)
+                self.assertLessEqual(_wid, n_jobs)
+
+            # Function with shared objects
+            def f3(_sobjects, _args):
+                self.assertEqual(_sobjects, _args)
+
+            # Function without worker ID and shared objects
+            def f4(_):
+                pass
+
+            with WorkerPool(n_jobs=n_jobs) as pool:
+                # Configure pool
+                pool.pass_on_worker_id(pass_worker_id)
+                pool.set_shared_objects(shared_objects)
+
+                # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
+                # or when the shared objects are not equal to the given arguments
+                f = f1 if pass_worker_id and shared_objects else (f2 if pass_worker_id else (f3 if shared_objects else
+                                                                                             f4))
+                pool.map(f, ((shared_objects,) for _ in range(10)), iterable_len=10)
