@@ -234,7 +234,7 @@ that comes with it. However, in some cases you can safely disable locking, as is
     with WorkerPool(n_jobs=4) as pool:
         # 1. Use a shared array of size 100 and type float to store the results
         results_container = Array('f', 100, lock=False)
-        pool.set_shared_objects(results_container, has_return_value_with_shared_objects=False)
+        pool.set_shared_objects(results_container)
 
         # Square the results and store them in the results container
         pool.map_unordered(square_with_index, ((idx, x) for idx, x in enumerate(range(100))),
@@ -243,8 +243,7 @@ that comes with it. However, in some cases you can safely disable locking, as is
         # 2, Use a shared array of size 100 and type float to store the results
         square_results_container = Array('f', 100, lock=False)
         add_results_container = Array('f', 100, lock=False)
-        pool.set_shared_objects((square_results_container, add_results_container),
-                                has_return_value_with_shared_objects=True)
+        pool.set_shared_objects((square_results_container, add_results_container))
 
         # Square, add and modulo the results and store them in the results containers
         modulo_results = pool.map(square_add_and_modulo_with_index,
@@ -253,14 +252,49 @@ that comes with it. However, in some cases you can safely disable locking, as is
 
 We use the :meth:`mpire.WorkerPool.set_shared_objects` function to let MPIRE know we want to pass shared objects to all
 the workers. Multiple objects can be provided by placing them, for example, in a tuple container as is done in example
-two. The second argument of this function indicates if the function pointer is still expected to return something when
-using shared objects. When providing shared objects the provided function pointer in the map functions should receive
-the shared objects as its first argument.
+two. When providing shared objects the provided function pointer in the map functions should receive the shared objects
+as its first argument (or the second argument when the worker ID is passed on as well, see :ref:`workerID`).
 
 In the first example we create a results container and disable locking. We can safely disable locking here as each task
 writes to a different index in the array, so no race conditions can occur. Disabling locking is, of course, a lot faster
 than enabling it.
 
 In the second example we create two different results containers, one for squaring and for adding the given value.
-Additionally, we state that we still want to return a value, even though we use shared objects for storing results. Note
-that we have to restart the workers in this example.
+Additionally, we also return a value, even though we use shared objects for storing results. Note that we have to
+restart the workers in this example.
+
+
+.. _workerID:
+
+Accessing the worker ID
+-----------------------
+
+Each worker in MPIRE is given an integer ID to distinguish them. Worker #1 will have ID ``0``, #2 will have ID ``1``,
+etc. Sometimes it can be useful to have access to this ID. For example, when you have a shared array of which the size
+equals the number of workers and you want worker #1 only to access the first element, and worker #2 only to access the
+second element, and so on.
+
+By default, the worker ID is not passed on. You can enable/disable this using the
+:meth:`mpire.WorkerPool.pass_on_worker_id` function:
+
+.. code-block:: python
+
+    def square_sum(worker_id, shared_objects, x):
+        # Even though the shared objects is a single container, we 'unpack' it anyway
+        results_container = shared_objects
+
+        # Square and sum
+        results_container[worker_id] += x * x
+
+    with WorkerPool(n_jobs=4) as pool:
+        # Use a shared array of size equal to the number of jobs to store the results
+        results_container = Array('f', 4, lock=False)
+        pool.set_shared_objects(results_container)
+
+        # Let MPIRE know that we want to pass on the worker ID
+        pool.pass_on_worker_id(True)
+
+        # Square the results and store them in the results container
+        pool.map_unordered(square_sum, ((x,) for x in range(100)), iterable_len=100)
+
+The worker ID will always be the first passed on argument to the provided function pointer.

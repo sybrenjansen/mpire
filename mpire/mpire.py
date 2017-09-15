@@ -1,5 +1,6 @@
 import itertools
 import queue
+import warnings
 from multiprocessing import cpu_count, Event, Process, Queue
 
 
@@ -9,7 +10,7 @@ class Worker(Process):
     """
 
     def __init__(self, worker_id, tasks_queue, results_queue, restart_queue, func_pointer, keep_order_event,
-                 shared_objects=None, has_return_value_with_shared_objects=False, worker_lifespan=None):
+                 shared_objects=None, worker_lifespan=None, pass_worker_id=False):
         """
         :param worker_id: Worker id
         :param tasks_queue: Queue object for retrieving new task arguments
@@ -19,14 +20,11 @@ class Worker(Process):
         :param keep_order_event: Event object which signals if the task arguments contain an order index which should
             be preserved and not fed to the function pointer (e.g., used in map)
         :param shared_objects: None or an iterable of process-aware shared objects (e.g., multiprocessing.Array) to pass
-            to the function as the first argument. When shared_object is specified it will assume the function to
-            execute will not have any return value. If it both uses shared objects and a return value, set
-            has_return_value_with_shared_objects to True.
+            to the function as the first argument.
         :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
             workers will stay alive the entire time. Use this when workers use up too much memory over the course of
             time.
-        :param has_return_value_with_shared_objects: Boolean. Whether or not the function has a return value when shared
-            objects are passed to it. If False, will not put any returned values in the results queue.
+        :param pass_worker_id: Boolean. Whether or not to pass the worker ID to the function
         """
         super().__init__()
         self.worker_id = worker_id
@@ -36,28 +34,8 @@ class Worker(Process):
         self.func_pointer = func_pointer
         self.keep_order_event = keep_order_event
         self.shared_objects = shared_objects
-        self.has_return_value_with_shared_objects = has_return_value_with_shared_objects
         self.worker_lifespan = worker_lifespan
-
-    def helper_func(self, idx, args):
-        """
-        Helper function which calls the function pointer but preserves the order index.
-
-        :param idx: Order index (handled by the WorkerPool)
-        :param args: Task arguments
-        """
-        return idx, self.func_pointer(*args)
-
-    def helper_func_with_shared_objects(self, shared_objects, idx, args):
-        """
-        Helper function which calls the function pointer but preserves the order index.
-
-        :param shared_objects: An iterable of process-aware shared objects (e.g., multiprocessing.Array) to pass to the
-            function as the first argument.
-        :param idx: Order index (handled by the WorkerPool)
-        :param args: Task arguments
-        """
-        return idx, self.func_pointer(shared_objects, *args)
+        self.pass_worker_id = pass_worker_id
 
     def run(self):
         """
@@ -74,20 +52,22 @@ class Worker(Process):
 
             # Function to call
             if self.keep_order_event.is_set():
-                func = self.helper_func_with_shared_objects if self.shared_objects else self.helper_func
+                # func = self.helper_func_with_shared_objects if self.shared_objects else self.helper_func
+                def func(_args, _additional_args):
+                    return self._helper_func(*_args, _additional_args)
             else:
-                func = self.func_pointer
+                def func(_args, _additional_args):
+                    return self.func_pointer(*_additional_args, *_args)
 
-            # Execute job
-            if self.shared_objects is None:
-                self.results_queue.put([func(*args) for args in next_chunked_args])
-            # If shared objects are used check if the function also has a return value
-            elif self.has_return_value_with_shared_objects:
-                self.results_queue.put([func(self.shared_objects, *args) for args in next_chunked_args])
-            else:
-                for args in next_chunked_args:
-                    func(self.shared_objects, *args)
-                self.results_queue.put([None])
+            # Obtain additional args to pass to the function
+            additional_args = []
+            if self.pass_worker_id:
+                additional_args.append(self.worker_id)
+            if self.shared_objects is not None:
+                additional_args.append(self.shared_objects)
+
+            # Execute jobs
+            self.results_queue.put([func(args, additional_args) for args in next_chunked_args])
 
             # Increment counter
             n_chunks_executed += 1
@@ -95,6 +75,16 @@ class Worker(Process):
         # Notify WorkerPool to start a new worker if max lifespan is reached
         if self.worker_lifespan is not None and n_chunks_executed == self.worker_lifespan:
             self.restart_queue.put(self.worker_id)
+
+    def _helper_func(self, idx, args, additional_args):
+        """
+        Helper function which calls the function pointer but preserves the order index.
+
+        :param idx: Order index (handled by the WorkerPool)
+        :param args: Task arguments
+        :param additional_args: Additional arguments like worker_id and shared objects
+        """
+        return idx, self.func_pointer(*additional_args, *args)
 
 
 class WorkerPool:
@@ -113,27 +103,44 @@ class WorkerPool:
         self.keep_order_event = Event()
         self.workers = []
         self.shared_objects = None
-        self.has_return_value_with_shared_objects = False
         self.func_pointer = None
         self.worker_lifespan = None
+        self.pass_worker_id = False
 
-    def set_shared_objects(self, shared_objects=None, has_return_value_with_shared_objects=True):
+    def pass_on_worker_id(self, pass_on=True):
+        """
+        Set whether to pass on the worker ID to the function to be executed or not (default=False).
+
+        The worker ID will be the first argument passed on to the function
+
+        :param pass_on: Boolean. Whether to pass on or not.
+        """
+        self.pass_worker_id = pass_on
+
+    def set_shared_objects(self, shared_objects=None, has_return_value_with_shared_objects=None):
         """
         Set shared objects to pass to the workers.
 
         Shared objects will be copy-on-write. Process-aware shared objects (e.g., multiprocessing.Array) can be used to
         write to the same object from multiple processes. When providing shared objects the provided function pointer in
-        the map function should receive the shared objects as its first argument.
+        the map function should receive the shared objects as its first argument if the worker ID is not passed on. If
+        the worker ID is passed on the shared objects will be the second argument.
 
         :param shared_objects: None or any other type of object (multiple objects can be wrapped in a single tuple).
             When shared_objects is specified and the function to execute does not have any return value, set
             has_return_value_with_shared_objects to False.
-        :param has_return_value_with_shared_objects: Boolean. Whether or not the function has a return value when shared
-            objects are passed to it. If False, will not put any returned values in the results queue. In this case, the
-            user has to check whether or not the workers are done processing.
+        :param has_return_value_with_shared_objects: DEPRECATED! MPIRE now handles functions with or without return
+            values out of the box. This argument will be removed from version 1.0.0 onwards. Boolean. Whether
+            or not the function has a return value when shared objects are passed to it. If False, will not put any
+            returned values in the results queue. In this case, the user has to check whether or not the workers are
+            done processing.
         """
         self.shared_objects = shared_objects
-        self.has_return_value_with_shared_objects = has_return_value_with_shared_objects
+        if has_return_value_with_shared_objects is not None:
+            warnings.simplefilter('default')
+            warnings.warn('Argument has_return_value_with_shared_objects is deprecated. MPIRE now handles functions '
+                          'with or without return values out of the box. This argument will be removed from version '
+                          '1.0.0 onwards', DeprecationWarning, stacklevel=2)
 
     def start_workers(self, func_pointer, worker_lifespan):
         """
@@ -149,7 +156,7 @@ class WorkerPool:
 
         # If worker lifespan is not None or not a positive integer, raise
         if worker_lifespan is not None and not (isinstance(worker_lifespan, int) and worker_lifespan > 0):
-            raise ValueError("worker_lifespan should be either None or a positive integer (> 0)")
+            raise ValueError('worker_lifespan should be either None or a positive integer (> 0)')
 
         # Save params for later reference (for example, when restarting workers)
         self.func_pointer = func_pointer
@@ -161,8 +168,7 @@ class WorkerPool:
         self.restart_queue = Queue()
         for worker_id in range(self.n_jobs if self.n_jobs is not None else cpu_count() - 1):
             w = Worker(worker_id, self.tasks_queue, self.results_queue, self.restart_queue, self.func_pointer,
-                       self.keep_order_event, self.shared_objects, self.has_return_value_with_shared_objects,
-                       self.worker_lifespan)
+                       self.keep_order_event, self.shared_objects, self.worker_lifespan, self.pass_worker_id)
             w.daemon = True
             w.start()
             self.workers.append(w)
@@ -179,8 +185,7 @@ class WorkerPool:
 
                 # Start worker
                 w = Worker(worker_id, self.tasks_queue, self.results_queue, self.restart_queue, self.func_pointer,
-                           self.keep_order_event, self.shared_objects, self.has_return_value_with_shared_objects,
-                           self.worker_lifespan)
+                           self.keep_order_event, self.shared_objects, self.worker_lifespan, self.pass_worker_id)
                 w.daemon = True
                 w.start()
                 self.workers[worker_id] = w
@@ -271,7 +276,9 @@ class WorkerPool:
         Same as multiprocessing.map(). Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
 
-        :param func_pointer: Function pointer to call each time new task arguments become available
+        :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
+            worker ID the function should receive the worker ID as its first argument. If shared objects are provided
+            the function should receive those as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
         :param iterable_len: Int or None. When chunk_size is set to None it needs to know the number of tasks. This can
@@ -310,7 +317,9 @@ class WorkerPool:
         Same as multiprocessing.map(), but then unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
 
-        :param func_pointer: Function pointer to call each time new task arguments become available
+        :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
+            worker ID the function should receive the worker ID as its first argument. If shared objects are provided
+            the function should receive those as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
         :param iterable_len: Int or None. When chunk_size is set to None it needs to know the number of tasks. This can
@@ -338,7 +347,9 @@ class WorkerPool:
         Same as multiprocessing.imap_unordered(), but then ordered. Also allows a user to set the maximum number of
         tasks available in the queue.
 
-        :param func_pointer: Function pointer to call each time new task arguments become available
+        :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
+            worker ID the function should receive the worker ID as its first argument. If shared objects are provided
+            the function should receive those as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
         :param iterable_len: Int or None. When chunk_size is set to None it needs to know the number of tasks. This can
@@ -397,7 +408,9 @@ class WorkerPool:
         Same as multiprocessing.imap_unordered(). Also allows a user to set the maximum number of tasks available in the
         queue.
 
-        :param func_pointer: Function pointer to call each time new task arguments become available
+        :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
+            worker ID the function should receive the worker ID as its first argument. If shared objects are provided
+            the function should receive those as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
         :param iterable_len: Int or None. When chunk_size is set to None it needs to know the number of tasks. This can
@@ -454,7 +467,7 @@ class WorkerPool:
                 # Restart workers if necessary
                 self._restart_workers()
         else:
-            raise ValueError("Maximum number of active tasks must be at least 1")
+            raise ValueError('Maximum number of active tasks must be at least 1')
 
         # Obtain the results not yet obtained
         while n_active != 0:
@@ -488,8 +501,8 @@ class WorkerPool:
             elif hasattr(iterable_of_args, '__len__'):
                 chunk_size, extra = divmod(len(iterable_of_args), len(self.workers) * 4)
             else:
-                raise ValueError("Failed to obtain length of iterable when chunk size is None. Remedy: either provide "
-                                 "an iterable with a len() function or specify iterable_len in the function call")
+                raise ValueError('Failed to obtain length of iterable when chunk size is None. Remedy: either provide '
+                                 'an iterable with a len() function or specify iterable_len in the function call')
             if extra:
                 chunk_size += 1
 
