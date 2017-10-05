@@ -1,10 +1,25 @@
 import unittest
-from itertools import product
+from itertools import product, repeat
 from mpire import WorkerPool
 
 
 def square(idx, x):
     return idx, x * x
+
+
+def square_daemon(X):
+    with WorkerPool(n_jobs=4) as pool:
+        return pool.map(square, X, chunk_size=1)
+
+
+def square_daemon_raises(X):
+    try:
+        with WorkerPool(n_jobs=4) as pool:
+            pool.map(square, X, chunk_size=1)
+    except AssertionError:
+        return True
+
+    return False
 
 
 def get_generator(iterable):
@@ -19,7 +34,7 @@ class ParallellTest(unittest.TestCase):
         # Create some test data. Note that the regular map reads the inputs as a list of single tuples (one argument),
         # whereas parallel.map sees it as a list of argument lists. Therefore we give the regular map a lambda function
         # which mimics the parallel.map behavior.
-        self.test_data = [(idx, x) for idx, x in enumerate([1, 2, 3, 5, 6, 9, 37, 42, 1337, 0, 3, 5, 0])]
+        self.test_data = list(enumerate([1, 2, 3, 5, 6, 9, 37, 42, 1337, 0, 3, 5, 0]))
         self.test_desired_output = list(map(lambda _args: square(*_args), self.test_data))
         self.test_data_len = len(self.test_data)
 
@@ -144,6 +159,7 @@ class ParallellTest(unittest.TestCase):
 
     def test_worker_id_shared_objects(self):
         """
+        Tests passing the worker ID and shared objects
         """
         for n_jobs, pass_worker_id, shared_objects in product([1, 2, 4], [False, True],
                                                               [None, (37, 42), ({'1', '2', '3'})]):
@@ -178,3 +194,25 @@ class ParallellTest(unittest.TestCase):
                 f = f1 if pass_worker_id and shared_objects else (f2 if pass_worker_id else (f3 if shared_objects else
                                                                                              f4))
                 pool.map(f, ((shared_objects,) for _ in range(10)), iterable_len=10)
+
+    def test_daemon(self):
+        """
+        Tests nested WorkerPools
+        """
+        with WorkerPool(n_jobs=4, daemon=False) as pool:
+            # Obtain results using nested WorkerPools
+            results = pool.map(square_daemon, ((X,) for X in repeat(self.test_data, 4)), chunk_size=1)
+
+            # Each of the results should match
+            for results_list in results:
+                self.assertTrue(isinstance(results_list, list))
+                self.assertEqual(self.test_desired_output, results_list)
+
+        # Daemon processes are not allowed to spawn children
+        with WorkerPool(n_jobs=4, daemon=True) as pool:
+            # Obtain results using nested WorkerPools
+            results = pool.map(square_daemon_raises, ((X,) for X in repeat(self.test_data, 4)), chunk_size=1)
+
+            # Results should be all True
+            for result in results:
+                self.assertTrue(result)

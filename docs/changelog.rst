@@ -1,10 +1,13 @@
 Changelog
 =========
 
-Develop
--------
+0.4.0
+-----
 
-Nothing in development at the moment.
+*(2017-10-05)*
+
+* Workers can now be started as normal child processes (non-deamon) such that nested :obj:`mpire.WorkerPool` s are
+  possible.
 
 0.3.0
 -----

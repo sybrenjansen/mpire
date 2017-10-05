@@ -55,6 +55,32 @@ have CPUs is, of course, possible as well.
 
 .. _here: https://docs.python.org/3.4/library/multiprocessing.html#pipes-and-queues
 
+
+Nested WorkerPools
+~~~~~~~~~~~~~~~~~~
+
+Normally the :obj:`mpire.WorkerPool` class spawns daemon child processes who are not able to create child processes
+themselves, so nested pools are not allowed. However, there's an option to create normal child processes, instead of
+daemon, to allow for nested structures:
+
+.. code-block:: python
+
+    def job(...)
+        with WorkerPool(n_jobs=4) as p:
+            # Do some work
+            results = p.map(...)
+
+    with WorkerPool(n_jobs=4, daemon=True) as pool:
+        # This will raise an AssertionError telling you daemon processes can't start child processes
+        pool.map(job, ...)
+
+    with WorkerPool(n_jobs=4, daemon=False) as pool:
+        # This will work just fine
+        pool.map(job, ...)
+
+Do make sure all your non-daemon processes are terminated correctly.
+
+
 map family of functions
 -----------------------
 
@@ -101,6 +127,7 @@ single integer values. The second example should work as expected. The third exa
 function arguments. Also note that we use ``imap`` in the third example, which allows us to process the results whenever
 they come available, not having to wait for all results to be ready.
 
+
 Manual chunking
 ~~~~~~~~~~~~~~~
 
@@ -129,6 +156,7 @@ In the first example the function call will fail because MPIRE doesn't know how 
 example should work as expected where 16 chunks are used (four times the number of workers). The third example uses a
 fixed chunk size of four, so MPIRE doesn't need to know the iterable length.
 
+
 Maximum number of active tasks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -151,6 +179,7 @@ amount of active tasks.
         results = pool.map(square, ((x,) for x in range(int(1e300))), iterable_len=int(1e300),
                            max_tasks_active=2*4)
 
+
 Worker lifespan
 ~~~~~~~~~~~~~~~
 
@@ -166,6 +195,7 @@ the number of chunks of tasks) after which a worker should restart.
         results = pool.map(square, ((x,) for x in range(100)), iterable_len=100, worker_lifespan=1)
 
 In this example each worker is restarted after finishing a single chunk of tasks.
+
 
 Restarting workers
 ~~~~~~~~~~~~~~~~~~

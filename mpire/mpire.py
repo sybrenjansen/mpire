@@ -91,11 +91,13 @@ class WorkerPool:
     A multiprocessing worker pool which acts like a multiprocessing.Pool, but is faster.
     """
 
-    def __init__(self, n_jobs=None):
+    def __init__(self, n_jobs=None, daemon=True):
         """
         :param n_jobs: Int or None. Number of workers to spawn. If None, will use cpu_count() - 1.
+        :param daemon: Bool. Whether to start the child processes as daemon
         """
         self.n_jobs = n_jobs
+        self.daemon = daemon
         self.tasks_queue = None
         self.results_queue = None
         self.restart_queue = None
@@ -168,7 +170,7 @@ class WorkerPool:
         for worker_id in range(self.n_jobs if self.n_jobs is not None else cpu_count() - 1):
             w = Worker(worker_id, self.tasks_queue, self.results_queue, self.restart_queue, self.func_pointer,
                        self.keep_order_event, self.shared_objects, self.worker_lifespan, self.pass_worker_id)
-            w.daemon = True
+            w.daemon = self.daemon
             w.start()
             self.workers.append(w)
 
@@ -185,7 +187,7 @@ class WorkerPool:
                 # Start worker
                 w = Worker(worker_id, self.tasks_queue, self.results_queue, self.restart_queue, self.func_pointer,
                            self.keep_order_event, self.shared_objects, self.worker_lifespan, self.pass_worker_id)
-                w.daemon = True
+                w.daemon = self.daemon
                 w.start()
                 self.workers[worker_id] = w
             except queue.Empty:
