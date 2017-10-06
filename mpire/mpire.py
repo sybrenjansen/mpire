@@ -1,5 +1,6 @@
 import itertools
 import queue
+import subprocess
 import warnings
 from multiprocessing import cpu_count, Event, Process, Queue
 
@@ -91,13 +92,21 @@ class WorkerPool:
     A multiprocessing worker pool which acts like a multiprocessing.Pool, but is faster.
     """
 
-    def __init__(self, n_jobs=None, daemon=True):
+    def __init__(self, n_jobs=None, daemon=True, cpu_ids=None):
         """
         :param n_jobs: Int or ``None``. Number of workers to spawn. If ``None``, will use ``cpu_count()``.
         :param daemon: Bool. Whether to start the child processes as daemon
+        :param cpu_ids: List or ``None``. List of CPU IDs to use for pinning child processes to specific CPUs. The list
+            must be as long as the number of jobs used (if ``n_jobs`` equals ``None`` it must be equal to
+            ``mpire.cpu_count()``). If ``None``, CPU pinning will be disabled. Note that CPU pinning may only work on
+            Linux based systems
         """
+        # Set parameters
         self.n_jobs = n_jobs or cpu_count()
         self.daemon = daemon
+        self.cpu_ids = self._check_cpu_ids(cpu_ids)
+
+        # Containers for later use
         self.tasks_queue = None
         self.results_queue = None
         self.restart_queue = None
@@ -107,6 +116,29 @@ class WorkerPool:
         self.func_pointer = None
         self.worker_lifespan = None
         self.pass_worker_id = False
+
+    def _check_cpu_ids(self, cpu_ids):
+        """
+        Checks the cpu_ids parameter for correctness
+
+        :param cpu_ids: List or ``None``. List of CPU IDs to use for pinning child processes to specific CPUs. The list
+            must be as long as the number of jobs used (if ``n_jobs`` equals ``None`` it must be equal to
+            ``mpire.cpu_count()``). If ``None``, CPU pinning will be disabled. Note that CPU pinning may only work on
+            Linux based systems
+        :return: cpu_ids
+        """
+        # Check CPU IDs
+        if cpu_ids:
+            if len(cpu_ids) != self.n_jobs:
+                raise ValueError("Number of CPU IDs (%d) does not match number of jobs (%d)" %
+                                 (len(cpu_ids), self.n_jobs))
+            if max(cpu_ids) >= cpu_count():
+                raise ValueError("CPU ID %d exceeds the maximum CPU ID available on your system: %d" %
+                                 (max(cpu_ids), cpu_count() - 1))
+            if min(cpu_ids) < 0:
+                raise ValueError("CPU IDs cannot be negative")
+
+        return cpu_ids
 
     def pass_on_worker_id(self, pass_on=True):
         """
@@ -172,6 +204,9 @@ class WorkerPool:
                        self.keep_order_event, self.shared_objects, self.worker_lifespan, self.pass_worker_id)
             w.daemon = self.daemon
             w.start()
+            if self.cpu_ids:
+                subprocess.call('taskset -p -c %d %d' % (self.cpu_ids[worker_id], w.pid), stdout=subprocess.DEVNULL,
+                                shell=True)
             self.workers.append(w)
 
     def _restart_workers(self):
@@ -189,6 +224,9 @@ class WorkerPool:
                            self.keep_order_event, self.shared_objects, self.worker_lifespan, self.pass_worker_id)
                 w.daemon = self.daemon
                 w.start()
+                if self.cpu_ids:
+                    subprocess.call('taskset -p -c %d %d' % (self.cpu_ids[worker_id], w.pid), stdout=subprocess.DEVNULL,
+                                    shell=True)
                 self.workers[worker_id] = w
             except queue.Empty:
                 # There are no workers to be restarted, we're done here
