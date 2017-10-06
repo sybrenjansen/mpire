@@ -7,11 +7,14 @@ of multiprocessing.Pool with the benefits of using copy-on-write shared objects 
 Features
 --------
 
-- The default map/imap/imap_unordered functions, including map_unordered
-- Automatic task chunking for all available map functions to speed up processing
-- Functions are only pickled once when workers are started
-- Adjustable maximum number of active tasks
-- Support for shared objects (which are only passed once to each worker and are copy-on-write)
+- Multiprocessing with map/map_unordered/imap/imap_unordered functions
+- Easy use of copy-on-write shared objects with a pool of workers
+- Automatic task chunking for all available map functions to speed up processing of small task queues
+- Functions are only pickled once for each worker
+- Adjustable maximum number of active tasks to avoid memory problems
+- Automatic restarting of workers after a specified number of tasks to reduce memory footprint
+- Nested pool of workers are allowed when setting the ``daemon`` option
+- Child processes can be pinned to specific CPUs on Linux systems
 
 Installation
 ------------

@@ -1,5 +1,6 @@
 import itertools
 import queue
+import subprocess
 import warnings
 from multiprocessing import cpu_count, Event, Process, Queue
 
@@ -15,15 +16,15 @@ class Worker(Process):
         :param worker_id: Worker id
         :param tasks_queue: Queue object for retrieving new task arguments
         :param results_queue: Queue object for storing the results
-        :param restart_queue: Queue object for notifying the WorkerPool to restart this worker
+        :param restart_queue: Queue object for notifying the ``WorkerPool`` to restart this worker
         :param func_pointer: Function pointer to call each time new task arguments become available
         :param keep_order_event: Event object which signals if the task arguments contain an order index which should
-            be preserved and not fed to the function pointer (e.g., used in map)
-        :param shared_objects: None or an iterable of process-aware shared objects (e.g., multiprocessing.Array) to pass
-            to the function as the first argument.
-        :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
-            workers will stay alive the entire time. Use this when workers use up too much memory over the course of
-            time.
+            be preserved and not fed to the function pointer (e.g., used in ``map``)
+        :param shared_objects: ``None`` or an iterable of process-aware shared objects (e.g., ``multiprocessing.Array``)
+            to pass to the function as the first argument.
+        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
+            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
+            course of time.
         :param pass_worker_id: Boolean. Whether or not to pass the worker ID to the function
         """
         super().__init__()
@@ -81,23 +82,31 @@ class Worker(Process):
 
         :param idx: Order index (handled by the WorkerPool)
         :param args: Task arguments
-        :param additional_args: Additional arguments like worker_id and shared objects
+        :param additional_args: Additional arguments like ``worker_id`` and ``shared_objects``
         """
         return idx, self.func_pointer(*itertools.chain(additional_args, args))
 
 
 class WorkerPool:
     """
-    A multiprocessing worker pool which acts like a multiprocessing.Pool, but is faster.
+    A multiprocessing worker pool which acts like a ``multiprocessing.Pool``, but is faster and has more options.
     """
 
-    def __init__(self, n_jobs=None, daemon=True):
+    def __init__(self, n_jobs=None, daemon=True, cpu_ids=None):
         """
-        :param n_jobs: Int or None. Number of workers to spawn. If None, will use cpu_count() - 1.
+        :param n_jobs: Int or ``None``. Number of workers to spawn. If ``None``, will use ``cpu_count()``.
         :param daemon: Bool. Whether to start the child processes as daemon
+        :param cpu_ids: List or ``None``. List of CPU IDs to use for pinning child processes to specific CPUs. The list
+            must be as long as the number of jobs used (if ``n_jobs`` equals ``None`` it must be equal to
+            ``mpire.cpu_count()``). If ``None``, CPU pinning will be disabled. Note that CPU pinning may only work on
+            Linux based systems
         """
-        self.n_jobs = n_jobs
+        # Set parameters
+        self.n_jobs = n_jobs or cpu_count()
         self.daemon = daemon
+        self.cpu_ids = self._check_cpu_ids(cpu_ids)
+
+        # Containers for later use
         self.tasks_queue = None
         self.results_queue = None
         self.restart_queue = None
@@ -108,9 +117,32 @@ class WorkerPool:
         self.worker_lifespan = None
         self.pass_worker_id = False
 
+    def _check_cpu_ids(self, cpu_ids):
+        """
+        Checks the cpu_ids parameter for correctness
+
+        :param cpu_ids: List or ``None``. List of CPU IDs to use for pinning child processes to specific CPUs. The list
+            must be as long as the number of jobs used (if ``n_jobs`` equals ``None`` it must be equal to
+            ``mpire.cpu_count()``). If ``None``, CPU pinning will be disabled. Note that CPU pinning may only work on
+            Linux based systems
+        :return: cpu_ids
+        """
+        # Check CPU IDs
+        if cpu_ids:
+            if len(cpu_ids) != self.n_jobs:
+                raise ValueError("Number of CPU IDs (%d) does not match number of jobs (%d)" %
+                                 (len(cpu_ids), self.n_jobs))
+            if max(cpu_ids) >= cpu_count():
+                raise ValueError("CPU ID %d exceeds the maximum CPU ID available on your system: %d" %
+                                 (max(cpu_ids), cpu_count() - 1))
+            if min(cpu_ids) < 0:
+                raise ValueError("CPU IDs cannot be negative")
+
+        return cpu_ids
+
     def pass_on_worker_id(self, pass_on=True):
         """
-        Set whether to pass on the worker ID to the function to be executed or not (default=False).
+        Set whether to pass on the worker ID to the function to be executed or not (default= ``False``).
 
         The worker ID will be the first argument passed on to the function
 
@@ -122,17 +154,17 @@ class WorkerPool:
         """
         Set shared objects to pass to the workers.
 
-        Shared objects will be copy-on-write. Process-aware shared objects (e.g., multiprocessing.Array) can be used to
-        write to the same object from multiple processes. When providing shared objects the provided function pointer in
-        the map function should receive the shared objects as its first argument if the worker ID is not passed on. If
-        the worker ID is passed on the shared objects will be the second argument.
+        Shared objects will be copy-on-write. Process-aware shared objects (e.g., ``multiprocessing.Array``) can be used
+        to write to the same object from multiple processes. When providing shared objects the provided function pointer
+        in the ``map`` function should receive the shared objects as its first argument if the worker ID is not passed
+        on. If the worker ID is passed on the shared objects will be the second argument.
 
-        :param shared_objects: None or any other type of object (multiple objects can be wrapped in a single tuple).
-            When shared_objects is specified and the function to execute does not have any return value, set
-            has_return_value_with_shared_objects to False.
+        :param shared_objects: ``None`` or any other type of object (multiple objects can be wrapped in a single tuple).
+            When ``shared_objects`` is specified and the function to execute does not have any return value, set
+            ``has_return_value_with_shared_objects`` to False.
         :param has_return_value_with_shared_objects: DEPRECATED! MPIRE now handles functions with or without return
             values out of the box. This argument will be removed from version 1.0.0 onwards. Boolean. Whether
-            or not the function has a return value when shared objects are passed to it. If False, will not put any
+            or not the function has a return value when shared objects are passed to it. If ``False``, will not put any
             returned values in the results queue. In this case, the user has to check whether or not the workers are
             done processing.
         """
@@ -148,9 +180,9 @@ class WorkerPool:
         Spawns the workers and starts them so they're ready to start reading from the tasks queue.
 
         :param func_pointer: Function pointer to call each time new task arguments become available
-        :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
-            workers will stay alive the entire time. Use this when workers use up too much memory over the course of
-            time.
+        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
+            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
+            course of time.
         """
         # If there are workers, join them first
         self.stop_and_join()
@@ -167,11 +199,14 @@ class WorkerPool:
         self.tasks_queue = Queue()
         self.results_queue = Queue()
         self.restart_queue = Queue()
-        for worker_id in range(self.n_jobs if self.n_jobs is not None else cpu_count() - 1):
+        for worker_id in range(self.n_jobs):
             w = Worker(worker_id, self.tasks_queue, self.results_queue, self.restart_queue, self.func_pointer,
                        self.keep_order_event, self.shared_objects, self.worker_lifespan, self.pass_worker_id)
             w.daemon = self.daemon
             w.start()
+            if self.cpu_ids:
+                subprocess.call('taskset -p -c %d %d' % (self.cpu_ids[worker_id], w.pid), stdout=subprocess.DEVNULL,
+                                shell=True)
             self.workers.append(w)
 
     def _restart_workers(self):
@@ -189,6 +224,9 @@ class WorkerPool:
                            self.keep_order_event, self.shared_objects, self.worker_lifespan, self.pass_worker_id)
                 w.daemon = self.daemon
                 w.start()
+                if self.cpu_ids:
+                    subprocess.call('taskset -p -c %d %d' % (self.cpu_ids[worker_id], w.pid), stdout=subprocess.DEVNULL,
+                                    shell=True)
                 self.workers[worker_id] = w
             except queue.Empty:
                 # There are no workers to be restarted, we're done here
@@ -257,13 +295,13 @@ class WorkerPool:
 
     def __enter__(self):
         """
-        Enable the use of the 'with' statement.
+        Enable the use of the ``with`` statement.
         """
         return self
 
     def __exit__(self, *_):
         """
-        Enable the use of the 'with' statement. Gracefully terminates workers when both the task and results queue is
+        Enable the use of the ``with`` statement. Gracefully terminates workers when both the task and results queue is
         empty, otherwise kills them without warning.
         """
         if self.tasks_queue is not None and (not self.tasks_queue.empty() or not self.results_queue.empty()):
@@ -274,7 +312,7 @@ class WorkerPool:
     def map(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
             restart_workers=False, worker_lifespan=None):
         """
-        Same as multiprocessing.map(). Also allows a user to set the maximum number of tasks available in the queue.
+        Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
 
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
@@ -282,19 +320,19 @@ class WorkerPool:
             the function should receive those as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
-        :param iterable_len: Int or None. When chunk_size is set to None it needs to know the number of tasks. This can
-            either be provided by implementing the __len__ function on the iterable object, or by specifying the number
-            of tasks.
-        :param max_tasks_active: Int or None. Maximum number of active tasks in the queue. Use None to not limit the
-            queue
-        :param chunk_size: Int or None. Number of simultaneous tasks to give to a worker. If None, will generate n_jobs
-            * 4 number of chunks.
+        :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
+            This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
+            specifying the number of tasks.
+        :param max_tasks_active: Int or ``None``. Maximum number of active tasks in the queue. Use ``None`` to not limit
+            the queue
+        :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
+            ``n_jobs * 4`` number of chunks.
         :param restart_workers: Boolean. Whether to restart the possibly already existing workers or use the old ones.
-            Note: in the latter case the func_pointer parameter will have no effect. Will start workers either way when
-            there are none.
-        :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
-            workers will stay alive the entire time. Use this when workers use up too much memory over the course of
-            time.
+            Note: in the latter case the ``func_pointer`` parameter will have no effect. Will start workers either way
+            when there are none.
+        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
+            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
+            course of time.
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
@@ -315,7 +353,7 @@ class WorkerPool:
     def map_unordered(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
                       restart_workers=False, worker_lifespan=None):
         """
-        Same as multiprocessing.map(), but then unordered. Also allows a user to set the maximum number of tasks
+        Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
 
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
@@ -323,19 +361,19 @@ class WorkerPool:
             the function should receive those as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
-        :param iterable_len: Int or None. When chunk_size is set to None it needs to know the number of tasks. This can
-            either be provided by implementing the __len__ function on the iterable object, or by specifying the number
-            of tasks.
-        :param max_tasks_active: Int or None. Maximum number of active tasks in the queue. Use None to not limit the
-            queue
-        :param chunk_size: Int or None. Number of simultaneous tasks to give to a worker. If None, will generate n_jobs
-            * 4 number of chunks.
+        :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
+            This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
+            specifying the number of tasks.
+        :param max_tasks_active: Int or ``None``. Maximum number of active tasks in the queue. Use ``None`` to not limit
+            the queue
+        :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
+            ``n_jobs * 4`` number of chunks.
         :param restart_workers: Boolean. Whether to restart the possibly already existing workers or use the old ones.
-            Note: in the latter case the func_pointer parameter will have no effect. Will start workers either way when
-            there are none.
-        :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
-            workers will stay alive the entire time. Use this when workers use up too much memory over the course of
-            time.
+            Note: in the latter case the ``func_pointer`` parameter will have no effect. Will start workers either way
+            when there are none.
+        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
+            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
+            course of time.
         :return: List with unordered results
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
@@ -345,7 +383,7 @@ class WorkerPool:
     def imap(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
              restart_workers=False, worker_lifespan=None):
         """
-        Same as multiprocessing.imap_unordered(), but then ordered. Also allows a user to set the maximum number of
+        Same as ``multiprocessing.imap_unordered()``, but ordered. Also allows a user to set the maximum number of
         tasks available in the queue.
 
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
@@ -353,19 +391,19 @@ class WorkerPool:
             the function should receive those as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
-        :param iterable_len: Int or None. When chunk_size is set to None it needs to know the number of tasks. This can
-            either be provided by implementing the __len__ function on the iterable object, or by specifying the number
-            of tasks.
-        :param max_tasks_active: Int or None. Maximum number of active tasks in the queue. Use None to not limit the
-            queue
-        :param chunk_size: Int or None. Number of simultaneous tasks to give to a worker. If None, will generate n_jobs
-            * 4 number of chunks.
+        :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
+            This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
+            specifying the number of tasks.
+        :param max_tasks_active: Int or ``None``. Maximum number of active tasks in the queue. Use ``None`` to not limit
+            the queue
+        :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
+            ``n_jobs * 4`` number of chunks.
         :param restart_workers: Boolean. Whether to restart the possibly already existing workers or use the old ones.
-            Note: in the latter case the func_pointer parameter will have no effect. Will start workers either way when
-            there are none.
-        :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
-            workers will stay alive the entire time. Use this when workers use up too much memory over the course of
-            time.
+            Note: in the latter case the ``func_pointer`` parameter will have no effect. Will start workers either way
+            when there are none.
+        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
+            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
+            course of time.
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
@@ -406,27 +444,27 @@ class WorkerPool:
     def imap_unordered(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
                        restart_workers=True, worker_lifespan=None):
         """
-        Same as multiprocessing.imap_unordered(). Also allows a user to set the maximum number of tasks available in the
-        queue.
+        Same as ``multiprocessing.imap_unordered()``. Also allows a user to set the maximum number of tasks available in
+        the queue.
 
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
             the function should receive those as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
-        :param iterable_len: Int or None. When chunk_size is set to None it needs to know the number of tasks. This can
-            either be provided by implementing the __len__ function on the iterable object, or by specifying the number
-            of tasks.
-        :param max_tasks_active: Int, 'n_jobs*2', or None. Maximum number of active tasks in the queue. Use None to not
-            limit the queue. Use 'n_jobs*2' to specify twice the number of jobs.
-        :param chunk_size: Int or None. Number of simultaneous tasks to give to a worker. If None, will generate n_jobs
-            * 4 number of chunks.
+        :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
+            This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
+            specifying the number of tasks.
+        :param max_tasks_active: Int or ``None``. Maximum number of active tasks in the queue. Use ``None`` to not limit
+            the queue
+        :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
+            ``n_jobs * 4`` number of chunks.
         :param restart_workers: Boolean. Whether to restart the possibly already existing workers or use the old ones.
-            Note: in the latter case the func_pointer parameter will have no effect. Will start workers either way when
-            there are none.
-        :param worker_lifespan: Int or None. Number of chunks a worker can handle before it is restarted. If None,
-            workers will stay alive the entire time. Use this when workers use up too much memory over the course of
-            time.
+            Note: in the latter case the ``func_pointer`` parameter will have no effect. Will start workers either way
+            when there are none.
+        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
+            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
+            course of time.
         :return: Generator yielding unordered results
         """
         # Start workers
@@ -488,11 +526,11 @@ class WorkerPool:
 
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
-        :param iterable_len: Int or None. When chunk_size is set to None it needs to know the number of tasks. This can
-            either be provided by implementing the __len__ function on the iterable object, or by specifying the number
-            of tasks.
-        :param chunk_size: Int or None. Number of simultaneous tasks to give to a worker. If None, will generate n_jobs
-            * 4 number of chunks.
+        :param iterable_len: Int or ``None``. When ``chunk_size`` is set to ``None`` it needs to know the number of
+            tasks. This can either be provided by implementing the ``__len__`` function on the iterable object, or by
+            specifying the number of tasks.
+        :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
+            ``n_jobs * 4`` number of chunks.
         :return: Generator of chunked task arguments
         """
         # Determine chunk size

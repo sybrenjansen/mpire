@@ -1,6 +1,6 @@
 import unittest
 from itertools import product, repeat
-from mpire import WorkerPool
+from mpire import cpu_count, WorkerPool
 
 
 def square(idx, x):
@@ -26,7 +26,7 @@ def get_generator(iterable):
     yield from iterable
 
 
-class ParallellTest(unittest.TestCase):
+class ParallelTest(unittest.TestCase):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -216,3 +216,25 @@ class ParallellTest(unittest.TestCase):
             # Results should be all True
             for result in results:
                 self.assertTrue(result)
+
+    def test_cpu_pinning(self):
+        """
+        Tests CPU pinning
+        """
+        for n_jobs, cpu_ids in product([None, 1, 2, 4], [None, [0], [0, 1], [0, 1, 2, 3]]):
+            # Things should work fine when cpu_ids is None or number of cpu_ids given equals the number of jobs
+            if cpu_ids is None or len(cpu_ids) == (n_jobs or cpu_count()):
+                with WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids) as pool:
+                    results_list = pool.map(square, self.test_data)
+                    self.assertTrue(isinstance(results_list, list))
+                    self.assertEqual(self.test_desired_output, results_list)
+            # Should raise
+            else:
+                with self.assertRaises(ValueError):
+                    WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids)
+
+        # Should raise when CPU IDs are out of scope
+        with self.assertRaises(ValueError):
+            WorkerPool(n_jobs=1, cpu_ids=[-1])
+        with self.assertRaises(ValueError):
+            WorkerPool(n_jobs=1, cpu_ids=[cpu_count()])

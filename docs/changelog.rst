@@ -1,6 +1,15 @@
 Changelog
 =========
 
+0.5.0
+-----
+
+*(2017-10-06)*
+
+* Added CPU pinning.
+* Default number of processes to spawn when using ``n_jobs=None`` is now set to the number of CPUs available, instead of
+  ``cpu_count() - 1``.
+
 0.4.0
 -----
 
