@@ -93,10 +93,10 @@ class WorkerPool:
 
     def __init__(self, n_jobs=None, daemon=True):
         """
-        :param n_jobs: Int or None. Number of workers to spawn. If None, will use cpu_count() - 1.
+        :param n_jobs: Int or ``None``. Number of workers to spawn. If ``None``, will use ``cpu_count()``.
         :param daemon: Bool. Whether to start the child processes as daemon
         """
-        self.n_jobs = n_jobs
+        self.n_jobs = n_jobs or cpu_count()
         self.daemon = daemon
         self.tasks_queue = None
         self.results_queue = None
@@ -167,7 +167,7 @@ class WorkerPool:
         self.tasks_queue = Queue()
         self.results_queue = Queue()
         self.restart_queue = Queue()
-        for worker_id in range(self.n_jobs if self.n_jobs is not None else cpu_count() - 1):
+        for worker_id in range(self.n_jobs):
             w = Worker(worker_id, self.tasks_queue, self.results_queue, self.restart_queue, self.func_pointer,
                        self.keep_order_event, self.shared_objects, self.worker_lifespan, self.pass_worker_id)
             w.daemon = self.daemon
