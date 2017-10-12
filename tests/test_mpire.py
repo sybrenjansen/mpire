@@ -26,7 +26,7 @@ def get_generator(iterable):
     yield from iterable
 
 
-class ParallelTest(unittest.TestCase):
+class MPIRETest(unittest.TestCase):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -221,9 +221,10 @@ class ParallelTest(unittest.TestCase):
         """
         Tests CPU pinning
         """
-        for n_jobs, cpu_ids in product([None, 1, 2, 4], [None, [0], [0, 1], [0, 1, 2, 3]]):
-            # Things should work fine when cpu_ids is None or number of cpu_ids given equals the number of jobs
-            if cpu_ids is None or len(cpu_ids) == (n_jobs or cpu_count()):
+        for n_jobs, cpu_ids in product([None, 1, 2, 4], [None, [0], [0, 1], [0, 1, 2, 3], [[0, 3]], [[0, 1], [0, 1]]]):
+            # Things should work fine when cpu_ids is None or number of cpu_ids given is one or equals the number of
+            # jobs,
+            if cpu_ids is None or len(cpu_ids) == 1 or len(cpu_ids) == (n_jobs or cpu_count()):
                 with WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids) as pool:
                     results_list = pool.map(square, self.test_data)
                     self.assertTrue(isinstance(results_list, list))

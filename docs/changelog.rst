@@ -1,6 +1,14 @@
 Changelog
 =========
 
+0.5.1
+-----
+
+*(2017-10-12)*
+
+* Child processes can now also be pinned to a range of CPUs, instead of only a single one. You can also use specify a
+  single CPU or range of CPUs that have to be shared between all child processes.
+
 0.5.0
 -----
 
