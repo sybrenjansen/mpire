@@ -98,8 +98,11 @@ class WorkerPool:
         :param daemon: Bool. Whether to start the child processes as daemon
         :param cpu_ids: List or ``None``. List of CPU IDs to use for pinning child processes to specific CPUs. The list
             must be as long as the number of jobs used (if ``n_jobs`` equals ``None`` it must be equal to
-            ``mpire.cpu_count()``). If ``None``, CPU pinning will be disabled. Note that CPU pinning may only work on
-            Linux based systems
+            ``mpire.cpu_count()``), or the list must have exactly one element. In the former case, element x specifies
+            the CPU ID(s) to use for child process x. In the latter case the single element specifies the CPU ID(s) for
+            all child  processes to use. A single element can be either a single integer specifying a single CPU ID, or
+            a list of integers specifying that a single child process can make use of multiple CPU IDs. If ``None``, CPU
+            pinning will be disabled. Note that CPU pinning may only work on Linux based systems
         """
         # Set parameters
         self.n_jobs = n_jobs or cpu_count()
@@ -123,22 +126,50 @@ class WorkerPool:
 
         :param cpu_ids: List or ``None``. List of CPU IDs to use for pinning child processes to specific CPUs. The list
             must be as long as the number of jobs used (if ``n_jobs`` equals ``None`` it must be equal to
-            ``mpire.cpu_count()``). If ``None``, CPU pinning will be disabled. Note that CPU pinning may only work on
-            Linux based systems
+            ``mpire.cpu_count()``), or the list must have exactly one element. In the former case, element x specifies
+            the CPU ID(s) to use for child process x. In the latter case the single element specifies the CPU ID(s) for
+            all child  processes to use. A single element can be either a single integer specifying a single CPU ID, or
+            a list of integers specifying that a single child process can make use of multiple CPU IDs. If ``None``, CPU
+            pinning will be disabled. Note that CPU pinning may only work on Linux based systems
         :return: cpu_ids
         """
         # Check CPU IDs
+        converted_cpu_ids = []
         if cpu_ids:
-            if len(cpu_ids) != self.n_jobs:
+            # Check number of arguments
+            if len(cpu_ids) != 1 and len(cpu_ids) != self.n_jobs:
                 raise ValueError("Number of CPU IDs (%d) does not match number of jobs (%d)" %
                                  (len(cpu_ids), self.n_jobs))
-            if max(cpu_ids) >= cpu_count():
+
+            # Convert CPU IDs to proper format and find the max and min CPU ID
+            max_cpu_id = 0
+            min_cpu_id = 0
+            for cpu_id in cpu_ids:
+                if isinstance(cpu_id, list):
+                    converted_cpu_ids.append(','.join(map(str, cpu_id)))
+                    max_cpu_id = max(max_cpu_id, max(cpu for cpu in cpu_id))
+                    min_cpu_id = min(min_cpu_id, min(cpu for cpu in cpu_id))
+                elif isinstance(cpu_id, int):
+                    converted_cpu_ids.append(str(cpu_id))
+                    max_cpu_id = max(max_cpu_id, cpu_id)
+                    min_cpu_id = min(min_cpu_id, cpu_id)
+                else:
+                    raise TypeError("CPU ID(s) must be either a list or a single integer")
+
+            # Check max CPU ID
+            if max_cpu_id >= cpu_count():
                 raise ValueError("CPU ID %d exceeds the maximum CPU ID available on your system: %d" %
-                                 (max(cpu_ids), cpu_count() - 1))
-            if min(cpu_ids) < 0:
+                                 (max_cpu_id, cpu_count() - 1))
+
+            # Check min CPU ID
+            if min_cpu_id < 0:
                 raise ValueError("CPU IDs cannot be negative")
 
-        return cpu_ids
+        # If only one item is given, use this item for all child processes
+        if len(converted_cpu_ids) == 1:
+            converted_cpu_ids = list(itertools.repeat(converted_cpu_ids[0], self.n_jobs))
+
+        return converted_cpu_ids
 
     def pass_on_worker_id(self, pass_on=True):
         """
@@ -205,7 +236,7 @@ class WorkerPool:
             w.daemon = self.daemon
             w.start()
             if self.cpu_ids:
-                subprocess.call('taskset -p -c %d %d' % (self.cpu_ids[worker_id], w.pid), stdout=subprocess.DEVNULL,
+                subprocess.call('taskset -p -c %s %d' % (self.cpu_ids[worker_id], w.pid), stdout=subprocess.DEVNULL,
                                 shell=True)
             self.workers.append(w)
 
@@ -225,7 +256,7 @@ class WorkerPool:
                 w.daemon = self.daemon
                 w.start()
                 if self.cpu_ids:
-                    subprocess.call('taskset -p -c %d %d' % (self.cpu_ids[worker_id], w.pid), stdout=subprocess.DEVNULL,
+                    subprocess.call('taskset -p -c %s %d' % (self.cpu_ids[worker_id], w.pid), stdout=subprocess.DEVNULL,
                                     shell=True)
                 self.workers[worker_id] = w
             except queue.Empty:
