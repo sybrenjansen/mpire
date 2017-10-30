@@ -239,3 +239,24 @@ class MPIRETest(unittest.TestCase):
             WorkerPool(n_jobs=1, cpu_ids=[-1])
         with self.assertRaises(ValueError):
             WorkerPool(n_jobs=1, cpu_ids=[cpu_count()])
+
+    def test_progress_bar(self):
+        """
+        Tests the progress bar
+        """
+        from tqdm import tqdm
+
+        print()
+        for n_jobs, progress_bar in product([None, 1, 2], [True, tqdm(total=len(self.test_data)),
+                                                           tqdm(total=len(self.test_data), ascii=True), tqdm()]):
+            if progress_bar is True or progress_bar.total == len(self.test_data):
+                with WorkerPool(n_jobs=n_jobs) as pool:
+                    results_list = pool.map(square, self.test_data, progress_bar=progress_bar)
+                    self.assertTrue(isinstance(results_list, list))
+                    self.assertEqual(self.test_desired_output, results_list)
+            # Should raise
+            else:
+                with self.assertRaises(ValueError):
+                    with WorkerPool(n_jobs=n_jobs) as pool:
+                        _ = pool.map(square, self.test_data, progress_bar=progress_bar)
+        print()

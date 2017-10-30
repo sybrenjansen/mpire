@@ -1,8 +1,23 @@
 import itertools
 import queue
 import subprocess
+import tqdm
 import warnings
 from multiprocessing import cpu_count, Event, Process, Queue
+from threading import Thread
+
+
+# Check if we need to import the Jupyter/IPython plugin or regular progress bar
+try:
+    if get_ipython().__class__.__name__ == 'ZMQInteractiveShell':
+        # Using Jupyter/IPython notebook
+        from tqdm import tqdm_notebook as tqdm_pb
+    else:
+        # Using IPython, but in a terminal
+        from tqdm import tqdm as tqdm_pb
+except NameError:
+    # Not using IPython
+    from tqdm import tqdm as tqdm_pb
 
 
 class Worker(Process):
@@ -10,13 +25,15 @@ class Worker(Process):
     A multiprocessing helper class which continuously asks the queue for new jobs, until a poison pill is inserted
     """
 
-    def __init__(self, worker_id, tasks_queue, results_queue, restart_queue, func_pointer, keep_order_event,
-                 shared_objects=None, worker_lifespan=None, pass_worker_id=False):
+    def __init__(self, worker_id, tasks_queue, results_queue, restart_queue, task_completed_queue, func_pointer,
+                 keep_order_event, shared_objects=None, worker_lifespan=None, pass_worker_id=False):
         """
         :param worker_id: Worker id
         :param tasks_queue: Queue object for retrieving new task arguments
         :param results_queue: Queue object for storing the results
         :param restart_queue: Queue object for notifying the ``WorkerPool`` to restart this worker
+        :param task_completed_queue: Queue object for notifying the main process we're done with a single task. ``None``
+            when notifying is not necessary.
         :param func_pointer: Function pointer to call each time new task arguments become available
         :param keep_order_event: Event object which signals if the task arguments contain an order index which should
             be preserved and not fed to the function pointer (e.g., used in ``map``)
@@ -32,6 +49,7 @@ class Worker(Process):
         self.tasks_queue = tasks_queue
         self.results_queue = results_queue
         self.restart_queue = restart_queue
+        self.task_completed_queue = task_completed_queue
         self.func_pointer = func_pointer
         self.keep_order_event = keep_order_event
         self.shared_objects = shared_objects
@@ -67,7 +85,16 @@ class Worker(Process):
                 additional_args.append(self.shared_objects)
 
             # Execute jobs
-            self.results_queue.put([func(args, additional_args) for args in next_chunked_args])
+            results = []
+            for args in next_chunked_args:
+                results.append(func(args, additional_args))
+
+                # Notify that we've completed a task
+                if self.task_completed_queue is not None:
+                    self.task_completed_queue.put(1)
+
+            # Send results back to main process
+            self.results_queue.put(results)
 
             # Increment counter
             n_chunks_executed += 1
@@ -113,6 +140,7 @@ class WorkerPool:
         self.tasks_queue = None
         self.results_queue = None
         self.restart_queue = None
+        self.task_completed_queue = None
         self.keep_order_event = Event()
         self.workers = []
         self.shared_objects = None
@@ -231,8 +259,9 @@ class WorkerPool:
         self.results_queue = Queue()
         self.restart_queue = Queue()
         for worker_id in range(self.n_jobs):
-            w = Worker(worker_id, self.tasks_queue, self.results_queue, self.restart_queue, self.func_pointer,
-                       self.keep_order_event, self.shared_objects, self.worker_lifespan, self.pass_worker_id)
+            w = Worker(worker_id, self.tasks_queue, self.results_queue, self.restart_queue, self.task_completed_queue,
+                       self.func_pointer, self.keep_order_event, self.shared_objects, self.worker_lifespan,
+                       self.pass_worker_id)
             w.daemon = self.daemon
             w.start()
             if self.cpu_ids:
@@ -251,8 +280,9 @@ class WorkerPool:
                 self.workers[worker_id].join()
 
                 # Start worker
-                w = Worker(worker_id, self.tasks_queue, self.results_queue, self.restart_queue, self.func_pointer,
-                           self.keep_order_event, self.shared_objects, self.worker_lifespan, self.pass_worker_id)
+                w = Worker(worker_id, self.tasks_queue, self.results_queue, self.restart_queue,
+                           self.task_completed_queue, self.func_pointer, self.keep_order_event, self.shared_objects,
+                           self.worker_lifespan, self.pass_worker_id)
                 w.daemon = self.daemon
                 w.start()
                 if self.cpu_ids:
@@ -341,7 +371,7 @@ class WorkerPool:
             self.stop_and_join()
 
     def map(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-            restart_workers=False, worker_lifespan=None):
+            restart_workers=False, worker_lifespan=None, progress_bar=False):
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
@@ -364,6 +394,8 @@ class WorkerPool:
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
+        :param progress_bar: Boolean or ``tqdm`` instance. When ``True`` will display a default progress bar. Defaults
+            can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
@@ -373,7 +405,8 @@ class WorkerPool:
         if iterable_len is None and hasattr(iterable_of_args, '__len__'):
             iterable_len = len(iterable_of_args)
         results = self.map_unordered(func_pointer, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)),
-                                     iterable_len, max_tasks_active, chunk_size, restart_workers, worker_lifespan)
+                                     iterable_len, max_tasks_active, chunk_size, restart_workers, worker_lifespan,
+                                     progress_bar)
 
         # Notify workers to forget about order
         self.keep_order_event.clear()
@@ -382,7 +415,7 @@ class WorkerPool:
         return [result[1] for result in sorted(results, key=lambda result: result[0])]
 
     def map_unordered(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-                      restart_workers=False, worker_lifespan=None):
+                      restart_workers=False, worker_lifespan=None, progress_bar=False):
         """
         Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
@@ -405,14 +438,16 @@ class WorkerPool:
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
+        :param progress_bar: Boolean or ``tqdm`` instance. When ``True`` will display a default progress bar. Defaults
+            can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
         :return: List with unordered results
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
         return list(self.imap_unordered(func_pointer, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
-                                        restart_workers, worker_lifespan))
+                                        restart_workers, worker_lifespan, progress_bar))
 
     def imap(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-             restart_workers=False, worker_lifespan=None):
+             restart_workers=False, worker_lifespan=None, progress_bar=False):
         """
         Same as ``multiprocessing.imap_unordered()``, but ordered. Also allows a user to set the maximum number of
         tasks available in the queue.
@@ -435,6 +470,8 @@ class WorkerPool:
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
+        :param progress_bar: Boolean or ``tqdm`` instance. When ``True`` will display a default progress bar. Defaults
+            can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
@@ -447,7 +484,7 @@ class WorkerPool:
             iterable_len = len(iterable_of_args)
         for result_idx, result in self.imap_unordered(func_pointer, ((args_idx, args) for args_idx, args
                                                       in enumerate(iterable_of_args)), iterable_len, max_tasks_active,
-                                                      chunk_size, restart_workers, worker_lifespan):
+                                                      chunk_size, restart_workers, worker_lifespan, progress_bar):
             # Check if the next one(s) to return is/are temporarily stored. We use a while-true block with dict.pop() to
             # keep the temporary store as small as possible
             while True:
@@ -473,7 +510,7 @@ class WorkerPool:
         self.keep_order_event.clear()
 
     def imap_unordered(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-                       restart_workers=True, worker_lifespan=None):
+                       restart_workers=True, worker_lifespan=None, progress_bar=False):
         """
         Same as ``multiprocessing.imap_unordered()``. Also allows a user to set the maximum number of tasks available in
         the queue.
@@ -496,14 +533,49 @@ class WorkerPool:
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
+        :param progress_bar: Boolean or ``tqdm`` instance. When ``True`` will display a default progress bar. Defaults
+            can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
         :return: Generator yielding unordered results
         """
+        # Get number of tasks
+        n_tasks = None
+        if iterable_len is not None:
+            n_tasks = iterable_len
+        elif hasattr(iterable_of_args, '__len__'):
+            n_tasks = len(iterable_of_args)
+        elif isinstance(progress_bar, tqdm.tqdm) and progress_bar.total is not None:
+            n_tasks = progress_bar.total
+        elif chunk_size is None or progress_bar:
+            warnings.simplefilter('default')
+            warnings.warn('Failed to obtain length of iterable when chunk size is None and/or a progress bar is '
+                          'requested. Chunk size is set to 1 and no progress bar will be shown. Remedy: either provide '
+                          'an iterable with a len() function or specify iterable_len in the function call',
+                          RuntimeWarning, stacklevel=2)
+            chunk_size = 1
+            progress_bar = False
+
+        # Parameter total should be given
+        if isinstance(progress_bar, tqdm.tqdm) and progress_bar.total is None:
+            raise ValueError("Custom tqdm progress bar instance needs parameter 'total'")
+
+        # Chunk the function arguments
+        iterator_of_chunked_args = self.chunk_tasks(iterable_of_args, n_tasks, chunk_size)
+
+        # Create a progress bar if requested
+        if progress_bar is True or isinstance(progress_bar, tqdm.tqdm):
+            progress_bar = progress_bar if isinstance(progress_bar, tqdm.tqdm) else tqdm_pb(total=n_tasks)
+            self.task_completed_queue = Queue()
+
+            # Start a thread
+            progress_bar_thread = Thread(target=self._handle_progress_bar, args=(progress_bar, n_tasks))
+            progress_bar_thread.start()
+        else:
+            self.task_completed_queue = None
+            progress_bar_thread = None
+
         # Start workers
         if not self.workers or restart_workers:
             self.start_workers(func_pointer, worker_lifespan)
-
-        # Chunk the function arguments
-        iterator_of_chunked_args = self.chunk_tasks(iterable_of_args, iterable_len, chunk_size)
 
         # Process all args in the iterable. If maximum number of active tasks is None, we avoid all the if and
         # try-except clauses to speed up the process.
@@ -550,29 +622,39 @@ class WorkerPool:
             # Restart workers if necessary
             self._restart_workers()
 
-    def chunk_tasks(self, iterable_of_args, iterable_len=None, chunk_size=None):
+        # Clean up the progress bar
+        if progress_bar:
+            progress_bar_thread.join()
+            progress_bar.close()
+
+    def _handle_progress_bar(self, progress_bar, n_tasks):
+        """
+        When a task is completed a single item is put in the designated queue. This function, living in a thread, waits
+        for items in the queue and updates the progress bar accordingly.
+
+        :param progress_bar: tqdm progress bar object.
+        :param n_tasks: Int. Number of tasks to be expected.
+        """
+        for _ in range(n_tasks):
+            # Wait for job to finish
+            self.task_completed_queue.get(block=True)
+            progress_bar.update(1)
+
+    def chunk_tasks(self, iterable_of_args, n_tasks, chunk_size=None):
         """
         Chunks tasks such that individual workers will receive chunks of tasks rather than individual ones, which can
         speed up processing drastically.
 
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
-        :param iterable_len: Int or ``None``. When ``chunk_size`` is set to ``None`` it needs to know the number of
-            tasks. This can either be provided by implementing the ``__len__`` function on the iterable object, or by
-            specifying the number of tasks.
+        :param n_tasks: Int. Number of tasks available in ``iterable_of_args``.
         :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
             ``n_jobs * 4`` number of chunks.
         :return: Generator of chunked task arguments
         """
         # Determine chunk size
         if chunk_size is None:
-            if iterable_len is not None:
-                chunk_size, extra = divmod(iterable_len, len(self.workers) * 4)
-            elif hasattr(iterable_of_args, '__len__'):
-                chunk_size, extra = divmod(len(iterable_of_args), len(self.workers) * 4)
-            else:
-                raise ValueError('Failed to obtain length of iterable when chunk size is None. Remedy: either provide '
-                                 'an iterable with a len() function or specify iterable_len in the function call')
+            chunk_size, extra = divmod(n_tasks, len(self.workers) * 4)
             if extra:
                 chunk_size += 1
 

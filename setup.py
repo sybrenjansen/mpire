@@ -12,5 +12,6 @@ setup(
     description="A Python package for multiprocessing, but faster than multiprocessing",
     long_description=long_description,
     packages=["mpire"],
+    install_requires=["tqdm"],
     test_suite='tests'
 )

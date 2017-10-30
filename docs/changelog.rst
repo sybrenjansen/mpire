@@ -1,6 +1,11 @@
 Changelog
 =========
 
+*(2017-10-28)*
+
+* Progress bar functionality added (using tqdm_).
+
+
 0.5.1
 -----
 
@@ -42,3 +47,6 @@ Changelog
 *(2017-06-27)*
 
 * Added docs
+
+
+.. _tqdm: https://pypi.python.org/pypi/tqdm

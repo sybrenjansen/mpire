@@ -258,6 +258,84 @@ we tell the function that we want to restart the workers we can provide a differ
 lifespan.
 
 
+Progress bar
+~~~~~~~~~~~~
+
+Progress bar support is added through the tqdm_ package (installed by default when installing MPIRE). The most easy way
+to include a progress bar is by enabling the ``progress_bar`` flag in any of the ``map`` functions:
+
+.. code-block:: python
+
+    with WorkerPool(n_jobs=4) as pool:
+        pool.map(square, ((x,) for x in range(100)), iterable_len=100,
+                 progress_bar=True)
+
+This will display a basic ``tqdm`` progress bar displaying the time elapsed and remaining, number of tasks completed
+(including a percentage value) and the speed (i.e., number of tasks completed per time unit).
+
+When inside a Jupyter/IPython notebook, the progress bar will change automatically to a native Jupyter widget.
+
+.. note::
+
+    The Jupyter ``tqdm`` widget requires the Javascript widget to run, which might not be enabled by default. You will
+    notice a ``Widget Javascript not detected`` error message in your notebook if so. To remedy this, enable the widget
+    by executing ``jupyter nbextension enable --py --sys-prefix widgetsnbextension`` in your terminal before starting
+    the notebook.
+
+If you want a custom ``tqdm`` progress bar you can pass a custom instance to the ``progress_bar`` parameter (instead of
+providing a boolean value):
+
+.. code-block:: python
+
+    from tqdm import tqdm
+
+    with WorkerPool(n_jobs=4) as pool:
+        pool.map(square, ((x,) for x in range(100)), iterable_len=100,
+                 progress_bar=tqdm(total=100, ascii=True))
+
+or, when you're working in a notebook:
+
+.. code-block:: python
+
+    from tqdm import tqdm_notebook
+
+    with WorkerPool(n_jobs=4) as pool:
+        pool.map(square, ((x,) for x in range(100)), iterable_len=100,
+                 progress_bar=tqdm_notebook(total=100, ascii=True))
+
+For all the configurable options, please refer to the `tqdm documentation`_.
+
+
+Multiple progress bars with nested WorkerPools
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+With the tqdm_ package you can easily print a progress bar on a different position on the terminal using the
+``position`` parameter in the constructor, which facilitates the use of multiple progress bars. Here's an example of
+using multiple progress bars using nested WorkerPools:
+
+.. code-block:: python
+
+    from tqdm import tqdm
+
+    def dispatcher(worker_id, X):
+        with WorkerPool(n_jobs=4) as nested_pool:
+            return nested_pool.map(square, ((x,) for x in X), iterable_len=len(X),
+                                   progress_bar=tqdm(total=len(X), position=worker_id + 1))
+
+    with WorkerPool(n_jobs=4, daemon=False) as pool:
+        pool.pass_on_worker_id()
+        pool.map(dispatcher, ((list(range(x, x + 100)),) for x in range(100)),
+                 iterable_len=100, progress_bar=True)
+
+We use ``worker_id + 1`` here because the worker IDs start at zero, and we reserve position 0 for the progress bar of
+the main WorkerPool.
+
+.. note::
+
+    Unfortunately, starting a ``tqdm`` progress bar from a child process in a Jupyter/IPython notebook doesn't seem to
+    work. You'll get ``WARNING: attempted to send message from fork`` messages from the IPython kernel.
+
+
 Shared objects
 --------------
 
@@ -360,3 +438,7 @@ By default, the worker ID is not passed on. You can enable/disable this using th
         pool.map_unordered(square_sum, ((x,) for x in range(100)), iterable_len=100)
 
 The worker ID will always be the first passed on argument to the provided function pointer.
+
+
+.. _tqdm: https://pypi.python.org/pypi/tqdm
+.. _`tqdm documentation`: https://pypi.python.org/pypi/tqdm#documentation
