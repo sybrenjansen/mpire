@@ -17,13 +17,10 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 
-import re
-try:
-    import mpire
-    _version = mpire.__version__
-except ImportError(mpire):
-    _version = 'unknown'
 from datetime import datetime
+import re
+
+_version = '0.6.0'
 
 def isBoostFunc(what, obj):
     return what == 'function' and obj.__repr__().startswith('<Boost.Python.function object at 0x')
