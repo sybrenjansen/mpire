@@ -44,14 +44,14 @@ The other way is to do it manually:
     # In the case you want to kill the processes even though they are still busy
     pool.terminate()
 
-When using ``n_jobs=None`` MPIRE will spawn as many processes as there are CPUs on your system, minus one. The minus one
-is done in favor of the ``imap`` functions, where the main thread is usually busy as well. Specifying more jobs than you
-have CPUs is, of course, possible as well.
+When using ``n_jobs=None`` MPIRE will spawn as many processes as there are CPUs on your system. Specifying more jobs
+than you have CPUs is, of course, possible as well.
 
 .. warning::
 
-    The results queue should be drained first before joining the workers, otherwise you can get a deadlock. For more
-    information, see the warnings in the Python docs here_.
+    The results queue should be drained first before joining the workers, otherwise you can get a deadlock. If you want
+    to join either way, use :meth:`mpire.WorkerPool.terminate`. For more information, see the warnings in the Python
+    docs here_.
 
 .. _here: https://docs.python.org/3.4/library/multiprocessing.html#pipes-and-queues
 
@@ -232,6 +232,10 @@ In this example each worker is restarted after finishing a single chunk of tasks
 Restarting workers
 ~~~~~~~~~~~~~~~~~~
 
+.. important::
+
+    MPIRE will no longer support reusing workers (from 0.6.0). This argument will be removed from version 1.0.0 onwards.
+
 The first time you call one of the ``map`` functions the pool of workers is started with the appropriate argument
 values, including the function pointer, lifespan, etc. When you want to call a ``map`` function for the second time the
 workers of the first call still exist and they can be reused if you don't want to change the settings of the first call.
@@ -302,6 +306,11 @@ or, when you're working in a notebook:
     with WorkerPool(n_jobs=4) as pool:
         pool.map(square, ((x,) for x in range(100)), iterable_len=100,
                  progress_bar=tqdm_notebook(total=100, ascii=True))
+
+.. note::
+
+    When providing a custom ``tqdm`` progress bar you will need to pass on the total number of tasks to the ``total``
+    parameter.
 
 For all the configurable options, please refer to the `tqdm documentation`_.
 

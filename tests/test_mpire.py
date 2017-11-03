@@ -12,14 +12,15 @@ def square_daemon(X):
         return pool.map(square, X, chunk_size=1)
 
 
-def square_daemon_raises(X):
-    try:
-        with WorkerPool(n_jobs=4) as pool:
-            pool.map(square, X, chunk_size=1)
-    except AssertionError:
-        return True
+def square_raises(_, x):
+    raise ValueError(x)
 
-    return False
+
+def square_raises_on_idx(idx, x):
+    if idx == 5:
+        raise ValueError(x)
+    else:
+        return idx, x * x
 
 
 def get_generator(iterable):
@@ -121,38 +122,38 @@ class MPIRETest(unittest.TestCase):
 
         # Zero (or a negative number of) active tasks/lifespan should result in a value error
         for n in [-3, -1, 0, 3.14]:
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError if isinstance(n, int) else TypeError):
                 with WorkerPool(n_jobs=4) as pool:
                     pool.map(square, self.test_data, max_tasks_active=n)
 
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError if isinstance(n, int) else TypeError):
                 with WorkerPool(n_jobs=4) as pool:
                     pool.map_unordered(square, self.test_data, max_tasks_active=n)
 
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError if isinstance(n, int) else TypeError):
                 with WorkerPool(n_jobs=4) as pool:
                     for _ in pool.imap(square, self.test_data, max_tasks_active=n):
                         pass
 
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError if isinstance(n, int) else TypeError):
                 with WorkerPool(n_jobs=4) as pool:
                     for _ in pool.imap_unordered(square, self.test_data, max_tasks_active=n):
                         pass
 
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError if isinstance(n, int) else TypeError):
                 with WorkerPool(n_jobs=4) as pool:
                     pool.map(square, self.test_data, worker_lifespan=n)
 
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError if isinstance(n, int) else TypeError):
                 with WorkerPool(n_jobs=4) as pool:
                     pool.map_unordered(square, self.test_data, worker_lifespan=n)
 
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError if isinstance(n, int) else TypeError):
                 with WorkerPool(n_jobs=4) as pool:
                     for _ in pool.imap(square, self.test_data, worker_lifespan=n):
                         pass
 
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError if isinstance(n, int) else TypeError):
                 with WorkerPool(n_jobs=4) as pool:
                     for _ in pool.imap_unordered(square, self.test_data, worker_lifespan=n):
                         pass
@@ -209,13 +210,10 @@ class MPIRETest(unittest.TestCase):
                 self.assertEqual(self.test_desired_output, results_list)
 
         # Daemon processes are not allowed to spawn children
-        with WorkerPool(n_jobs=4, daemon=True) as pool:
-            # Obtain results using nested WorkerPools
-            results = pool.map(square_daemon_raises, ((X,) for X in repeat(self.test_data, 4)), chunk_size=1)
-
-            # Results should be all True
-            for result in results:
-                self.assertTrue(result)
+        with self.assertRaises(AssertionError):
+            with WorkerPool(n_jobs=4, daemon=True) as pool:
+                # Obtain results using nested WorkerPools
+                pool.map(square_daemon, ((X,) for X in repeat(self.test_data, 4)), chunk_size=1)
 
     def test_cpu_pinning(self):
         """
@@ -249,14 +247,47 @@ class MPIRETest(unittest.TestCase):
         print()
         for n_jobs, progress_bar in product([None, 1, 2], [True, tqdm(total=len(self.test_data)),
                                                            tqdm(total=len(self.test_data), ascii=True), tqdm()]):
+            # Should work just fine
             if progress_bar is True or progress_bar.total == len(self.test_data):
                 with WorkerPool(n_jobs=n_jobs) as pool:
                     results_list = pool.map(square, self.test_data, progress_bar=progress_bar)
                     self.assertTrue(isinstance(results_list, list))
                     self.assertEqual(self.test_desired_output, results_list)
+
             # Should raise
             else:
                 with self.assertRaises(ValueError):
                     with WorkerPool(n_jobs=n_jobs) as pool:
                         _ = pool.map(square, self.test_data, progress_bar=progress_bar)
         print()
+
+    def test_exceptions(self):
+        """
+        Tests if MPIRE can handle exceptions well
+        """
+        print()
+        for n_jobs, n_tasks_max_active, worker_lifespan, progress_bar in product([1, 20], [None, 1], [None, 1],
+                                                                                 [False, True]):
+            # Should work for map like functions
+            with self.assertRaises(ValueError):
+                with WorkerPool(n_jobs=n_jobs) as pool:
+                    _ = pool.map(square_raises, self.test_data, max_tasks_active=n_tasks_max_active,
+                                 worker_lifespan=worker_lifespan, progress_bar=progress_bar)
+
+            # Should work for imap like functions
+            with self.assertRaises(ValueError):
+                with WorkerPool(n_jobs=n_jobs) as pool:
+                    list(pool.imap_unordered(square_raises, self.test_data, max_tasks_active=n_tasks_max_active,
+                                             worker_lifespan=worker_lifespan, progress_bar=progress_bar))
+
+            # Should work for map like functions
+            with self.assertRaises(ValueError):
+                with WorkerPool(n_jobs=n_jobs) as pool:
+                    _ = pool.map(square_raises_on_idx, self.test_data, max_tasks_active=n_tasks_max_active,
+                                 worker_lifespan=worker_lifespan, progress_bar=progress_bar)
+
+            # Should work for imap like functions
+            with self.assertRaises(ValueError):
+                with WorkerPool(n_jobs=n_jobs) as pool:
+                    list(pool.imap_unordered(square_raises_on_idx, self.test_data, max_tasks_active=n_tasks_max_active,
+                                             worker_lifespan=worker_lifespan, progress_bar=progress_bar))

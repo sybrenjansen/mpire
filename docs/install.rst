@@ -18,4 +18,10 @@ MPIRE can be installed through pip:
 Dependencies
 ------------
 
-Nothing but a working Python 3.x environment.
+- Python 3.x
+
+Python packages (installed automatically when installing MPIRE):
+
+- tqdm_
+
+.. _tqdm: https://pypi.python.org/pypi/tqdm
