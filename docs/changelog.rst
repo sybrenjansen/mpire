@@ -1,6 +1,17 @@
 Changelog
 =========
 
+0.6.0
+-----
+
+*(2017-11-03)*
+
+* ``restart_workers`` parameter is now deprecated and will be removed from v1.0.0.
+* Progress bar functionality added (using tqdm_).
+* Improved error handling in user provided functions.
+* Fixed randomly occurring ``BrokenPipeErrors`` and deadlocks.
+
+
 0.5.1
 -----
 
@@ -42,3 +53,6 @@ Changelog
 *(2017-06-27)*
 
 * Added docs
+
+
+.. _tqdm: https://pypi.python.org/pypi/tqdm
