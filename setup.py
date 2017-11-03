@@ -1,4 +1,3 @@
-import mpire
 from setuptools import setup
 
 with open('README.md') as file:
@@ -6,7 +5,7 @@ with open('README.md') as file:
 
 setup(
     name="mpire",
-    version=mpire.__version__,
+    version='0.6.0',
     author="Sybren Jansen (Target Holding)",
     author_email="sybren.jansen@target-holding.nl",
     description="A Python package for multiprocessing, but faster than multiprocessing",
