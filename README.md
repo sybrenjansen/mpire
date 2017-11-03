@@ -15,6 +15,7 @@ Features
 - Automatic restarting of workers after a specified number of tasks to reduce memory footprint
 - Nested pool of workers are allowed when setting the ``daemon`` option
 - Child processes can be pinned to specific CPUs on Linux systems
+- Progress bar support
 
 Installation
 ------------
@@ -52,5 +53,4 @@ in your current working environment. Then execute:
 make html
 ```
 
-in the ``docs`` folder. For a pre-build version, please refer to
-[CI/Jenkins](http://ci:8080/job/Attic/job/mpire/Documentation/).
+in the ``docs`` folder. For a pre-build version, please refer to [RTFM](https://rtfm.tgho.nl/mpire).
