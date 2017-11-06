@@ -1,6 +1,15 @@
 Changelog
 =========
 
+0.6.1
+-----
+
+*(2017-11-06)*
+
+* Fixed bug where sometimes exceptions fail to pickle
+* Fixed a bug where the main process could get unresponsive when an exception was raised
+* Child processes are now cleaned up in parallel when an exception was raised
+
 0.6.0
 -----
 

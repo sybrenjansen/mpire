@@ -1,5 +1,7 @@
+from .exceptions import CannotPickleExceptionError, StopWorker
 import itertools
 import os
+import pickle
 import queue
 import signal
 import subprocess
@@ -22,11 +24,6 @@ try:
 except NameError:
     # Not using IPython
     from tqdm import tqdm as tqdm_pb
-
-
-class StopWorker(Exception):
-    """ Exception used to kill workers from the main process """
-    pass
 
 
 class Worker(Process):
@@ -100,6 +97,7 @@ class Worker(Process):
         with self.lock:
             self.stop_event.set()
             if self.running:
+                self.running = False
                 raise StopWorker
 
     def run(self):
@@ -155,7 +153,6 @@ class Worker(Process):
                         # in this loop, right after we have set running to False. In that case the signal handler will
                         # not raise, but we would be still running tasks.
                         if self.stop_event.is_set():
-                            # print(self.worker_id, "stop event is set right before processing, shutting down")
                             self.tasks_queue.task_done()
                             return
 
@@ -169,13 +166,24 @@ class Worker(Process):
                         with self.lock:
                             self.running = False
 
-                        # Create traceback string and add exception to queue
+                        # Create traceback string
                         traceback_str = "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % \
                                         (self.worker_id,
                                          "\n".join("Arg %d: %s" % (arg_nr, str(arg))
                                                    for arg_nr, arg in
                                                    enumerate(args[1] if self.keep_order_event.is_set() else args)),
                                          traceback.format_exc())
+
+                        # Sometimes an exception cannot be pickled (i.e., we get the _pickle.PickleError:
+                        # Can't pickle <class ...>: it's not the same object as ...). We check that here by trying the
+                        # pickle.dumps manually. The call to `queue.put` creates a thread in which it pickles and when
+                        # that raises an exception we cannot catch it.
+                        try:
+                            pickle.dumps(type(err))
+                        except pickle.PicklingError:
+                            err = CannotPickleExceptionError()
+
+                        # Add exception to queue
                         self.exception_queue.put((type(err), traceback_str), block=False, timeout=2)
                         self.tasks_queue.task_done()
                         return
@@ -530,34 +538,16 @@ class WorkerPool:
 
         :param keep_exception_queue: Whether to keep the exception queue or not
         """
-        # Send interrupt signal so the processes can die gracefully. Sometimes this will throw an exception, e.g. when
-        # processes are in the middle of restarting
+        # Create cleanup threads such that processes can get killed simultaneously, which can save quite some time
+        threads = []
         for w in self._workers:
-            try:
-                os.kill(w.pid, signal.SIGUSR1)
-            except ProcessLookupError:
-                pass
+            t = Thread(target=self._terminate_worker, args=(w,))
+            t.start()
+            threads.append(t)
 
-        # When the kill signal is send to all child processes we check one process at a time if we can join them
-        for w in self._workers:
-            # We wait until workers are done terminating. However, we don't have all the patience in the world and
-            # sometimes workers can get stuck when starting up when an exception is handled. So when the patience runs
-            # out we terminate them.
-            try_count = 10
-            while w.is_alive() and try_count > 0:
-                time.sleep(0.1)
-                try:
-                    os.kill(w.pid, signal.SIGUSR1)
-                except ProcessLookupError:
-                    pass
-                try_count -= 1
-
-            # If a graceful kill is not possible, terminate the process.
-            if try_count == 0:
-                w.terminate()
-
-            # Join worker
-            w.join()
+        # Wait until cleanup threads are done
+        for t in threads:
+            t.join()
 
         # Drain and join the queues
         self._drain_and_join_queue(self._tasks_queue)
@@ -592,6 +582,34 @@ class WorkerPool:
         self._restart_queue = None
         self._task_completed_queue = None
         self._has_started_counter = None
+
+    @staticmethod
+    def _terminate_worker(worker):
+        """
+        Terminates a single worker
+
+        :param worker: Worker instance
+        """
+        # We wait until workers are done terminating. However, we don't have all the patience in the world and sometimes
+        # workers can get stuck when starting up when an exception is handled. So when the patience runs out we
+        # terminate them.
+        try_count = 10
+        while worker.is_alive() and try_count > 0:
+            # Send interrupt signal so the processes can die gracefully. Sometimes this will throw an exception, e.g.
+            # when processes are in the middle of restarting
+            try:
+                os.kill(worker.pid, signal.SIGUSR1)
+            except ProcessLookupError:
+                pass
+            try_count -= 1
+            time.sleep(0.1)
+
+        # If a graceful kill is not possible, terminate the process.
+        if try_count == 0:
+            worker.terminate()
+
+        # Join worker
+        worker.join()
 
     @staticmethod
     def _drain_and_join_queue(q, join=True):
@@ -1060,8 +1078,10 @@ class WorkerPool:
 
             # Make sure we only process a single exception (multiple processes could potentially insert exceptions at
             # the same time). Note that draining the queue makes sure that task_done() is called for the above 'get'
-            # call
-            self._drain_and_join_queue(self._exception_queue, join=False)
+            # call. We reset the exception queue as well because sometimes the queue can get corrupt even though it
+            # should work just fine after draining (no idea why though).
+            self._drain_and_join_queue(self._exception_queue, join=True)
+            self._exception_queue = JoinableQueue()
 
             # Pass error to main process so it can be raised there (exceptions raised from threads or child processes
             # cannot be caught directly)
