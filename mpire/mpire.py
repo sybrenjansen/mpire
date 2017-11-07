@@ -1,4 +1,4 @@
-from .exceptions import CannotPickleExceptionError, StopWorker
+from mpire.exceptions import CannotPickleExceptionError, StopWorker
 import itertools
 import os
 import pickle
@@ -32,8 +32,8 @@ class Worker(Process):
     """
 
     def __init__(self, worker_id, tasks_queue, results_queue, restart_queue, task_completed_queue, exception_queue,
-                 has_started_counter, func_pointer, keep_order_event, shared_objects=None, worker_lifespan=None,
-                 pass_worker_id=False):
+                 exception_lock, exception_thrown, has_started_counter, func_pointer, keep_order_event,
+                 shared_objects=None, worker_lifespan=None, pass_worker_id=False):
         """
         :param worker_id: Worker id
         :param tasks_queue: Queue object for retrieving new task arguments
@@ -43,6 +43,8 @@ class Worker(Process):
             when notifying is not necessary.
         :param exception_queue: Queue object for sending Exception objects to whenever an Exception was raised inside a
             user function
+        :param exception_lock: Lock object such that child processes can only throw one at a time.
+        :param exception_thrown: Event object that ensures only one exception can be thrown at all times
         :param has_started_counter: multiprocessing.Value object that tracks how many workers have started
         :param func_pointer: Function pointer to call each time new task arguments become available
         :param keep_order_event: Event object which signals if the task arguments contain an order index which should
@@ -63,6 +65,8 @@ class Worker(Process):
         self.restart_queue = restart_queue
         self.task_completed_queue = task_completed_queue
         self.exception_queue = exception_queue
+        self.exception_lock = exception_lock
+        self.exception_thrown = exception_thrown
         self.has_started_counter = has_started_counter
         self.func_pointer = func_pointer
         self.keep_order_event = keep_order_event
@@ -166,25 +170,35 @@ class Worker(Process):
                         with self.lock:
                             self.running = False
 
-                        # Create traceback string
-                        traceback_str = "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % \
-                                        (self.worker_id,
-                                         "\n".join("Arg %d: %s" % (arg_nr, str(arg))
-                                                   for arg_nr, arg in
-                                                   enumerate(args[1] if self.keep_order_event.is_set() else args)),
-                                         traceback.format_exc())
+                        # Only one process can throw at a time
+                        with self.exception_lock:
+                            # Only raise an exception when this process is the first one to raise. We do this because
+                            # when the first exception is caught by the main process the workers are joined which can
+                            # cause a deadlock on draining the exception queue. By only allowing one process to throw we
+                            # know for sure that the exception queue will be empty when the first one arrives.
+                            if not self.exception_thrown.is_set():
+                                # Create traceback string
+                                traceback_str = \
+                                    "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % \
+                                    (self.worker_id,
+                                     "\n".join("Arg %d: %s" % (arg_nr, str(arg)) for arg_nr, arg in
+                                               enumerate(args[1] if self.keep_order_event.is_set() else args)),
+                                     traceback.format_exc())
 
-                        # Sometimes an exception cannot be pickled (i.e., we get the _pickle.PickleError:
-                        # Can't pickle <class ...>: it's not the same object as ...). We check that here by trying the
-                        # pickle.dumps manually. The call to `queue.put` creates a thread in which it pickles and when
-                        # that raises an exception we cannot catch it.
-                        try:
-                            pickle.dumps(type(err))
-                        except pickle.PicklingError:
-                            err = CannotPickleExceptionError()
+                                # Sometimes an exception cannot be pickled (i.e., we get the _pickle.PickleError:
+                                # Can't pickle <class ...>: it's not the same object as ...). We check that here by
+                                # trying the pickle.dumps manually. The call to `queue.put` creates a thread in which it
+                                # pickles and when that raises an exception we cannot catch it.
+                                try:
+                                    pickle.dumps(type(err))
+                                except pickle.PicklingError:
+                                    err = CannotPickleExceptionError()
 
-                        # Add exception to queue
-                        self.exception_queue.put((type(err), traceback_str), block=False, timeout=2)
+                                # Add exception to queue
+                                self.exception_queue.put((type(err), traceback_str), block=False, timeout=2)
+                                self.exception_thrown.set()
+
+                        # Return
                         self.tasks_queue.task_done()
                         return
 
@@ -259,6 +273,11 @@ class WorkerPool:
 
         # Queue where the child processes can pass on an encountered exceptoin
         self._exception_queue = None
+
+        # Lock object such that child processes can only throw one at a time. The Event object ensures only one
+        # exception can be thrown
+        self._exception_lock = Lock()
+        self._exception_thrown = Event()
 
         # Synchronized value counting how many child processes actually started (when calling .start() on a Process does
         # not mean that process is actually spawned yet)
@@ -429,8 +448,9 @@ class WorkerPool:
         """
         # Create worker
         w = Worker(worker_id, self._tasks_queue, self._results_queue, self._restart_queue, self._task_completed_queue,
-                   self._exception_queue, self._has_started_counter, self.func_pointer, self._keep_order_event,
-                   self.shared_objects, self.worker_lifespan, self.pass_worker_id)
+                   self._exception_queue, self._exception_lock, self._exception_thrown, self._has_started_counter,
+                   self.func_pointer, self._keep_order_event, self.shared_objects, self.worker_lifespan,
+                   self.pass_worker_id)
         w.daemon = self.daemon
         w.start()
 
@@ -1073,21 +1093,14 @@ class WorkerPool:
             # is being written to we can get errors.
             self._ready_for_destruction.wait()
 
-            # Kill processes
+            # # Kill processes
             self.terminate(keep_exception_queue=True)
-
-            # Make sure we only process a single exception (multiple processes could potentially insert exceptions at
-            # the same time). Note that draining the queue makes sure that task_done() is called for the above 'get'
-            # call. We reset the exception queue as well because sometimes the queue can get corrupt even though it
-            # should work just fine after draining (no idea why though).
-            self._drain_and_join_queue(self._exception_queue, join=True)
-            self._exception_queue = JoinableQueue()
 
             # Pass error to main process so it can be raised there (exceptions raised from threads or child processes
             # cannot be caught directly)
             self._exception_queue.put((err, traceback_str))
-        else:
-            self._exception_queue.task_done()
+
+        self._exception_queue.task_done()
 
     def _clean_up_exception_handle(self):
         """

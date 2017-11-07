@@ -1,6 +1,13 @@
 Changelog
 =========
 
+0.6.2
+-----
+
+*(2017-11-07)*
+
+* Fixed a second bug where the main process could get unresponsive when an exception was raised
+
 0.6.1
 -----
 

@@ -20,7 +20,7 @@
 from datetime import datetime
 import re
 
-_version = '0.6.1'
+_version = '0.6.2'
 
 def isBoostFunc(what, obj):
     return what == 'function' and obj.__repr__().startswith('<Boost.Python.function object at 0x')
