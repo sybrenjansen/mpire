@@ -1,6 +1,18 @@
 Changelog
 =========
 
+0.6.3
+-----
+
+*(2017-12-05)*
+
+* :meth:`mpire.chunk_tasks` is now available as a public function
+* Chunking in above function and map functions now accept a ``n_splits`` parameter
+* ``iterable_of_args`` in map functions can now contain single values instead of only iterables
+* ``tqdm`` is now available from the MPIRE package which automatically switches to the Jupyter/IPython notebook widget
+  when available
+* Small bugfix in cleaning up a worker pool when no map function was called
+
 0.6.2
 -----
 
