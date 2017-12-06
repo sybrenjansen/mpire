@@ -17,11 +17,6 @@ class UtilsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             chunk_tasks(iter([]), n_splits=1).__next__()
 
-        # Test that nothing breaks when a faulty iterable length is provided:
-        for iter_len in [3, 20]:
-            list(chunk_tasks(range(10), iterable_len=iter_len, n_splits=1))
-            list(chunk_tasks(iter(range(10)), iterable_len=iter_len, n_splits=1))
-
         # Test that chunk_size is prioritized over n_splits
         chunks = list(chunk_tasks(range(4), chunk_size=4, n_splits=4))
         self.assertEqual(len(chunks), 1)
@@ -33,6 +28,16 @@ class UtilsTest(unittest.TestCase):
 
         chunks = list(chunk_tasks(iter([]), iterable_len=0, n_splits=5))
         self.assertEqual(len(chunks), 0)
+
+        # Test for cases where iterable_len does and does not match the number of arguments
+        num_args = 10
+        for iter_len in [5, 10, 20]:
+            expected_args_sum = min(iter_len, num_args)
+            chunks = list(chunk_tasks(range(num_args), iterable_len=iter_len, n_splits=1))
+            self.assertEqual(len(chunks[0]), expected_args_sum)
+
+            list(chunk_tasks(iter(range(num_args)), iterable_len=iter_len, n_splits=1))
+            self.assertEqual(len(chunks[0]), expected_args_sum)
 
         # Test for len(args) {<, ==, >} n_splits
         n_splits = 5
