@@ -36,10 +36,22 @@ def chunk_tasks(iterable_of_args, iterable_len=None, chunk_size=None, n_splits=N
     # Chunk tasks
     args_iter = iter(iterable_of_args)
     current_chunk_size = chunk_size
+    n_elements_returned = 0
     while True:
         # We use max(1, ...) to always at least get one element
         chunk = tuple(itertools.islice(args_iter, max(1, math.ceil(current_chunk_size))))
+
+        # If we ran out of input, we stop
         if not chunk:
             return
+
+        # If the iterable has more elements than the given iterable length, we stop
+        if iterable_len is not None and n_elements_returned + len(chunk) > iterable_len:
+            chunk = chunk[:iterable_len - n_elements_returned]
+            if chunk:
+                yield chunk
+            return
+
         yield chunk
         current_chunk_size = (current_chunk_size + chunk_size) - math.ceil(current_chunk_size)
+        n_elements_returned += len(chunk)

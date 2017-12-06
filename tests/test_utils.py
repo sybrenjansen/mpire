@@ -34,10 +34,12 @@ class UtilsTest(unittest.TestCase):
         for iter_len in [5, 10, 20]:
             expected_args_sum = min(iter_len, num_args)
             chunks = list(chunk_tasks(range(num_args), iterable_len=iter_len, n_splits=1))
-            self.assertEqual(len(chunks[0]), expected_args_sum)
+            total_args = sum(map(lambda x: len(x), chunks))
+            self.assertEqual(total_args, expected_args_sum)
 
             list(chunk_tasks(iter(range(num_args)), iterable_len=iter_len, n_splits=1))
-            self.assertEqual(len(chunks[0]), expected_args_sum)
+            total_args = sum(map(lambda x: len(x), chunks))
+            self.assertEqual(total_args, expected_args_sum)
 
         # Test for len(args) {<, ==, >} n_splits
         n_splits = 5
