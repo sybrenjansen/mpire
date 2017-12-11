@@ -1,10 +1,10 @@
 Changelog
 =========
 
-0.6.3
+0.7.0
 -----
 
-*(2017-12-05)*
+*(2017-12-11)*
 
 * :meth:`mpire.chunk_tasks` is now available as a public function
 * Chunking in above function and map functions now accept a ``n_splits`` parameter
