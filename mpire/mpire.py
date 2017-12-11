@@ -1,4 +1,6 @@
 from mpire.exceptions import CannotPickleExceptionError, StopWorker
+from mpire.utils import chunk_tasks
+import collections
 import itertools
 import os
 import pickle
@@ -118,7 +120,10 @@ class Worker(Process):
         # In the case of not keeping order in mind (for imap) we can simply call the user function directly
         else:
             def func(_args, _additional_args):
-                return self.func_pointer(*itertools.chain(_additional_args, _args))
+                return self.func_pointer(*itertools.chain(
+                    _additional_args, _args if isinstance(_args, collections.Iterable)
+                                               and not isinstance(_args, (str, bytes)) else (_args,)
+                ))
 
         # Obtain additional args to pass to the function
         additional_args = []
@@ -161,6 +166,8 @@ class Worker(Process):
                             return
 
                     # This can fail if an exception occurs in the user provided function
+                    # args = args if isinstance(args, collections.Iterable) and not isinstance(args, (str, bytes)) \
+                    #     else (args,)
                     try:
                         results.append(func(args, additional_args))
                     except StopWorker:
@@ -177,12 +184,16 @@ class Worker(Process):
                             # cause a deadlock on draining the exception queue. By only allowing one process to throw we
                             # know for sure that the exception queue will be empty when the first one arrives.
                             if not self.exception_thrown.is_set():
+                                # Determine function arguments
+                                func_args = args[1] if self.keep_order_event.is_set() else args
+                                func_args = func_args if isinstance(func_args, collections.Iterable) \
+                                                         and not isinstance(func_args, (str, bytes)) else (func_args,)
+
                                 # Create traceback string
                                 traceback_str = \
                                     "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % \
-                                    (self.worker_id,
-                                     "\n".join("Arg %d: %s" % (arg_nr, str(arg)) for arg_nr, arg in
-                                               enumerate(args[1] if self.keep_order_event.is_set() else args)),
+                                    (self.worker_id, "\n".join("Arg %d: %s" % (arg_nr, str(arg))
+                                                               for arg_nr, arg in enumerate(func_args)),
                                      traceback.format_exc())
 
                                 # Sometimes an exception cannot be pickled (i.e., we get the _pickle.PickleError:
@@ -233,7 +244,10 @@ class Worker(Process):
         :param args: Task arguments
         :param additional_args: Additional arguments like ``worker_id`` and ``shared_objects``
         """
-        return idx, self.func_pointer(*itertools.chain(additional_args, args))
+        return idx, self.func_pointer(*itertools.chain(
+            additional_args,
+            args if isinstance(args, collections.Iterable) and not isinstance(args, (str, bytes)) else (args,)
+        ))
 
 
 class WorkerPool:
@@ -570,9 +584,12 @@ class WorkerPool:
             t.join()
 
         # Drain and join the queues
-        self._drain_and_join_queue(self._tasks_queue)
-        self._drain_and_join_queue(self._results_queue)
-        self._drain_and_join_queue(self._restart_queue)
+        if self._tasks_queue is not None:
+            self._drain_and_join_queue(self._tasks_queue)
+        if self._results_queue is not None:
+            self._drain_and_join_queue(self._results_queue)
+        if self._restart_queue is not None:
+            self._drain_and_join_queue(self._restart_queue)
 
         # Make sure the progress bar handle thread is dead
         if self._progress_bar_thread is not None and self._progress_bar_thread.is_alive():
@@ -672,7 +689,7 @@ class WorkerPool:
             self.terminate()
 
     def map(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-            restart_workers=None, worker_lifespan=None, progress_bar=False):
+            n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False):
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
@@ -689,6 +706,7 @@ class WorkerPool:
             the queue
         :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
             ``n_jobs * 4`` number of chunks.
+        :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
         :param restart_workers: DEPRECATED! MPIRE will no longer support reusing workers. This argument will be removed
             from version 1.0.0 onwards. Boolean. Whether to restart the possibly already existing workers or use the old
             ones. Note: in the latter case the ``func_pointer`` parameter will have no effect. Will start workers either
@@ -707,8 +725,8 @@ class WorkerPool:
         if iterable_len is None and hasattr(iterable_of_args, '__len__'):
             iterable_len = len(iterable_of_args)
         results = self.map_unordered(func_pointer, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)),
-                                     iterable_len, max_tasks_active, chunk_size, restart_workers, worker_lifespan,
-                                     progress_bar)
+                                     iterable_len, max_tasks_active, chunk_size, n_splits, restart_workers,
+                                     worker_lifespan, progress_bar)
 
         # Notify workers to forget about order
         self._keep_order_event.clear()
@@ -717,7 +735,7 @@ class WorkerPool:
         return [result[1] for result in sorted(results, key=lambda result: result[0])]
 
     def map_unordered(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-                      restart_workers=None, worker_lifespan=None, progress_bar=False):
+                      n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False):
         """
         Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
@@ -734,6 +752,7 @@ class WorkerPool:
             the queue
         :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
             ``n_jobs * 4`` number of chunks.
+        :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
         :param restart_workers: DEPRECATED! MPIRE will no longer support reusing workers. This argument will be removed
             from version 1.0.0 onwards. Boolean. Whether to restart the possibly already existing workers or use the old
             ones. Note: in the latter case the ``func_pointer`` parameter will have no effect. Will start workers either
@@ -747,10 +766,10 @@ class WorkerPool:
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
         return list(self.imap_unordered(func_pointer, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
-                                        restart_workers, worker_lifespan, progress_bar))
+                                        n_splits, restart_workers, worker_lifespan, progress_bar))
 
     def imap(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-             restart_workers=None, worker_lifespan=None, progress_bar=False):
+             n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False):
         """
         Same as ``multiprocessing.imap_unordered()``, but ordered. Also allows a user to set the maximum number of
         tasks available in the queue.
@@ -767,6 +786,7 @@ class WorkerPool:
             the queue
         :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
             ``n_jobs * 4`` number of chunks.
+        :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
         :param restart_workers: DEPRECATED! MPIRE will no longer support reusing workers. This argument will be removed
             from version 1.0.0 onwards. Boolean. Whether to restart the possibly already existing workers or use the old
             ones. Note: in the latter case the ``func_pointer`` parameter will have no effect. Will start workers either
@@ -788,7 +808,8 @@ class WorkerPool:
             iterable_len = len(iterable_of_args)
         for result_idx, result in self.imap_unordered(func_pointer, ((args_idx, args) for args_idx, args
                                                       in enumerate(iterable_of_args)), iterable_len, max_tasks_active,
-                                                      chunk_size, restart_workers, worker_lifespan, progress_bar):
+                                                      chunk_size, n_splits, restart_workers, worker_lifespan,
+                                                      progress_bar):
             # Check if the next one(s) to return is/are temporarily stored. We use a while-true block with dict.pop() to
             # keep the temporary store as small as possible
             while True:
@@ -814,7 +835,7 @@ class WorkerPool:
         self._keep_order_event.clear()
 
     def imap_unordered(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-                       restart_workers=None, worker_lifespan=None, progress_bar=False):
+                       n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False):
         """
         Same as ``multiprocessing.imap_unordered()``. Also allows a user to set the maximum number of tasks available in
         the queue.
@@ -831,6 +852,7 @@ class WorkerPool:
             the queue
         :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
             ``n_jobs * 4`` number of chunks.
+        :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
         :param restart_workers: DEPRECATED! MPIRE will no longer support reusing workers. This argument will be removed
             from version 1.0.0 onwards. Boolean. Whether to restart the possibly already existing workers or use the old
             ones. Note: in the latter case the ``func_pointer`` parameter will have no effect. Will start workers either
@@ -845,8 +867,8 @@ class WorkerPool:
         # Check parameters and thereby obtain the number of tasks. The chunk_size and progress bar parameters could be
         # modified as well
         n_tasks, chunk_size, progress_bar = self._check_map_parameters(iterable_of_args, iterable_len, progress_bar,
-                                                                       chunk_size, max_tasks_active, worker_lifespan,
-                                                                       restart_workers)
+                                                                       chunk_size, n_splits, max_tasks_active,
+                                                                       worker_lifespan, restart_workers)
 
         # Reset some variables
         self.exception_caught = False
@@ -854,7 +876,7 @@ class WorkerPool:
         self._ready_for_destruction.clear()
 
         # Chunk the function arguments
-        iterator_of_chunked_args = self.chunk_tasks(iterable_of_args, n_tasks, chunk_size)
+        iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size, n_splits or self.n_jobs * 4)
 
         # Create a progress bar if requested
         progress_bar, progress_bar_progress = self._create_progress_bar(progress_bar, n_tasks)
@@ -870,7 +892,7 @@ class WorkerPool:
         # try-except clauses to speed up the process.
         n_active = 0
         if max_tasks_active == 'n_jobs*2':
-            max_tasks_active = len(self._workers) * 2
+            max_tasks_active = self.n_jobs * 2
 
         if max_tasks_active is None:
             for chunked_args in iterator_of_chunked_args:
@@ -926,7 +948,7 @@ class WorkerPool:
         self.stop_and_join()
 
     @staticmethod
-    def _check_map_parameters(iterable_of_args, iterable_len, progress_bar, chunk_size, max_tasks_active,
+    def _check_map_parameters(iterable_of_args, iterable_len, progress_bar, chunk_size, n_splits, max_tasks_active,
                               worker_lifespan, restart_workers):
         """
         Check the parameters provided to any (i)map function. Also extracts the number of tasks and can modify the
@@ -944,17 +966,31 @@ class WorkerPool:
             n_tasks = progress_bar.total
         elif chunk_size is None or progress_bar:
             warnings.simplefilter('default')
-            warnings.warn('Failed to obtain length of iterable when chunk size is None and/or a progress bar is '
-                          'requested. Chunk size is set to 1 and no progress bar will be shown. Remedy: either provide '
-                          'an iterable with a len() function or specify iterable_len in the function call',
-                          RuntimeWarning, stacklevel=2)
+            warnings.warn('Failed to obtain length of iterable when chunk size or number of splits is None and/or a '
+                          'progress bar is requested. Chunk size is set to 1 and no progress bar will be shown. '
+                          'Remedy: either provide an iterable with a len() function or specify iterable_len in the '
+                          'function call', RuntimeWarning, stacklevel=2)
             chunk_size = 1
             progress_bar = False
+
+        # Check chunk_size parameter
+        if chunk_size is not None:
+            if not isinstance(chunk_size, (int, float)):
+                raise TypeError('chunk_size should be either None or an integer value')
+            elif chunk_size <= 0:
+                raise ValueError('chunk_size should be a positive integer > 0')
+
+        # Check n_splits parameter (only when chunk_size is None)
+        else:
+            if not (isinstance(n_splits, int) or n_splits is None):
+                raise TypeError('n_splits should be either None or an integer value')
+            if isinstance(n_splits, int) and n_splits <= 0:
+                raise ValueError('n_splits should be a positive integer > 0')
 
         # Check max_tasks_active parameter
         if isinstance(max_tasks_active, int):
             if max_tasks_active <= 0:
-                raise ValueError('mmax_tasks_active should be a positive integer, None or "n_jobs*2')
+                raise ValueError('max_tasks_active should be a positive integer, None or "n_jobs*2')
         elif max_tasks_active is not None and max_tasks_active is not 'n_jobs*2':
             raise TypeError('max_tasks_active should be a positive integer, None or "n_jobs*2"')
 
@@ -976,32 +1012,6 @@ class WorkerPool:
                           'argument will be removed from version 1.0.0 onwards.', DeprecationWarning, stacklevel=2)
 
         return n_tasks, chunk_size, progress_bar
-
-    def chunk_tasks(self, iterable_of_args, n_tasks, chunk_size=None):
-        """
-        Chunks tasks such that individual workers will receive chunks of tasks rather than individual ones, which can
-        speed up processing drastically.
-
-        :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
-            function pointer
-        :param n_tasks: Int. Number of tasks available in ``iterable_of_args``.
-        :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
-            ``n_jobs * 4`` number of chunks.
-        :return: Generator of chunked task arguments
-        """
-        # Determine chunk size
-        if chunk_size is None:
-            chunk_size, extra = divmod(n_tasks, len(self._workers) * 4)
-            if extra:
-                chunk_size += 1
-
-        # Chunk tasks
-        args_iter = iter(iterable_of_args)
-        while True:
-            chunk = tuple(itertools.islice(args_iter, chunk_size))
-            if not chunk:
-                return
-            yield chunk
 
     def _create_progress_bar(self, progress_bar, n_tasks):
         """
@@ -1059,6 +1069,7 @@ class WorkerPool:
         Closes the progress bar and its accompanying thread if a progress bar was provided.
 
         :param progress_bar: False or ``tqdm`` instance
+        :param progress_bar_progress: multiprocessing.Value for keeping track of the number of updates
         """
         # Clean up the progress bar
         if progress_bar:

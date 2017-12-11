@@ -127,10 +127,11 @@ map family of functions
 - :meth:`mpire.WorkerPool.imap_unordered`: The same as :meth:`mpire.WorkerPool.imap`, but results are ordered by task
   completion time. Usually faster than :meth:`mpire.WorkerPool.imap`.
 
-When using a single worker, the unordered versions are equivalent to their ordered counterpart.
+When using a single worker the unordered versions are equivalent to their ordered counterpart.
 
 Each ``map`` function should receive a function pointer and an iterable of arguments, where the elements of the iterable
-are expected to be iterables that are unpacked as arguments. For example:
+are expected to be iterables that are unpacked as arguments. If the elements are not iterables, the single value is
+simply passed on as the only argument. For example:
 
 .. code-block:: python
 
@@ -141,21 +142,25 @@ are expected to be iterables that are unpacked as arguments. For example:
         return x * y
 
     with WorkerPool(n_jobs=4) as pool:
-        # 1. This will fail!
+        # 1. Square the numbers, results should be: [0, 1, 4, 9, 16, 25, ...]
         results = pool.map(square, range(100))
 
     with WorkerPool(n_jobs=4) as pool:
         # 2. Square the numbers, results should be: [0, 1, 4, 9, 16, 25, ...]
-        results = pool.map(square, [(x,) for x in range(100)])
+        # Note: you'll probably don't want to execute this, it will take a long time ...
+        results = pool.map(square, range(int(1e30)), iterable_len=int(1e30), chunk_size=1)
 
     with WorkerPool(n_jobs=4) as pool:
         # 3. Multiply the numbers, results should be [0, 101, 204, 309, 416, ...]
-        for result in pool.imap(multiply, [(x, y) for x, y in zip(range(100), range(100, 200))]):
+        for result in pool.imap(multiply, zip(range(100), range(100, 200)), iterable_len=100):
             # Do something with this result
-            pass
+            print(result)
 
-In the first example the function call will fail because the elements of the provided iterable are not iterables, but
-single integer values. The second example should work as expected. The third examples shows an example of using multiple
+The first example should work as expected, the numbers are simply squared. MPIRE knows how many tasks there are because
+a ``range`` object implements the ``__len__`` method (see section below). In the second example the ``1e30`` number is
+too large for Python: try calling ``len(range(int(1e30)))``, this will throw an ``OverflowError``. Therefore, we must
+use the ``iterable_len`` parameter to let MPIRE know how large the tasks list is. We also have to specify a chunk size
+here as the chunk size should be lower than ``sys.maxsize``. The third example shows an example of using multiple
 function arguments. Also note that we use ``imap`` in the third example, which allows us to process the results whenever
 they come available, not having to wait for all results to be ready.
 
@@ -165,28 +170,55 @@ Manual chunking
 
 By default, MPIRE chunks the given tasks in to four times the number of jobs chunks. Each worker is given one chunk of
 tasks at a time before returning its results. This usually makes processing faster when you have rather small tasks
-(computation wise) as tasks and results are pickled/unpickled when they are send to a worker or main thread. Chunking
+(computation wise) as tasks and results are pickled/unpickled when they are send to a worker or main process. Chunking
 the tasks and results ensures that each process has to pickle/unpickle less often.
 
 However, to determine the number of tasks in the argument list the iterable should implement the ``__len__`` method,
-which is available in default containers like ``list`` or ``tuple``, but isn't available in generator objects. To allow
-working with generators each ``map`` function has the option to pass the iterable length:
+which is available in default containers like ``list`` or ``tuple``, but isn't available in most generator objects
+(the ``range`` object is one of the exceptions). To allow working with generators each ``map`` function has the option
+to pass the iterable length:
 
 .. code-block:: python
 
     with WorkerPool(n_jobs=4) as pool:
-        # 1. This will fail!
+        # 1. This will issue a warning and sets the chunk size to 1
         results = pool.map(square, ((x,) for x in range(100)))
 
-        # 2. Square the numbers using a generator using automatic chunking
+        # 2. This will issue a warning as well and sets the chunk size to 1
+        results = pool.map(square, ((x,) for x in range(100)), n_splits=4)
+
+        # 3. Square the numbers using a generator using a specific number of splits
+        results = pool.map(square, ((x,) for x in range(100)), iterable_len=100, n_splits=4)
+
+        # 4. Square the numbers using a generator using automatic chunking
         results = pool.map(square, ((x,) for x in range(100)), iterable_len=100)
 
-        # 3. Square the numbers using a generator using a fixed chunk size
+        # 5. Square the numbers using a generator using a fixed chunk size
         results = pool.map(square, ((x,) for x in range(100)), chunk_size=4)
 
-In the first example the function call will fail because MPIRE doesn't know how large the chunks should be. The second
-example should work as expected where 16 chunks are used (four times the number of workers). The third example uses a
-fixed chunk size of four, so MPIRE doesn't need to know the iterable length.
+In the first two examples the function call will fail because MPIRE doesn't know how large the chunks should be as the
+total number of tasks is unknown, therefore it will fall back to a chunk size of 1. The third example should work as
+expected where 4 chunks are used. The fourth example uses 16 chunks (the default four times the number of workers). The
+last example uses a fixed chunk size of four, so MPIRE doesn't need to know the iterable length.
+
+You can also call the chunk function manually:
+
+.. code-block:: python
+
+    from mpire import chunk_tasks
+
+    # Convert to list because chunk_tasks returns a generator
+    print(list(chunk_tasks(range(10), n_splits=3)))
+    print(list(chunk_tasks(range(10), chunk_size=2.5)))
+    print(list(chunk_tasks((x for x in range(10)), iterable_len=10, n_splits=6)))
+
+will output:
+
+.. code-block:: python
+
+    [(0, 1, 2, 3), (4, 5, 6), (7, 8, 9)]
+    [(0, 1, 2), (3, 4), (5, 6, 7), (8, 9)]
+    [(0, 1), (2, 3), (4,), (5, 6), (7, 8), (9,)]
 
 
 Maximum number of active tasks
@@ -208,8 +240,8 @@ amount of active tasks.
 
     with WorkerPool(n_jobs=4) as pool:
         # Square the numbers using a generator
-        results = pool.map(square, ((x,) for x in range(int(1e300))), iterable_len=int(1e300),
-                           max_tasks_active=2*4)
+        results = pool.map(square, range(int(1e300)), iterable_len=int(1e300),
+                           chunk_size=int(1e5), max_tasks_active=2*4)
 
 
 Worker lifespan
@@ -224,7 +256,7 @@ the number of chunks of tasks) after which a worker should restart.
 
     with WorkerPool(n_jobs=4) as pool:
         # Square the numbers using a generator
-        results = pool.map(square, ((x,) for x in range(100)), iterable_len=100, worker_lifespan=1)
+        results = pool.map(square, range(100), worker_lifespan=1)
 
 In this example each worker is restarted after finishing a single chunk of tasks.
 
@@ -245,15 +277,14 @@ The main benefit to this is that the overhead of starting/terminating child proc
 
     with WorkerPool(n_jobs=4) as pool:
         # 1. Square the numbers using a generator, results should be: [0, 1, 4, 9, 16, 25, ...]
-        results = pool.map(square, ((x,) for x in range(100)), iterable_len=100, worker_lifespan=1)
+        results = pool.map(square, range(100), worker_lifespan=1)
 
         # 2. Still square the numbers using a generator, results should be: [0, 1, 4, 9, 16, 25, ...]
-        results = pool.map(multiply, ((x,) for x in range(100)), iterable_len=100, worker_lifespan=2,
-                           restart_workers=False)
+        results = pool.map(multiply, range(100), worker_lifespan=2, restart_workers=False)
 
         # 3. Multiply the numbers using a generator, results should be [0, 101, 204, 309, 416, ...]
-        results = pool.map(multiply, ((x,y) for x, y in zip(range(100), range(100, 200)),
-                           iterable_len=100, worker_lifespan=2, restart_workers=True)
+        results = pool.map(multiply, zip(range(100), range(100, 200)),
+                           worker_lifespan=2, restart_workers=True)
 
 The first example spawns workers with the task of squaring the provided numbers. In the second example we reuse the
 workers of the first example by stating that we don't want to restart the workers. This means that the function pointer
@@ -271,8 +302,7 @@ to include a progress bar is by enabling the ``progress_bar`` flag in any of the
 .. code-block:: python
 
     with WorkerPool(n_jobs=4) as pool:
-        pool.map(square, ((x,) for x in range(100)), iterable_len=100,
-                 progress_bar=True)
+        pool.map(square, range(100), progress_bar=True)
 
 This will display a basic ``tqdm`` progress bar displaying the time elapsed and remaining, number of tasks completed
 (including a percentage value) and the speed (i.e., number of tasks completed per time unit).
@@ -291,21 +321,22 @@ providing a boolean value):
 
 .. code-block:: python
 
-    from tqdm import tqdm
+    from mpire import tqdm
 
     with WorkerPool(n_jobs=4) as pool:
-        pool.map(square, ((x,) for x in range(100)), iterable_len=100,
-                 progress_bar=tqdm(total=100, ascii=True))
+        pool.map(square, range(100), progress_bar=tqdm(total=100, ascii=True))
 
-or, when you're working in a notebook:
+You can also import ``tqdm`` from the ``tqdm`` package itself, but when importing from MPIRE you will automatically
+get the notebook widget when working in a Jupyter/IPython notebook. When importing from ``tqdm`` you would have
+to use:
 
 .. code-block:: python
 
-    from tqdm import tqdm_notebook
+    # Inside a Jupyter notebook
+    from tqdm import tqdm_notebook as tqdm
 
-    with WorkerPool(n_jobs=4) as pool:
-        pool.map(square, ((x,) for x in range(100)), iterable_len=100,
-                 progress_bar=tqdm_notebook(total=100, ascii=True))
+    # Otherwise
+    from tqdm import tqdm
 
 .. note::
 
@@ -324,17 +355,20 @@ using multiple progress bars using nested WorkerPools:
 
 .. code-block:: python
 
-    from tqdm import tqdm
+    from mpire import tqdm
 
     def dispatcher(worker_id, X):
         with WorkerPool(n_jobs=4) as nested_pool:
-            return nested_pool.map(square, ((x,) for x in X), iterable_len=len(X),
+            return nested_pool.map(square, X,
                                    progress_bar=tqdm(total=len(X), position=worker_id + 1))
 
-    with WorkerPool(n_jobs=4, daemon=False) as pool:
-        pool.pass_on_worker_id()
-        pool.map(dispatcher, ((list(range(x, x + 100)),) for x in range(100)),
-                 iterable_len=100, progress_bar=True)
+    def main():
+        with WorkerPool(n_jobs=4, daemon=False) as pool:
+            pool.pass_on_worker_id()
+            pool.map(dispatcher, ((range(x, x + 100),) for x in range(100)), iterable_len=100,
+                     n_splits=4, progress_bar=True)
+
+    main()
 
 We use ``worker_id + 1`` here because the worker IDs start at zero, and we reserve position 0 for the progress bar of
 the main WorkerPool.
@@ -386,7 +420,7 @@ that comes with it. However, in some cases you can safely disable locking, as is
         pool.set_shared_objects(results_container)
 
         # Square the results and store them in the results container
-        pool.map_unordered(square_with_index, ((idx, x) for idx, x in enumerate(range(100))),
+        pool.map_unordered(square_with_index, enumerate(range(100)),
                            iterable_len=100)
 
         # 2, Use a shared array of size 100 and type float to store the results
@@ -396,8 +430,7 @@ that comes with it. However, in some cases you can safely disable locking, as is
 
         # Square, add and modulo the results and store them in the results containers
         modulo_results = pool.map(square_add_and_modulo_with_index,
-                                  ((idx, x) for idx, x in enumerate(range(100))),
-                                  iterable_len=100, restart_workers=True)
+                                  enumerate(range(100)), iterable_len=100)
 
 We use the :meth:`mpire.WorkerPool.set_shared_objects` function to let MPIRE know we want to pass shared objects to all
 the workers. Multiple objects can be provided by placing them, for example, in a tuple container as is done in example
@@ -444,7 +477,7 @@ By default, the worker ID is not passed on. You can enable/disable this using th
         pool.pass_on_worker_id(True)
 
         # Square the results and store them in the results container
-        pool.map_unordered(square_sum, ((x,) for x in range(100)), iterable_len=100)
+        pool.map_unordered(square_sum, range(100))
 
 The worker ID will always be the first passed on argument to the provided function pointer.
 

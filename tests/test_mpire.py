@@ -1,6 +1,6 @@
 import unittest
 from itertools import product, repeat
-from mpire import cpu_count, WorkerPool
+from mpire import cpu_count, tqdm, WorkerPool
 
 
 def square(idx, x):
@@ -39,7 +39,7 @@ class MPIRETest(unittest.TestCase):
         self.test_desired_output = list(map(lambda _args: square(*_args), self.test_data))
         self.test_data_len = len(self.test_data)
 
-    def test_worker_pool_map(self):
+    def test_map(self):
         """
         Tests the map related function of the worker pool class
         """
@@ -47,78 +47,30 @@ class MPIRETest(unittest.TestCase):
 
         # Test results for different number of jobs to run in parallel and the maximum number of active tasks in the
         # queue
-        for n_jobs, n_tasks_max_active, worker_lifespan in product([1, 2, None], [None, 1, 3], [None, 1, 3]):
+        for n_jobs, n_tasks_max_active, worker_lifespan, chunk_size, n_splits in \
+                product([1, 2, None], [None, 2], [None, 2], [None, 3], [None, 3]):
             with WorkerPool(n_jobs=n_jobs) as pool:
-                # Test if parallel map results in the same as ordinary map function. Should work both for generators
-                # and iterators. Also check if an empty list works as desired.
-                results_list = pool.map(square, self.test_data, max_tasks_active=n_tasks_max_active,
-                                        worker_lifespan=worker_lifespan)
-                self.assertTrue(isinstance(results_list, list))
-                self.assertEqual(self.test_desired_output, results_list)
+                for map_func, sort, result_type in ((pool.map, False, list), (pool.map_unordered, True, list),
+                                                    (pool.imap, False, types.GeneratorType),
+                                                    (pool.imap_unordered, True, types.GeneratorType)):
+                    # Test if parallel map results in the same as ordinary map function. Should work both for generators
+                    # and iterators. Also check if an empty list works as desired.
+                    results_list = map_func(square, self.test_data, max_tasks_active=n_tasks_max_active,
+                                            worker_lifespan=worker_lifespan)
+                    self.assertTrue(isinstance(results_list, result_type))
+                    self.assertEqual(self.test_desired_output,
+                                     sorted(results_list, key=lambda tup: tup[0]) if sort else list(results_list))
 
-                results_list = pool.map(square, get_generator(self.test_data), iterable_len=self.test_data_len,
-                                        max_tasks_active=n_tasks_max_active, worker_lifespan=worker_lifespan)
-                self.assertTrue(isinstance(results_list, list))
-                self.assertEqual(self.test_desired_output, results_list)
+                    results_list = map_func(square, get_generator(self.test_data), iterable_len=self.test_data_len,
+                                            max_tasks_active=n_tasks_max_active, worker_lifespan=worker_lifespan)
+                    self.assertTrue(isinstance(results_list, result_type))
+                    self.assertEqual(self.test_desired_output,
+                                     sorted(results_list, key=lambda tup: tup[0]) if sort else list(results_list))
 
-                results_list = pool.map(square, [], max_tasks_active=n_tasks_max_active,
-                                        worker_lifespan=worker_lifespan)
-                self.assertTrue(isinstance(results_list, list))
-                self.assertEqual([], results_list)
-
-                # Test if parallel map_unordered contains all results. Should work both for generators and iterators.
-                # Also check if an empty list works as desired.
-                results_list = pool.map_unordered(square, self.test_data, max_tasks_active=n_tasks_max_active,
-                                                  worker_lifespan=worker_lifespan)
-                self.assertTrue(isinstance(results_list, list))
-                self.assertEqual(self.test_desired_output, sorted(results_list, key=lambda tup: tup[0]))
-
-                results_list = pool.map_unordered(square, get_generator(self.test_data),
-                                                  iterable_len=self.test_data_len, max_tasks_active=n_tasks_max_active,
-                                                  worker_lifespan=worker_lifespan)
-                self.assertTrue(isinstance(results_list, list))
-                self.assertEqual(self.test_desired_output, sorted(results_list, key=lambda tup: tup[0]))
-
-                results_list = pool.map_unordered(square, [], max_tasks_active=n_tasks_max_active,
-                                                  worker_lifespan=worker_lifespan)
-                self.assertTrue(isinstance(results_list, list))
-                self.assertEqual([], sorted(results_list, key=lambda tup: tup[0]))
-
-                # Test if parallel imap contains all results and if it returns an iterator. Should work for both
-                # generators and iterators. Also check if an empty list works as desired.
-                result_generator = pool.imap(square, self.test_data, max_tasks_active=n_tasks_max_active,
-                                             worker_lifespan=worker_lifespan)
-                self.assertTrue(isinstance(result_generator, types.GeneratorType))
-                self.assertEqual(self.test_desired_output, list(result_generator))
-
-                result_generator = pool.imap(square, get_generator(self.test_data), iterable_len=self.test_data_len,
-                                             max_tasks_active=n_tasks_max_active, worker_lifespan=worker_lifespan)
-                self.assertTrue(isinstance(result_generator, types.GeneratorType))
-                self.assertEqual(self.test_desired_output, list(result_generator))
-
-                result_generator = pool.imap(square, [], max_tasks_active=n_tasks_max_active,
-                                             worker_lifespan=worker_lifespan)
-                self.assertTrue(isinstance(result_generator, types.GeneratorType))
-                self.assertEqual([], list(result_generator))
-
-                # Test if parallel imap_unordered contains all results and if it returns an iterator. Should work for
-                # both generators and iterators. Also check if an empty list works as desired.
-                result_generator = pool.imap_unordered(square, self.test_data, max_tasks_active=n_tasks_max_active,
-                                                       worker_lifespan=worker_lifespan)
-                self.assertTrue(isinstance(result_generator, types.GeneratorType))
-                self.assertEqual(self.test_desired_output, sorted(result_generator, key=lambda tup: tup[0]))
-
-                result_generator = pool.imap_unordered(square, get_generator(self.test_data),
-                                                       iterable_len=self.test_data_len,
-                                                       max_tasks_active=n_tasks_max_active,
-                                                       worker_lifespan=worker_lifespan)
-                self.assertTrue(isinstance(result_generator, types.GeneratorType))
-                self.assertEqual(self.test_desired_output, sorted(result_generator, key=lambda tup: tup[0]))
-
-                result_generator = pool.imap_unordered(square, [], max_tasks_active=n_tasks_max_active,
-                                                       worker_lifespan=worker_lifespan)
-                self.assertTrue(isinstance(result_generator, types.GeneratorType))
-                self.assertEqual([], sorted(result_generator, key=lambda tup: tup[0]))
+                    results_list = map_func(square, [], max_tasks_active=n_tasks_max_active,
+                                            worker_lifespan=worker_lifespan)
+                    self.assertTrue(isinstance(results_list, result_type))
+                    self.assertEqual([], sorted(results_list, key=lambda tup: tup[0]) if sort else list(results_list))
 
         # Zero (or a negative number of) active tasks/lifespan should result in a value error
         for n in [-3, -1, 0, 3.14]:
@@ -157,6 +109,30 @@ class MPIRETest(unittest.TestCase):
                 with WorkerPool(n_jobs=4) as pool:
                     for _ in pool.imap_unordered(square, self.test_data, worker_lifespan=n):
                         pass
+
+        # chunk_size should be an integer or None
+        with self.assertRaises(TypeError):
+            with WorkerPool(n_jobs=4) as pool:
+                for _ in pool.imap(square, self.test_data, chunk_size='3'):
+                    pass
+
+        # chunk_size should be a positive integer
+        with self.assertRaises(ValueError):
+            with WorkerPool(n_jobs=4) as pool:
+                for _ in pool.imap(square, self.test_data, chunk_size=-5):
+                    pass
+
+        # n_splits should be an integer or None
+        with self.assertRaises(TypeError):
+            with WorkerPool(n_jobs=4) as pool:
+                for _ in pool.imap(square, self.test_data, n_splits='3'):
+                    pass
+
+        # n_splits should be a positive integer
+        with self.assertRaises(ValueError):
+            with WorkerPool(n_jobs=4) as pool:
+                for _ in pool.imap(square, self.test_data, n_splits=-5):
+                    pass
 
     def test_worker_id_shared_objects(self):
         """
@@ -242,8 +218,6 @@ class MPIRETest(unittest.TestCase):
         """
         Tests the progress bar
         """
-        from tqdm import tqdm
-
         print()
         for n_jobs, progress_bar in product([None, 1, 2], [True, tqdm(total=len(self.test_data)),
                                                            tqdm(total=len(self.test_data), ascii=True), tqdm()]):
