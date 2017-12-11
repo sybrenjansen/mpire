@@ -356,7 +356,6 @@ using multiple progress bars using nested WorkerPools:
 .. code-block:: python
 
     from mpire import tqdm
-    from multiprocessing import Lock
 
     def dispatcher(worker_id, X):
         with WorkerPool(n_jobs=4) as nested_pool:
@@ -364,9 +363,6 @@ using multiple progress bars using nested WorkerPools:
                                    progress_bar=tqdm(total=len(X), position=worker_id + 1))
 
     def main():
-        # Set lock such that only one update is executed at a time
-        tqdm.set_lock(Lock())
-
         with WorkerPool(n_jobs=4, daemon=False) as pool:
             pool.pass_on_worker_id()
             pool.map(dispatcher, ((range(x, x + 100),) for x in range(100)), iterable_len=100,
@@ -376,10 +372,6 @@ using multiple progress bars using nested WorkerPools:
 
 We use ``worker_id + 1`` here because the worker IDs start at zero, and we reserve position 0 for the progress bar of
 the main WorkerPool.
-
-Note that we use a ``multiprocessing.Lock`` here to make sure the progress bar updates do not happen at the same time.
-This is because the ``tqdm`` package is not thread-safe and definitely not process-safe without it, which could mess up
-the display.
 
 .. note::
 
