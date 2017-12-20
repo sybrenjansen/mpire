@@ -7,6 +7,10 @@ def square(idx, x):
     return idx, x * x
 
 
+def subtract(x, y):
+    return x - y
+
+
 def square_daemon(X):
     with WorkerPool(n_jobs=4) as pool:
         return pool.map(square, X, chunk_size=1)
@@ -71,6 +75,20 @@ class MPIRETest(unittest.TestCase):
                                             worker_lifespan=worker_lifespan)
                     self.assertTrue(isinstance(results_list, result_type))
                     self.assertEqual([], sorted(results_list, key=lambda tup: tup[0]) if sort else list(results_list))
+
+        # Check if dictionary inputs behave in a correct way
+        with WorkerPool(n_jobs=1) as pool:
+            # Should work
+            results_list = pool.map(subtract, [{'x': 5, 'y': 2}, {'y': 5, 'x': 2}])
+            self.assertEqual(results_list, [3, -3])
+        with WorkerPool(n_jobs=1) as pool:
+            # Should throw
+            with self.assertRaises(TypeError):
+                pool.map(subtract, [{'x': 5, 'z': 2}])
+        with WorkerPool(n_jobs=1) as pool:
+            # Should throw
+            with self.assertRaises(TypeError):
+                pool.map(subtract, [{'x': 5, 'y': 2, 'z': 2}])
 
         # Zero (or a negative number of) active tasks/lifespan should result in a value error
         for n in [-3, -1, 0, 3.14]:

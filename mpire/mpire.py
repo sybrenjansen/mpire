@@ -11,6 +11,7 @@ import time
 import tqdm
 import traceback
 import warnings
+from functools import partial
 from multiprocessing import cpu_count, Event, JoinableQueue, Lock, Process, Value
 from threading import Thread
 
@@ -111,26 +112,17 @@ class Worker(Process):
         Continuously asks the tasks queue for new task arguments. When not receiving a poisonous pill or when the max
         life span is not yet reached it will execute the new task and put the results in the results queue.
         """
-        # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
-        # which deals with the provided idx variable.
-        if self.keep_order_event.is_set():
-            def func(_args, _additional_args):
-                return self._helper_func(*itertools.chain(_args, [_additional_args]))
-
-        # In the case of not keeping order in mind (for imap) we can simply call the user function directly
-        else:
-            def func(_args, _additional_args):
-                return self.func_pointer(*itertools.chain(
-                    _additional_args, _args if isinstance(_args, collections.Iterable)
-                                               and not isinstance(_args, (str, bytes)) else (_args,)
-                ))
-
         # Obtain additional args to pass to the function
         additional_args = []
         if self.pass_worker_id:
             additional_args.append(self.worker_id)
         if self.shared_objects is not None:
             additional_args.append(self.shared_objects)
+
+        # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
+        # with idx support which deals with the provided idx variable.
+        func = partial(self._helper_func_with_idx if self.keep_order_event.is_set() else self._helper_func,
+                       partial(self.func_pointer, *additional_args))
 
         n_chunks_executed = 0
         while self.worker_lifespan is None or n_chunks_executed < self.worker_lifespan:
@@ -166,10 +158,8 @@ class Worker(Process):
                             return
 
                     # This can fail if an exception occurs in the user provided function
-                    # args = args if isinstance(args, collections.Iterable) and not isinstance(args, (str, bytes)) \
-                    #     else (args,)
                     try:
-                        results.append(func(args, additional_args))
+                        results.append(func(args))
                     except StopWorker:
                         raise
                     except Exception as err:
@@ -186,15 +176,20 @@ class Worker(Process):
                             if not self.exception_thrown.is_set():
                                 # Determine function arguments
                                 func_args = args[1] if self.keep_order_event.is_set() else args
-                                func_args = func_args if isinstance(func_args, collections.Iterable) \
-                                                         and not isinstance(func_args, (str, bytes)) else (func_args,)
+                                if isinstance(func_args, dict):
+                                    argument_str = "\n".join("Arg %s: %s" % (str(key), str(value))
+                                                             for key, value in func_args.items())
+                                elif isinstance(func_args, collections.Iterable) \
+                                        and not isinstance(func_args, (str, bytes)):
+                                    argument_str = "\n".join("Arg %d: %s" % (arg_nr, str(arg))
+                                                             for arg_nr, arg in enumerate(func_args))
+                                else:
+                                    argument_str = "Arg 0: %s" % func_args
 
                                 # Create traceback string
                                 traceback_str = \
                                     "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % \
-                                    (self.worker_id, "\n".join("Arg %d: %s" % (arg_nr, str(arg))
-                                                               for arg_nr, arg in enumerate(func_args)),
-                                     traceback.format_exc())
+                                    (self.worker_id, argument_str, traceback.format_exc())
 
                                 # Sometimes an exception cannot be pickled (i.e., we get the _pickle.PickleError:
                                 # Can't pickle <class ...>: it's not the same object as ...). We check that here by
@@ -236,18 +231,23 @@ class Worker(Process):
         if self.worker_lifespan is not None and n_chunks_executed == self.worker_lifespan:
             self.restart_queue.put(self.worker_id, block=True)
 
-    def _helper_func(self, idx, args, additional_args):
-        """
-        Helper function which calls the function pointer but preserves the order index.
+    def _helper_func_with_idx(self, func, args):
+        """ Helper function which calls the function pointer but preserves the order index """
+        return args[0], self._call_func(func, args[1])
 
-        :param idx: Order index (handled by the WorkerPool)
-        :param args: Task arguments
-        :param additional_args: Additional arguments like ``worker_id`` and ``shared_objects``
-        """
-        return idx, self.func_pointer(*itertools.chain(
-            additional_args,
-            args if isinstance(args, collections.Iterable) and not isinstance(args, (str, bytes)) else (args,)
-        ))
+    def _helper_func(self, func, args):
+        """ Helper function which calls the function pointer """
+        return self._call_func(func, args)
+
+    @staticmethod
+    def _call_func(func, args):
+        """ Helper function which calls the function pointer and passes the arguments in the correct way """
+        if isinstance(args, dict):
+            return func(**args)
+        elif isinstance(args, collections.Iterable) and not isinstance(args, (str, bytes)):
+            return func(*args)
+        else:
+            return func(args)
 
 
 class WorkerPool:
@@ -1104,7 +1104,7 @@ class WorkerPool:
             # is being written to we can get errors.
             self._ready_for_destruction.wait()
 
-            # # Kill processes
+            # Kill processes
             self.terminate(keep_exception_queue=True)
 
             # Pass error to main process so it can be raised there (exceptions raised from threads or child processes

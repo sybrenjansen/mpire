@@ -1,12 +1,21 @@
 Changelog
 =========
 
+0.7.1
+-----
+
+*(2017-12-20)*
+
+* You can now pass on a dictionary as an argument which will be unpacked accordingly using the ``**``-operator.
+* New function :meth:`mpire.utils.make_single_arguments` added which allows you to create an iterable of single argument
+  tuples out of an iterable of single arguments.
+
 0.7.0
 -----
 
 *(2017-12-11)*
 
-* :meth:`mpire.chunk_tasks` is now available as a public function
+* :meth:`mpire.utils.chunk_tasks` is now available as a public function
 * Chunking in above function and map functions now accept a ``n_splits`` parameter
 * ``iterable_of_args`` in map functions can now contain single values instead of only iterables
 * ``tqdm`` is now available from the MPIRE package which automatically switches to the Jupyter/IPython notebook widget

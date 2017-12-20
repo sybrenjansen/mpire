@@ -10,4 +10,9 @@ WorkerPool
 
 Task chunking
 -------------
-.. autofunction:: mpire.chunk_tasks
+.. autofunction:: mpire.utils.chunk_tasks
+
+
+Converting iterable of arguments
+--------------------------------
+.. autofunction:: mpire.utils.make_single_arguments
