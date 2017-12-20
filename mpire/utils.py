@@ -55,3 +55,16 @@ def chunk_tasks(iterable_of_args, iterable_len=None, chunk_size=None, n_splits=N
         yield chunk
         current_chunk_size = (current_chunk_size + chunk_size) - math.ceil(current_chunk_size)
         n_elements_returned += len(chunk)
+
+
+def make_single_arguments(iterable_of_args, generator=True):
+    """
+    Converts an iterable of single arguments to an iterable of single argument tuples
+
+    :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
+        function pointer
+    :param generator: Whether or not to return a generator, otherwise a materialized list will be returned
+    :return: iterable of single argument tuples
+    """
+    gen = ((arg,) for arg in iterable_of_args)
+    return gen if generator else list(gen)

@@ -79,3 +79,26 @@ class UtilsTest(unittest.TestCase):
                 self.assertEqual(len(chunk), chunk_size)
             self.assertLessEqual(len(chunks[-1]), chunk_size)
             self.assertEqual(list(range(num_args)), list(chain.from_iterable(chunks)))
+
+    def test_make_single_arguments(self):
+        """
+        Tests the make_single_arguments function
+        """
+        from mpire.utils import make_single_arguments
+        from itertools import product
+        import types
+
+        # Test for some different inputs
+        for (args_in, args_out), gen in product([(['a', 'c', 'b', 'd'], [('a',), ('c',), ('b',), ('d',)]),
+                                                 ([1, 2, 3, 4, 5], [(1,), (2,), (3,), (4,), (5,)]),
+                                                 ([(True,), (False,), (None,)], [((True,),), ((False,),), ((None,),)])],
+                                                [False, True]):
+            # Transform
+            args_transformed = make_single_arguments((arg for arg in args_in) if gen else args_in, generator=gen)
+
+            # Check type
+            self.assertTrue(isinstance(args_transformed, types.GeneratorType if gen else list))
+
+            # Check contents
+            self.assertEqual(list(args_transformed), args_out)
+
