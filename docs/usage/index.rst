@@ -399,6 +399,14 @@ to use:
 
 For all the configurable options, please refer to the `tqdm documentation`_.
 
+.. warning::
+
+    When you have a lot of small tasks the addition of a progress bar can slow down your task considerably as it will
+    send progress updates after each completed task. One way to fix this is to chunk the tasks yourselves using
+    :meth:`mpire.utils.chunk_tasks` such that progress is updated every chunk. Or you can make a PR to include an
+    additional parameter ``progress_frequency=1`` in the map functions which indicates how many jobs have to be
+    completed before a worker sends a progress update.
+
 
 Multiple progress bars with nested WorkerPools
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

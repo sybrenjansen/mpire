@@ -1035,6 +1035,7 @@ class WorkerPool:
         else:
             self._task_completed_queue = None
             self._progress_bar_thread = None
+            progress_bar = None
             progress_bar_progress = None
 
         return progress_bar, progress_bar_progress

@@ -1,6 +1,13 @@
 Changelog
 =========
 
+0.7.2
+-----
+
+*(2018-06-14)*
+
+* Small bug fix when not passing on a boolean or ``tqdm`` object for the ``progress_bar`` parameter
+
 0.7.1
 -----
 
