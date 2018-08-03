@@ -14,5 +14,8 @@ setup(
     long_description=read_description(),
     packages=["mpire"],
     install_requires=["tqdm"],
+    extras_require={
+        'docs': ['sphinx', 'sphinx-rtd-theme'],
+    },
     test_suite='tests'
 )

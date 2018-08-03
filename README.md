@@ -35,12 +35,19 @@ python setup.py install
 Documentation
 -------------
 
-If you want to build the documentation, please install the following Python packages:
+If you want to build the documentation, please install the documentation dependencies by executing:
 
- * Sphinx
- * sphinx-rtd-theme
+```
+pip install mpire[docs]
+```
 
-Documentation can be build by executing:
+or 
+
+```
+pip install .[docs]
+```
+
+Documentation can then be build by executing:
 
 ```
 python setup.py build_docs
