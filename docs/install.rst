@@ -3,7 +3,7 @@ Installation
 
 :ref:`MPIRE <secret>` builds are currently distributed through Target Holding's (internal) localshop_.
 
-.. _localshop: https://localshop.tgho.nl
+.. _localshop: https://localshop.tgho.nl/repo/tgho
 
 MPIRE can be installed through pip:
 
