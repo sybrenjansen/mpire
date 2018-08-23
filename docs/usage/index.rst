@@ -78,7 +78,9 @@ daemon, to allow for nested structures:
         # This will work just fine
         pool.map(job, ...)
 
-Do make sure all your non-daemon processes are terminated correctly.
+Do make sure all your non-daemon processes are terminated correctly. If a nested child process is interrupted, for
+example when the user triggers a KeyboardInterrupt, the process will remain active and will have to be terminated
+manually.
 
 
 CPU pinning
