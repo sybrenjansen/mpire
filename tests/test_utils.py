@@ -1,5 +1,8 @@
+import types
 import unittest
-from itertools import chain
+from itertools import chain, product
+
+from mpire.utils import chunk_tasks, make_single_arguments
 
 
 class UtilsTest(unittest.TestCase):
@@ -8,8 +11,6 @@ class UtilsTest(unittest.TestCase):
         """
         Tests the chunk_tasks function
         """
-        from mpire.utils import chunk_tasks
-
         # Test that a ValueError is raised when no chunk_size and n_splits are provided
         with self.assertRaises(ValueError):
             next(chunk_tasks([]))
@@ -84,10 +85,6 @@ class UtilsTest(unittest.TestCase):
         """
         Tests the make_single_arguments function
         """
-        from mpire.utils import make_single_arguments
-        from itertools import product
-        import types
-
         # Test for some different inputs
         for (args_in, args_out), gen in product([(['a', 'c', 'b', 'd'], [('a',), ('c',), ('b',), ('d',)]),
                                                  ([1, 2, 3, 4, 5], [(1,), (2,), (3,), (4,), (5,)]),

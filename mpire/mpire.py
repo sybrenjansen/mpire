@@ -1,5 +1,3 @@
-from mpire.exceptions import CannotPickleExceptionError, StopWorker
-from mpire.utils import chunk_tasks
 import collections
 import itertools
 import os
@@ -8,12 +6,16 @@ import queue
 import signal
 import subprocess
 import time
-import tqdm
 import traceback
 import warnings
 from functools import partial
 from multiprocessing import cpu_count, Event, JoinableQueue, Lock, Process, Value
 from threading import Thread
+
+import tqdm
+
+from mpire.exceptions import CannotPickleExceptionError, StopWorker
+from mpire.utils import chunk_tasks, make_single_arguments
 
 
 # Check if we need to import the Jupyter/IPython plugin or regular progress bar

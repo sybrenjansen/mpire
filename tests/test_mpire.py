@@ -1,3 +1,4 @@
+import types
 import unittest
 from itertools import product, repeat
 from mpire import cpu_count, tqdm, WorkerPool
@@ -47,8 +48,6 @@ class MPIRETest(unittest.TestCase):
         """
         Tests the map related function of the worker pool class
         """
-        import types
-
         # Test results for different number of jobs to run in parallel and the maximum number of active tasks in the
         # queue
         for n_jobs, n_tasks_max_active, worker_lifespan, chunk_size, n_splits in \
