@@ -13,7 +13,7 @@ setup(
     description="A Python package for multiprocessing, but faster than multiprocessing",
     long_description=read_description(),
     packages=["mpire"],
-    install_requires=["tqdm"],
+    install_requires=["numpy", "tqdm"],
     extras_require={
         'docs': ['sphinx', 'sphinx-rtd-theme'],
     },

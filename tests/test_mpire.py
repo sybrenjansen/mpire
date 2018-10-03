@@ -1,11 +1,18 @@
 import types
 import unittest
 from itertools import product, repeat
+
+import numpy as np
+
 from mpire import cpu_count, tqdm, WorkerPool
 
 
 def square(idx, x):
     return idx, x * x
+
+
+def square_numpy(x):
+    return x * x
 
 
 def subtract(x, y):
@@ -44,6 +51,11 @@ class MPIRETest(unittest.TestCase):
         self.test_desired_output = list(map(lambda _args: square(*_args), self.test_data))
         self.test_data_len = len(self.test_data)
 
+        # Numpy test data
+        self.test_data_numpy = np.random.rand(100, 2)
+        self.test_desired_output_numpy = square_numpy(self.test_data_numpy)
+        self.test_data_len_numpy = len(self.test_data_numpy)
+
     def test_map(self):
         """
         Tests the map related function of the worker pool class
@@ -74,6 +86,33 @@ class MPIRETest(unittest.TestCase):
                                             worker_lifespan=worker_lifespan)
                     self.assertTrue(isinstance(results_list, result_type))
                     self.assertEqual([], sorted(results_list, key=lambda tup: tup[0]) if sort else list(results_list))
+
+                # Test numpy input. map should concatenate chunks of numpy output to a single output array if we
+                # instruct it to
+                results = pool.map(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
+                                   worker_lifespan=worker_lifespan, concatenate_numpy_output=True)
+                np.testing.assert_array_equal(results, self.test_desired_output_numpy)
+
+                # If we disable it we should get back chunks of the original array
+                results = pool.map(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
+                                   worker_lifespan=worker_lifespan, concatenate_numpy_output=False)
+                self.assertTrue(isinstance(results, list))
+                np.testing.assert_array_equal(np.concatenate(results), self.test_desired_output_numpy)
+
+                # Numpy concatenation doesn't exist for the other functions
+                results = pool.imap(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
+                                    worker_lifespan=worker_lifespan)
+                self.assertTrue(isinstance(results, types.GeneratorType))
+                np.testing.assert_array_equal(np.concatenate(list(results)), self.test_desired_output_numpy)
+
+                # map_unordered and imap_unordered cannot be checked for correctness as we don't know the order of the
+                # returned results, except when n_jobs=1
+                for map_func, result_type in ((pool.map_unordered, list), (pool.imap_unordered, types.GeneratorType)):
+                    results = map_func(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
+                                       worker_lifespan=worker_lifespan)
+                    self.assertTrue(isinstance(results, result_type))
+                    if n_jobs == 1:
+                        np.testing.assert_array_equal(np.concatenate(list(results)), self.test_desired_output_numpy)
 
         # Check if dictionary inputs behave in a correct way
         with WorkerPool(n_jobs=1) as pool:
@@ -183,6 +222,14 @@ class MPIRETest(unittest.TestCase):
                 pool.pass_on_worker_id(pass_worker_id)
                 pool.set_shared_objects(shared_objects)
 
+                # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
+                # or when the shared objects are not equal to the given arguments
+                f = f1 if pass_worker_id and shared_objects else (f2 if pass_worker_id else (f3 if shared_objects else
+                                                                                             f4))
+                pool.map(f, ((shared_objects,) for _ in range(10)), iterable_len=10)
+
+            # Pass on arguments using the constructor instead
+            with WorkerPool(n_jobs=n_jobs, pass_worker_id=pass_worker_id, shared_objects=shared_objects) as pool:
                 # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
                 # or when the shared objects are not equal to the given arguments
                 f = f1 if pass_worker_id and shared_objects else (f2 if pass_worker_id else (f3 if shared_objects else

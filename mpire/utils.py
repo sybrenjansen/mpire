@@ -1,6 +1,8 @@
 import itertools
 import math
 
+import numpy as np
+
 
 def chunk_tasks(iterable_of_args, iterable_len=None, chunk_size=None, n_splits=None):
     """
@@ -34,15 +36,19 @@ def chunk_tasks(iterable_of_args, iterable_len=None, chunk_size=None, n_splits=N
         chunk_size = n_tasks / n_splits
 
     # Chunk tasks
+    numpy_row_offset = 0
     args_iter = iter(iterable_of_args)
     current_chunk_size = chunk_size
     n_elements_returned = 0
     while True:
-        # We use max(1, ...) to always at least get one element
-        chunk = tuple(itertools.islice(args_iter, max(1, math.ceil(current_chunk_size))))
+        # Use numpy slicing if available. We use max(1, ...) to always at least get one element
+        if isinstance(iterable_of_args, np.ndarray):
+            chunk = iterable_of_args[numpy_row_offset:numpy_row_offset + max(1, math.ceil(current_chunk_size))]
+        else:
+            chunk = tuple(itertools.islice(args_iter, max(1, math.ceil(current_chunk_size))))
 
         # If we ran out of input, we stop
-        if not chunk:
+        if len(chunk) == 0:
             return
 
         # If the iterable has more elements than the given iterable length, we stop
@@ -54,6 +60,7 @@ def chunk_tasks(iterable_of_args, iterable_len=None, chunk_size=None, n_splits=N
 
         yield chunk
         current_chunk_size = (current_chunk_size + chunk_size) - math.ceil(current_chunk_size)
+        numpy_row_offset += len(chunk)
         n_elements_returned += len(chunk)
 
 

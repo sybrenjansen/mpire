@@ -12,6 +12,7 @@ from functools import partial
 from multiprocessing import cpu_count, Event, JoinableQueue, Lock, Process, Value
 from threading import Thread
 
+import numpy as np
 import tqdm
 
 from mpire.exceptions import CannotPickleExceptionError, StopWorker
@@ -253,7 +254,7 @@ class Worker(Process):
         """ Helper function which calls the function pointer and passes the arguments in the correct way """
         if isinstance(args, dict):
             return func(**args)
-        elif isinstance(args, collections.Iterable) and not isinstance(args, (str, bytes)):
+        elif isinstance(args, collections.Iterable) and not isinstance(args, (str, bytes, np.ndarray)):
             return func(*args)
         else:
             return func(args)
@@ -716,7 +717,8 @@ class WorkerPool:
             self.terminate()
 
     def map(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-            n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False):
+            n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False,
+            concatenate_numpy_output=True):
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
@@ -744,10 +746,18 @@ class WorkerPool:
             course of time.
         :param progress_bar: Boolean or ``tqdm`` instance. When ``True`` will display a default progress bar. Defaults
             can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
+        :param concatenate_numpy_output: Boolean. When ``True`` it will concatenate numpy output to a single numpy array
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
         self._keep_order_event.set()
+
+        # If we're dealing with numpy arrays, we have to chunk them here already
+        if isinstance(iterable_of_args, np.ndarray):
+            iterable_of_args = make_single_arguments(chunk_tasks(iterable_of_args, len(iterable_of_args), chunk_size,
+                                                                 n_splits or self.n_jobs * 4))
+            chunk_size = 1
+            n_splits = None
 
         # Process all args
         if iterable_len is None and hasattr(iterable_of_args, '__len__'):
@@ -760,7 +770,12 @@ class WorkerPool:
         self._keep_order_event.clear()
 
         # Rearrange and return
-        return [result[1] for result in sorted(results, key=lambda result: result[0])]
+        sorted_results = [result[1] for result in sorted(results, key=lambda result: result[0])]
+
+        # Convert back to numpy if necessary
+        return (np.concatenate(sorted_results)
+                if sorted_results and concatenate_numpy_output and isinstance(sorted_results[0], np.ndarray) else
+                sorted_results)
 
     def map_unordered(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
                       n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False):
@@ -830,6 +845,13 @@ class WorkerPool:
         """
         # Notify workers to keep order in mind
         self._keep_order_event.set()
+
+        # If we're dealing with numpy arrays, we have to chunk them here already
+        if isinstance(iterable_of_args, np.ndarray):
+            iterable_of_args = make_single_arguments(chunk_tasks(iterable_of_args, len(iterable_of_args), chunk_size,
+                                                                 n_splits or self.n_jobs * 4))
+            chunk_size = 1
+            n_splits = None
 
         # Yield results in order
         next_result_idx = 0
@@ -906,8 +928,10 @@ class WorkerPool:
         self._cleaning_up = False
         self._ready_for_destruction.clear()
 
-        # Chunk the function arguments
+        # Chunk the function arguments. Make single arguments when we're dealing with numpy arrays
         iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size, n_splits or self.n_jobs * 4)
+        if isinstance(iterable_of_args, np.ndarray):
+            iterator_of_chunked_args = make_single_arguments(iterator_of_chunked_args, generator=True)
 
         # Create a progress bar if requested
         progress_bar, progress_bar_progress = self._create_progress_bar(progress_bar, n_tasks)
