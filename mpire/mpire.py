@@ -38,7 +38,7 @@ class Worker(Process):
 
     def __init__(self, worker_id, tasks_queue, results_queue, restart_queue, task_completed_queue, exception_queue,
                  exception_lock, exception_thrown, has_started_counter, func_pointer, keep_order_event,
-                 shared_objects=None, worker_lifespan=None, pass_worker_id=False):
+                 shared_objects=None, worker_lifespan=None, pass_worker_id=False, use_worker_state=False):
         """
         :param worker_id: Worker id
         :param tasks_queue: Queue object for retrieving new task arguments
@@ -60,6 +60,7 @@ class Worker(Process):
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
         :param pass_worker_id: Boolean. Whether or not to pass the worker ID to the function
+        :param use_worker_state: Boolean. Whether to let a worker have a worker state or not
         """
         super().__init__()
 
@@ -78,6 +79,10 @@ class Worker(Process):
         self.shared_objects = shared_objects
         self.worker_lifespan = worker_lifespan
         self.pass_worker_id = pass_worker_id
+        self.use_worker_state = use_worker_state
+
+        # Worker state
+        self.worker_state = {}
 
         # Exception handling variables
         self.running = False
@@ -120,6 +125,8 @@ class Worker(Process):
             additional_args.append(self.worker_id)
         if self.shared_objects is not None:
             additional_args.append(self.shared_objects)
+        if self.use_worker_state:
+            additional_args.append(self.worker_state)
 
         # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
         # with idx support which deals with the provided idx variable.
@@ -257,7 +264,8 @@ class WorkerPool:
     A multiprocessing worker pool which acts like a ``multiprocessing.Pool``, but is faster and has more options.
     """
 
-    def __init__(self, n_jobs=None, daemon=True, cpu_ids=None):
+    def __init__(self, n_jobs=None, daemon=True, cpu_ids=None, shared_objects=None, pass_worker_id=False,
+                 use_worker_state=False, n_workers=None):
         """
         :param n_jobs: Int or ``None``. Number of workers to spawn. If ``None``, will use ``cpu_count()``.
         :param daemon: Bool. Whether to start the child processes as daemon
@@ -268,9 +276,14 @@ class WorkerPool:
             all child  processes to use. A single element can be either a single integer specifying a single CPU ID, or
             a list of integers specifying that a single child process can make use of multiple CPU IDs. If ``None``, CPU
             pinning will be disabled. Note that CPU pinning may only work on Linux based systems
+        :param shared_objects: ``None`` or any other type of object (multiple objects can be wrapped in a single tuple).
+            Shared objects is only passed on to the user function when it's not ``None``
+        :param pass_worker_id: Boolean. Whether to pass on a worker ID to the user function or not
+        :param use_worker_state: Boolean. Whether to let a worker have a worker state or not
+        :param n_workers: Alias for ``n_jobs``
         """
         # Set parameters
-        self.n_jobs = n_jobs or cpu_count()
+        self.n_jobs = n_workers or n_jobs or cpu_count()
         self.daemon = daemon
         self.cpu_ids = self._check_cpu_ids(cpu_ids)
 
@@ -306,7 +319,7 @@ class WorkerPool:
         self._workers = []
 
         # User provided shared objects to pass on to the user provided function
-        self.shared_objects = None
+        self.shared_objects = shared_objects
 
         # User provided function to call
         self.func_pointer = None
@@ -315,7 +328,10 @@ class WorkerPool:
         self.worker_lifespan = None
 
         # Whether to pass on the worker ID to the user provided function
-        self.pass_worker_id = False
+        self.pass_worker_id = pass_worker_id
+
+        # Whether to let a worker have a worker state
+        self.use_worker_state = use_worker_state
 
         # Whether or not an exception was caught by one of the child processes
         self.exception_caught = False
@@ -415,6 +431,15 @@ class WorkerPool:
                           'with or without return values out of the box. This argument will be removed from version '
                           '1.0.0 onwards', DeprecationWarning, stacklevel=2)
 
+    def set_use_worker_state(self, use_state=True):
+        """
+        Set whether or not each worker should have it's own state variable. Each worker has its own state, so it' not
+        shared between the workers.
+
+        :param use_state: Boolean. Whether to let a worker have a worker state or not
+        """
+        self.use_worker_state = use_state
+
     def start_workers(self, func_pointer, worker_lifespan):
         """
         Spawns the workers and starts them so they're ready to start reading from the tasks queue.
@@ -466,7 +491,7 @@ class WorkerPool:
         w = Worker(worker_id, self._tasks_queue, self._results_queue, self._restart_queue, self._task_completed_queue,
                    self._exception_queue, self._exception_lock, self._exception_thrown, self._has_started_counter,
                    self.func_pointer, self._keep_order_event, self.shared_objects, self.worker_lifespan,
-                   self.pass_worker_id)
+                   self.pass_worker_id, self.use_worker_state)
         w.daemon = self.daemon
         w.start()
 
@@ -698,7 +723,8 @@ class WorkerPool:
 
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
-            the function should receive those as the next argument.
+            the function should receive those as the next argument. If the worker state has been enabled it should
+            receive a state variable as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
         :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
@@ -744,7 +770,8 @@ class WorkerPool:
 
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
-            the function should receive those as the next argument.
+            the function should receive those as the next argument. If the worker state has been enabled it should
+            receive a state variable as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
         :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
@@ -778,7 +805,8 @@ class WorkerPool:
 
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
-            the function should receive those as the next argument.
+            the function should receive those as the next argument. If the worker state has been enabled it should
+            receive a state variable as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
         :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
@@ -844,7 +872,8 @@ class WorkerPool:
 
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
-            the function should receive those as the next argument.
+            the function should receive those as the next argument. If the worker state has been enabled it should
+            receive a state variable as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
         :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
@@ -1138,3 +1167,6 @@ class WorkerPool:
         else:
             self._exception_queue.join()
             self._exception_queue = None
+
+
+MotherForker = WorkerPool

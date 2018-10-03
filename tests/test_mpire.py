@@ -189,6 +189,55 @@ class MPIRETest(unittest.TestCase):
                                                                                              f4))
                 pool.map(f, ((shared_objects,) for _ in range(10)), iterable_len=10)
 
+    def test_worker_state(self):
+        """
+        Tests worker state
+        """
+        for n_jobs, use_worker_state in product([1, 2, 4], [False, True]):
+
+            # Function with worker ID and worker state
+            def f1(_wid, _wstate, _arg):
+                self.assertTrue(isinstance(_wstate, dict))
+
+                # Worker id should always be the same
+                _wstate.setdefault('worker_id', set()).add(_wid)
+                self.assertEqual(_wstate['worker_id'], {_wid})
+
+                # Should contain previous args
+                _wstate.setdefault('args', []).append(_arg)
+                return _wid, len(_wstate['args'])
+
+            # Function with worker ID (simply tests if WorkerPool correctly handles use_worker_state=False)
+            def f2(_wid, _):
+                pass
+
+            for n_tasks in [0, 1, 3, 150]:
+                with WorkerPool(n_jobs=n_jobs, pass_worker_id=True) as pool:
+                    # Configure pool
+                    pool.set_use_worker_state(use_worker_state)
+
+                    # When use_worker_state is set, the final (worker_id, n_args) of each worker should add up to the
+                    # number of given tasks
+                    f = f1 if use_worker_state else f2
+                    results = pool.map(f, range(n_tasks), chunk_size=2)
+                    if use_worker_state:
+                        n_processed_per_worker = [0] * n_jobs
+                        for wid, n_processed in results:
+                            n_processed_per_worker[wid] = n_processed
+                        self.assertEqual(sum(n_processed_per_worker), n_tasks)
+
+                # Pass on arguments using the constructor instead
+                with WorkerPool(n_jobs=n_jobs, pass_worker_id=True, use_worker_state=use_worker_state) as pool:
+                    # When use_worker_state is set, the final (worker_id, n_args) of each worker should add up to the
+                    # number of given tasks
+                    f = f1 if use_worker_state else f2
+                    results = pool.map(f, range(n_tasks), chunk_size=2)
+                    if use_worker_state:
+                        n_processed_per_worker = [0] * n_jobs
+                        for wid, n_processed in results:
+                            n_processed_per_worker[wid] = n_processed
+                        self.assertEqual(sum(n_processed_per_worker), n_tasks)
+
     def test_daemon(self):
         """
         Tests nested WorkerPools
@@ -256,6 +305,7 @@ class MPIRETest(unittest.TestCase):
         """
         Tests if MPIRE can handle exceptions well
         """
+        # This print statement is intentional as it will print multiple progress bars
         print()
         for n_jobs, n_tasks_max_active, worker_lifespan, progress_bar in product([1, 20], [None, 1], [None, 1],
                                                                                  [False, True]):
