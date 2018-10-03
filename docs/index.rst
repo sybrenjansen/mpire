@@ -9,7 +9,9 @@ Features
 
 - Multiprocessing with map/map_unordered/imap/imap_unordered functions
 - Easy use of copy-on-write shared objects with a pool of workers
-- Automatic task chunking for all available map functions to speed up processing of small task queues
+- Each worker can has its own state (e.g., to load a memory-intensive model only once for each worker)
+- Automatic task chunking for all available map functions to speed up processing of small task queues (including numpy
+  arrays)
 - Functions are only pickled once for each worker
 - Adjustable maximum number of active tasks to avoid memory problems
 - Automatic restarting of workers after a specified number of tasks to reduce memory footprint

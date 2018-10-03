@@ -1,6 +1,14 @@
 Changelog
 =========
 
+-----
+
+*(2018-09-28)*
+
+* Added support for worker state
+* Chunking numpy arrays is now done using numpy slicing
+* :meth:`mpire.WorkerPool.map` now supports automatic concatenation of numpy array output
+
 0.7.2
 -----
 
