@@ -5,6 +5,7 @@ from itertools import product, repeat
 import numpy as np
 
 from mpire import cpu_count, tqdm, WorkerPool
+from mpire.utils import get_n_chunks
 
 
 def square(idx, x):
@@ -331,6 +332,7 @@ class MPIRETest(unittest.TestCase):
         """
         Tests the progress bar
         """
+        # This print statement is intentional as it will print multiple progress bars
         print()
         for n_jobs, progress_bar in product([None, 1, 2], [True, tqdm(total=len(self.test_data)),
                                                            tqdm(total=len(self.test_data), ascii=True), tqdm()]):
@@ -346,6 +348,29 @@ class MPIRETest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     with WorkerPool(n_jobs=n_jobs) as pool:
                         _ = pool.map(square, self.test_data, progress_bar=progress_bar)
+
+        # Test with numpy, as that will change the number of tasks
+        for n_jobs, progress_bar in product([None, 1, 2], [True, 1, 2, 3]):
+
+            # Obtain progress bar. We create it here as it's dependent on n_jobs
+            progress_bar = {True: lambda: True,
+                            1: lambda: tqdm(total=get_n_chunks(self.test_data_numpy, n_jobs=n_jobs)),
+                            2: lambda: tqdm(total=get_n_chunks(self.test_data_numpy, n_jobs=n_jobs), ascii=True),
+                            3: lambda: tqdm()}.get(progress_bar)()
+
+            # Should work just fine
+            if progress_bar is True or progress_bar.total == get_n_chunks(self.test_data_numpy, n_jobs=n_jobs):
+                with WorkerPool(n_jobs=n_jobs) as pool:
+                    results = pool.map(square_numpy, self.test_data_numpy, progress_bar=progress_bar)
+                    self.assertTrue(isinstance(results, np.ndarray))
+                    np.testing.assert_array_equal(results, self.test_desired_output_numpy)
+
+            # Should raise
+            else:
+                with self.assertRaises(ValueError):
+                    with WorkerPool(n_jobs=n_jobs) as pool:
+                        _ = pool.map(square_numpy, self.test_data_numpy, progress_bar=progress_bar)
+
         print()
 
     def test_exceptions(self):

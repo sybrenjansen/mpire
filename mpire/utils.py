@@ -1,5 +1,6 @@
 import itertools
 import math
+from multiprocessing import cpu_count
 
 import numpy as np
 
@@ -62,6 +63,37 @@ def chunk_tasks(iterable_of_args, iterable_len=None, chunk_size=None, n_splits=N
         current_chunk_size = (current_chunk_size + chunk_size) - math.ceil(current_chunk_size)
         numpy_row_offset += len(chunk)
         n_elements_returned += len(chunk)
+
+
+def get_n_chunks(iterable_of_args, iterable_len=None, chunk_size=None, n_splits=None, n_jobs=None):
+    """
+    Get number of chunks
+
+    :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
+        function pointer
+    :param iterable_len: Int. Number of tasks available in ``iterable_of_args``. Only needed when
+    ``iterable_of_args``
+        is a generator.
+    :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will use
+        ``n_splits`` to determine the chunk size
+    :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
+    :param n_jobs: Int or ``None``. Number of workers to spawn. If ``None``, will use ``cpu_count()``.
+    :return: Int. Number of chunks that will be created by the chunker
+    """
+    # Get number of tasks
+    if iterable_len is not None:
+        n_tasks = min(iterable_len, len(iterable_of_args)) if hasattr(iterable_of_args, '__len__') else iterable_len
+    elif hasattr(iterable_of_args, '__len__'):
+        n_tasks = len(iterable_of_args)
+    else:
+        raise ValueError('Failed to obtain length of iterable. Remedy: either provide an iterable with a len() '
+                         'function or specify iterable_len in the function call')
+
+    # Determine chunk size
+    if chunk_size is None:
+        chunk_size = n_tasks / (n_splits or (n_jobs or cpu_count()) * 4)
+
+    return min(n_tasks, math.ceil(n_tasks / chunk_size))
 
 
 def make_single_arguments(iterable_of_args, generator=True):
