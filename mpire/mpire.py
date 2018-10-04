@@ -266,7 +266,7 @@ class WorkerPool:
     """
 
     def __init__(self, n_jobs=None, daemon=True, cpu_ids=None, shared_objects=None, pass_worker_id=False,
-                 use_worker_state=False, n_workers=None):
+                 use_worker_state=False):
         """
         :param n_jobs: Int or ``None``. Number of workers to spawn. If ``None``, will use ``cpu_count()``.
         :param daemon: Bool. Whether to start the child processes as daemon
@@ -281,10 +281,9 @@ class WorkerPool:
             Shared objects is only passed on to the user function when it's not ``None``
         :param pass_worker_id: Boolean. Whether to pass on a worker ID to the user function or not
         :param use_worker_state: Boolean. Whether to let a worker have a worker state or not
-        :param n_workers: Alias for ``n_jobs``
         """
         # Set parameters
-        self.n_jobs = n_workers or n_jobs or cpu_count()
+        self.n_jobs = n_jobs or cpu_count()
         self.daemon = daemon
         self.cpu_ids = self._check_cpu_ids(cpu_ids)
 
