@@ -92,6 +92,7 @@ class MPIRETest(unittest.TestCase):
                 # instruct it to
                 results = pool.map(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
                                    worker_lifespan=worker_lifespan, concatenate_numpy_output=True)
+                self.assertTrue(isinstance(results, np.ndarray))
                 np.testing.assert_array_equal(results, self.test_desired_output_numpy)
 
                 # If we disable it we should get back chunks of the original array
@@ -107,13 +108,22 @@ class MPIRETest(unittest.TestCase):
                 np.testing.assert_array_equal(np.concatenate(list(results)), self.test_desired_output_numpy)
 
                 # map_unordered and imap_unordered cannot be checked for correctness as we don't know the order of the
-                # returned results, except when n_jobs=1
+                # returned results, except when n_jobs=1. In the other cases we could, however, check if all the values
+                # (numpy rows) that are returned are present (albeit being in a different order)
                 for map_func, result_type in ((pool.map_unordered, list), (pool.imap_unordered, types.GeneratorType)):
                     results = map_func(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
                                        worker_lifespan=worker_lifespan)
                     self.assertTrue(isinstance(results, result_type))
+                    concattenated_results = np.concatenate(list(results))
                     if n_jobs == 1:
-                        np.testing.assert_array_equal(np.concatenate(list(results)), self.test_desired_output_numpy)
+                        np.testing.assert_array_equal(concattenated_results, self.test_desired_output_numpy)
+                    else:
+                        # We sort the expected and actual results using lexsort, which sorts using a sequence of keys.
+                        # We transpose the array to sort on columns instead of rows.
+                        np.testing.assert_array_equal(
+                            concattenated_results[np.lexsort(concattenated_results.T)],
+                            self.test_desired_output_numpy[np.lexsort(self.test_desired_output_numpy.T)]
+                        )
 
         # Check if dictionary inputs behave in a correct way
         with WorkerPool(n_jobs=1) as pool:
@@ -195,28 +205,29 @@ class MPIRETest(unittest.TestCase):
         """
         Tests passing the worker ID and shared objects
         """
+        # Function with worker ID and shared objects
+        def f1(_wid, _sobjects, _args, _n_jobs):
+            self.assertTrue(isinstance(_wid, int))
+            self.assertGreaterEqual(_wid, 0)
+            self.assertLessEqual(_wid, _n_jobs)
+            self.assertEqual(_sobjects, _args)
+
+        # Function with worker ID
+        def f2(_wid, _, _n_jobs):
+            self.assertTrue(isinstance(_wid, int))
+            self.assertGreaterEqual(_wid, 0)
+            self.assertLessEqual(_wid, _n_jobs)
+
+        # Function with shared objects
+        def f3(_sobjects, _args, _n_jobs):
+            self.assertEqual(_sobjects, _args, _n_jobs)
+
+        # Function without worker ID and shared objects
+        def f4(*_):
+            pass
+
         for n_jobs, pass_worker_id, shared_objects in product([1, 2, 4], [False, True],
                                                               [None, (37, 42), ({'1', '2', '3'})]):
-            # Function with worker ID and shared objects
-            def f1(_wid, _sobjects, _args):
-                self.assertTrue(isinstance(_wid, int))
-                self.assertGreaterEqual(_wid, 0)
-                self.assertLessEqual(_wid, n_jobs)
-                self.assertEqual(_sobjects, _args)
-
-            # Function with worker ID
-            def f2(_wid, _):
-                self.assertTrue(isinstance(_wid, int))
-                self.assertGreaterEqual(_wid, 0)
-                self.assertLessEqual(_wid, n_jobs)
-
-            # Function with shared objects
-            def f3(_sobjects, _args):
-                self.assertEqual(_sobjects, _args)
-
-            # Function without worker ID and shared objects
-            def f4(_):
-                pass
 
             with WorkerPool(n_jobs=n_jobs) as pool:
                 # Configure pool
@@ -227,7 +238,7 @@ class MPIRETest(unittest.TestCase):
                 # or when the shared objects are not equal to the given arguments
                 f = f1 if pass_worker_id and shared_objects else (f2 if pass_worker_id else (f3 if shared_objects else
                                                                                              f4))
-                pool.map(f, ((shared_objects,) for _ in range(10)), iterable_len=10)
+                pool.map(f, ((shared_objects, n_jobs) for _ in range(10)), iterable_len=10)
 
             # Pass on arguments using the constructor instead
             with WorkerPool(n_jobs=n_jobs, pass_worker_id=pass_worker_id, shared_objects=shared_objects) as pool:
@@ -235,38 +246,52 @@ class MPIRETest(unittest.TestCase):
                 # or when the shared objects are not equal to the given arguments
                 f = f1 if pass_worker_id and shared_objects else (f2 if pass_worker_id else (f3 if shared_objects else
                                                                                              f4))
-                pool.map(f, ((shared_objects,) for _ in range(10)), iterable_len=10)
+                pool.map(f, ((shared_objects, n_jobs) for _ in range(10)), iterable_len=10)
 
     def test_worker_state(self):
         """
         Tests worker state
         """
-        for n_jobs, use_worker_state in product([1, 2, 4], [False, True]):
+        # Function with worker ID and worker state
+        def f1(_wid, _wstate, _arg):
+            self.assertTrue(isinstance(_wstate, dict))
 
-            # Function with worker ID and worker state
-            def f1(_wid, _wstate, _arg):
-                self.assertTrue(isinstance(_wstate, dict))
+            # Worker id should always be the same
+            _wstate.setdefault('worker_id', set()).add(_wid)
+            self.assertEqual(_wstate['worker_id'], {_wid})
 
-                # Worker id should always be the same
-                _wstate.setdefault('worker_id', set()).add(_wid)
-                self.assertEqual(_wstate['worker_id'], {_wid})
+            # Should contain previous args
+            _wstate.setdefault('args', []).append(_arg)
+            return _wid, len(_wstate['args'])
 
-                # Should contain previous args
-                _wstate.setdefault('args', []).append(_arg)
-                return _wid, len(_wstate['args'])
+        # Function with worker ID, shared objects and worker state
+        def f2(_wid, _sobjects, _wstate, _arg):
+            # Check shared objects
+            self.assertEqual(_sobjects, 1337)
 
-            # Function with worker ID (simply tests if WorkerPool correctly handles use_worker_state=False)
-            def f2(_wid, _):
-                pass
+            return f1(_wid, _wstate, _arg)
+
+        # Function with worker ID (simply tests if WorkerPool correctly handles use_worker_state=False)
+        def f3(_wid, _):
+            pass
+
+        for n_jobs, use_worker_state, shared_objects in product([1, 2, 4], [False, True], [None, 1337]):
+
+            # Do not test use_worker_state=False and shared_objects=1337, that is already tested in
+            # test_worker_id_shared_objects
+            if not use_worker_state and shared_objects:
+                continue
 
             for n_tasks in [0, 1, 3, 150]:
                 with WorkerPool(n_jobs=n_jobs, pass_worker_id=True) as pool:
                     # Configure pool
+                    pool.set_shared_objects(shared_objects)
                     pool.set_use_worker_state(use_worker_state)
 
                     # When use_worker_state is set, the final (worker_id, n_args) of each worker should add up to the
                     # number of given tasks
-                    f = f1 if use_worker_state else f2
+                    f = f1 if use_worker_state and not shared_objects else (f2 if use_worker_state and shared_objects
+                                                                            else f3)
                     results = pool.map(f, range(n_tasks), chunk_size=2)
                     if use_worker_state:
                         n_processed_per_worker = [0] * n_jobs
@@ -275,10 +300,12 @@ class MPIRETest(unittest.TestCase):
                         self.assertEqual(sum(n_processed_per_worker), n_tasks)
 
                 # Pass on arguments using the constructor instead
-                with WorkerPool(n_jobs=n_jobs, pass_worker_id=True, use_worker_state=use_worker_state) as pool:
+                with WorkerPool(n_jobs=n_jobs, pass_worker_id=True, shared_objects=shared_objects,
+                                use_worker_state=use_worker_state) as pool:
                     # When use_worker_state is set, the final (worker_id, n_args) of each worker should add up to the
                     # number of given tasks
-                    f = f1 if use_worker_state else f2
+                    f = f1 if use_worker_state and not shared_objects else (f2 if use_worker_state and shared_objects
+                                                                            else f3)
                     results = pool.map(f, range(n_tasks), chunk_size=2)
                     if use_worker_state:
                         n_processed_per_worker = [0] * n_jobs

@@ -16,7 +16,7 @@ import numpy as np
 import tqdm
 
 from mpire.exceptions import CannotPickleExceptionError, StopWorker
-from mpire.utils import chunk_tasks, get_n_chunks, make_single_arguments
+from mpire.utils import chunk_tasks, apply_numpy_chunking
 
 
 # Check if we need to import the Jupyter/IPython plugin or regular progress bar
@@ -753,11 +753,9 @@ class WorkerPool:
 
         # If we're dealing with numpy arrays, we have to chunk them here already
         if isinstance(iterable_of_args, np.ndarray):
-            iterable_len = get_n_chunks(iterable_of_args, iterable_len, chunk_size, n_splits, self.n_jobs)
-            iterable_of_args = make_single_arguments(chunk_tasks(iterable_of_args, len(iterable_of_args), chunk_size,
-                                                                 n_splits or self.n_jobs * 4))
-            chunk_size = 1
-            n_splits = None
+            iterable_of_args, iterable_len, chunk_size, n_splits = apply_numpy_chunking(iterable_of_args, iterable_len,
+                                                                                        chunk_size, n_splits,
+                                                                                        self.n_jobs)
 
         # Process all args
         if iterable_len is None and hasattr(iterable_of_args, '__len__'):
@@ -848,11 +846,9 @@ class WorkerPool:
 
         # If we're dealing with numpy arrays, we have to chunk them here already
         if isinstance(iterable_of_args, np.ndarray):
-            iterable_len = get_n_chunks(iterable_of_args, iterable_len, chunk_size, n_splits, self.n_jobs)
-            iterable_of_args = make_single_arguments(chunk_tasks(iterable_of_args, len(iterable_of_args), chunk_size,
-                                                                 n_splits or self.n_jobs * 4))
-            chunk_size = 1
-            n_splits = None
+            iterable_of_args, iterable_len, chunk_size, n_splits = apply_numpy_chunking(iterable_of_args, iterable_len,
+                                                                                        chunk_size, n_splits,
+                                                                                        self.n_jobs)
 
         # Yield results in order
         next_result_idx = 0
@@ -920,11 +916,9 @@ class WorkerPool:
         """
         # If we're dealing with numpy arrays, we have to chunk them here already
         if isinstance(iterable_of_args, np.ndarray):
-            iterable_len = get_n_chunks(iterable_of_args, iterable_len, chunk_size, n_splits, self.n_jobs)
-            iterator_of_chunked_args = make_single_arguments(chunk_tasks(iterable_of_args, len(iterable_of_args),
-                                                                         chunk_size, n_splits or self.n_jobs * 4))
-            chunk_size = 1
-            n_splits = None
+            iterator_of_chunked_args, iterable_len, chunk_size, n_splits = apply_numpy_chunking(
+                iterable_of_args, iterable_len, chunk_size, n_splits, self.n_jobs
+            )
 
         # Check parameters and thereby obtain the number of tasks. The chunk_size and progress bar parameters could be
         # modified as well
@@ -938,9 +932,6 @@ class WorkerPool:
         self._ready_for_destruction.clear()
 
         # Chunk the function arguments. Make single arguments when we're dealing with numpy arrays
-        # iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size, n_splits or self.n_jobs * 4)
-        # if isinstance(iterable_of_args, np.ndarray):
-        #     iterator_of_chunked_args = make_single_arguments(iterator_of_chunked_args, generator=True)
         if not isinstance(iterable_of_args, np.ndarray):
             iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size, n_splits or self.n_jobs * 4)
 

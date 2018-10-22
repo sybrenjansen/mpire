@@ -1,4 +1,3 @@
-import math
 import types
 import unittest
 from itertools import chain, product
@@ -114,8 +113,10 @@ class UtilsTest(unittest.TestCase):
         # Ignores iterable_len when actual number of tasks is less
         self.assertEqual(get_n_chunks(test_data, iterable_len=25, chunk_size=None, n_splits=None, n_jobs=None),
                          min(13, cpu_count() * 4))
-        self.assertEqual(get_n_chunks(data_generator(), iterable_len=125, chunk_size=None, n_splits=None, n_jobs=None),
+        self.assertEqual(get_n_chunks(test_data_numpy, iterable_len=125, chunk_size=None, n_splits=None, n_jobs=None),
                          min(100, cpu_count() * 4))
+        self.assertEqual(get_n_chunks(data_generator(), iterable_len=25, chunk_size=None, n_splits=None, n_jobs=None),
+                         min(13, cpu_count() * 4))
 
         # Test chunk_size
         self.assertEqual(get_n_chunks(test_data, iterable_len=None, chunk_size=1, n_splits=None, n_jobs=None), 13)

@@ -37,14 +37,13 @@ def chunk_tasks(iterable_of_args, iterable_len=None, chunk_size=None, n_splits=N
         chunk_size = n_tasks / n_splits
 
     # Chunk tasks
-    numpy_row_offset = 0
     args_iter = iter(iterable_of_args)
     current_chunk_size = chunk_size
     n_elements_returned = 0
     while True:
         # Use numpy slicing if available. We use max(1, ...) to always at least get one element
         if isinstance(iterable_of_args, np.ndarray):
-            chunk = iterable_of_args[numpy_row_offset:numpy_row_offset + max(1, math.ceil(current_chunk_size))]
+            chunk = iterable_of_args[n_elements_returned:n_elements_returned + max(1, math.ceil(current_chunk_size))]
         else:
             chunk = tuple(itertools.islice(args_iter, max(1, math.ceil(current_chunk_size))))
 
@@ -61,8 +60,31 @@ def chunk_tasks(iterable_of_args, iterable_len=None, chunk_size=None, n_splits=N
 
         yield chunk
         current_chunk_size = (current_chunk_size + chunk_size) - math.ceil(current_chunk_size)
-        numpy_row_offset += len(chunk)
         n_elements_returned += len(chunk)
+
+
+def apply_numpy_chunking(iterable_of_args, iterable_len, chunk_size, n_splits, n_jobs):
+    """
+    If we're dealing with numpy arrays, chunk them using numpy slicing and return changed map parameters
+
+    :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
+        function pointer
+    :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
+        This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
+        specifying the number of tasks.
+    :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
+        ``n_jobs * 4`` number of chunks.
+    :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
+    :param n_jobs: Int or ``None``. Number of workers to spawn. If ``None``, will use ``cpu_count()``.
+    :return: Chunked ``iterable_of_args`` with updated ``iterable_len``, ``chunk_size`` and ``n_splits``
+    """
+    iterable_len = get_n_chunks(iterable_of_args, iterable_len, chunk_size, n_splits, n_jobs)
+    iterable_of_args = make_single_arguments(chunk_tasks(iterable_of_args, len(iterable_of_args), chunk_size,
+                                                         n_splits or n_jobs * 4))
+    chunk_size = 1
+    n_splits = None
+
+    return iterable_of_args, iterable_len, chunk_size, n_splits
 
 
 def get_n_chunks(iterable_of_args, iterable_len=None, chunk_size=None, n_splits=None, n_jobs=None):
@@ -71,8 +93,7 @@ def get_n_chunks(iterable_of_args, iterable_len=None, chunk_size=None, n_splits=
 
     :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
         function pointer
-    :param iterable_len: Int. Number of tasks available in ``iterable_of_args``. Only needed when
-    ``iterable_of_args``
+    :param iterable_len: Int. Number of tasks available in ``iterable_of_args``. Only needed when ``iterable_of_args``
         is a generator.
     :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will use
         ``n_splits`` to determine the chunk size
