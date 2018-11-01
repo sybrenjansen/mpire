@@ -433,7 +433,7 @@ class WorkerPool:
 
     def set_use_worker_state(self, use_state=True):
         """
-        Set whether or not each worker should have it's own state variable. Each worker has its own state, so it's not
+        Set whether or not each worker should have its own state variable. Each worker has its own state, so it's not
         shared between the workers.
 
         :param use_state: Boolean. Whether to let a worker have a worker state or not

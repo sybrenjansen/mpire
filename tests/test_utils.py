@@ -96,7 +96,7 @@ class UtilsTest(unittest.TestCase):
             return (x_ for x_ in test_data)
 
         # When everything is None we should use cpu_count * 4 as number of splits. We have to take the number of tasks
-        # of tasks in to account
+        # into account
         self.assertEqual(get_n_chunks(test_data, iterable_len=None, chunk_size=None, n_splits=None, n_jobs=None),
                          min(13, cpu_count() * 4))
         self.assertEqual(get_n_chunks(test_data_numpy, iterable_len=None, chunk_size=None, n_splits=None, n_jobs=None),
@@ -138,7 +138,7 @@ class UtilsTest(unittest.TestCase):
         self.assertEqual(get_n_chunks(test_data_numpy, iterable_len=None, chunk_size=None, n_splits=6, n_jobs=2), 6)
 
         # Test n_jobs. When everything is None except n_jobs we should use n_jobs * 4 as number of splits. Again, taking
-        # in to account the number of tasks
+        # into account the number of tasks
         self.assertEqual(get_n_chunks(test_data, iterable_len=None, chunk_size=None, n_splits=None, n_jobs=1), 4)
         self.assertEqual(get_n_chunks(test_data_numpy, iterable_len=None, chunk_size=None, n_splits=None, n_jobs=1), 4)
 
