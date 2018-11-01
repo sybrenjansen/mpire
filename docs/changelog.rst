@@ -1,9 +1,10 @@
 Changelog
 =========
 
+0.8.0
 -----
 
-*(2018-09-28)*
+*(2018-11-01)*
 
 * Added support for worker state
 * Chunking numpy arrays is now done using numpy slicing

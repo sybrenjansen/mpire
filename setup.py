@@ -7,7 +7,7 @@ def read_description():
 
 setup(
     name="mpire",
-    version='0.7.2',
+    version='0.8.0',
     author="Sybren Jansen (Target Holding)",
     author_email="sybren.jansen@target-holding.nl",
     description="A Python package for multiprocessing, but faster than multiprocessing",
