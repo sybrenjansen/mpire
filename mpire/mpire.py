@@ -1,5 +1,3 @@
-from mpire.exceptions import CannotPickleExceptionError, StopWorker
-from mpire.utils import chunk_tasks
 import collections
 import itertools
 import os
@@ -8,12 +6,17 @@ import queue
 import signal
 import subprocess
 import time
-import tqdm
 import traceback
 import warnings
 from functools import partial
 from multiprocessing import cpu_count, Event, JoinableQueue, Lock, Process, Value
 from threading import Thread
+
+import numpy as np
+import tqdm
+
+from mpire.exceptions import CannotPickleExceptionError, StopWorker
+from mpire.utils import chunk_tasks, apply_numpy_chunking
 
 
 # Check if we need to import the Jupyter/IPython plugin or regular progress bar
@@ -36,7 +39,7 @@ class Worker(Process):
 
     def __init__(self, worker_id, tasks_queue, results_queue, restart_queue, task_completed_queue, exception_queue,
                  exception_lock, exception_thrown, has_started_counter, func_pointer, keep_order_event,
-                 shared_objects=None, worker_lifespan=None, pass_worker_id=False):
+                 shared_objects=None, worker_lifespan=None, pass_worker_id=False, use_worker_state=False):
         """
         :param worker_id: Worker id
         :param tasks_queue: Queue object for retrieving new task arguments
@@ -58,6 +61,7 @@ class Worker(Process):
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
         :param pass_worker_id: Boolean. Whether or not to pass the worker ID to the function
+        :param use_worker_state: Boolean. Whether to let a worker have a worker state or not
         """
         super().__init__()
 
@@ -76,6 +80,10 @@ class Worker(Process):
         self.shared_objects = shared_objects
         self.worker_lifespan = worker_lifespan
         self.pass_worker_id = pass_worker_id
+        self.use_worker_state = use_worker_state
+
+        # Worker state
+        self.worker_state = {}
 
         # Exception handling variables
         self.running = False
@@ -118,6 +126,8 @@ class Worker(Process):
             additional_args.append(self.worker_id)
         if self.shared_objects is not None:
             additional_args.append(self.shared_objects)
+        if self.use_worker_state:
+            additional_args.append(self.worker_state)
 
         # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
         # with idx support which deals with the provided idx variable.
@@ -244,7 +254,7 @@ class Worker(Process):
         """ Helper function which calls the function pointer and passes the arguments in the correct way """
         if isinstance(args, dict):
             return func(**args)
-        elif isinstance(args, collections.Iterable) and not isinstance(args, (str, bytes)):
+        elif isinstance(args, collections.Iterable) and not isinstance(args, (str, bytes, np.ndarray)):
             return func(*args)
         else:
             return func(args)
@@ -255,7 +265,8 @@ class WorkerPool:
     A multiprocessing worker pool which acts like a ``multiprocessing.Pool``, but is faster and has more options.
     """
 
-    def __init__(self, n_jobs=None, daemon=True, cpu_ids=None):
+    def __init__(self, n_jobs=None, daemon=True, cpu_ids=None, shared_objects=None, pass_worker_id=False,
+                 use_worker_state=False):
         """
         :param n_jobs: Int or ``None``. Number of workers to spawn. If ``None``, will use ``cpu_count()``.
         :param daemon: Bool. Whether to start the child processes as daemon
@@ -266,6 +277,10 @@ class WorkerPool:
             all child  processes to use. A single element can be either a single integer specifying a single CPU ID, or
             a list of integers specifying that a single child process can make use of multiple CPU IDs. If ``None``, CPU
             pinning will be disabled. Note that CPU pinning may only work on Linux based systems
+        :param shared_objects: ``None`` or any other type of object (multiple objects can be wrapped in a single tuple).
+            Shared objects is only passed on to the user function when it's not ``None``
+        :param pass_worker_id: Boolean. Whether to pass on a worker ID to the user function or not
+        :param use_worker_state: Boolean. Whether to let a worker have a worker state or not
         """
         # Set parameters
         self.n_jobs = n_jobs or cpu_count()
@@ -304,7 +319,7 @@ class WorkerPool:
         self._workers = []
 
         # User provided shared objects to pass on to the user provided function
-        self.shared_objects = None
+        self.shared_objects = shared_objects
 
         # User provided function to call
         self.func_pointer = None
@@ -313,7 +328,10 @@ class WorkerPool:
         self.worker_lifespan = None
 
         # Whether to pass on the worker ID to the user provided function
-        self.pass_worker_id = False
+        self.pass_worker_id = pass_worker_id
+
+        # Whether to let a worker have a worker state
+        self.use_worker_state = use_worker_state
 
         # Whether or not an exception was caught by one of the child processes
         self.exception_caught = False
@@ -413,6 +431,15 @@ class WorkerPool:
                           'with or without return values out of the box. This argument will be removed from version '
                           '1.0.0 onwards', DeprecationWarning, stacklevel=2)
 
+    def set_use_worker_state(self, use_state=True):
+        """
+        Set whether or not each worker should have its own state variable. Each worker has its own state, so it's not
+        shared between the workers.
+
+        :param use_state: Boolean. Whether to let a worker have a worker state or not
+        """
+        self.use_worker_state = use_state
+
     def start_workers(self, func_pointer, worker_lifespan):
         """
         Spawns the workers and starts them so they're ready to start reading from the tasks queue.
@@ -464,7 +491,7 @@ class WorkerPool:
         w = Worker(worker_id, self._tasks_queue, self._results_queue, self._restart_queue, self._task_completed_queue,
                    self._exception_queue, self._exception_lock, self._exception_thrown, self._has_started_counter,
                    self.func_pointer, self._keep_order_event, self.shared_objects, self.worker_lifespan,
-                   self.pass_worker_id)
+                   self.pass_worker_id, self.use_worker_state)
         w.daemon = self.daemon
         w.start()
 
@@ -689,14 +716,16 @@ class WorkerPool:
             self.terminate()
 
     def map(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-            n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False):
+            n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False,
+            concatenate_numpy_output=True):
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
 
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
-            the function should receive those as the next argument.
+            the function should receive those as the next argument. If the worker state has been enabled it should
+            receive a state variable as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
         :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
@@ -716,10 +745,17 @@ class WorkerPool:
             course of time.
         :param progress_bar: Boolean or ``tqdm`` instance. When ``True`` will display a default progress bar. Defaults
             can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
+        :param concatenate_numpy_output: Boolean. When ``True`` it will concatenate numpy output to a single numpy array
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
         self._keep_order_event.set()
+
+        # If we're dealing with numpy arrays, we have to chunk them here already
+        if isinstance(iterable_of_args, np.ndarray):
+            iterable_of_args, iterable_len, chunk_size, n_splits = apply_numpy_chunking(iterable_of_args, iterable_len,
+                                                                                        chunk_size, n_splits,
+                                                                                        self.n_jobs)
 
         # Process all args
         if iterable_len is None and hasattr(iterable_of_args, '__len__'):
@@ -732,7 +768,12 @@ class WorkerPool:
         self._keep_order_event.clear()
 
         # Rearrange and return
-        return [result[1] for result in sorted(results, key=lambda result: result[0])]
+        sorted_results = [result[1] for result in sorted(results, key=lambda result: result[0])]
+
+        # Convert back to numpy if necessary
+        return (np.concatenate(sorted_results)
+                if sorted_results and concatenate_numpy_output and isinstance(sorted_results[0], np.ndarray) else
+                sorted_results)
 
     def map_unordered(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
                       n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False):
@@ -742,7 +783,8 @@ class WorkerPool:
 
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
-            the function should receive those as the next argument.
+            the function should receive those as the next argument. If the worker state has been enabled it should
+            receive a state variable as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
         :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
@@ -776,7 +818,8 @@ class WorkerPool:
 
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
-            the function should receive those as the next argument.
+            the function should receive those as the next argument. If the worker state has been enabled it should
+            receive a state variable as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
         :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
@@ -800,6 +843,12 @@ class WorkerPool:
         """
         # Notify workers to keep order in mind
         self._keep_order_event.set()
+
+        # If we're dealing with numpy arrays, we have to chunk them here already
+        if isinstance(iterable_of_args, np.ndarray):
+            iterable_of_args, iterable_len, chunk_size, n_splits = apply_numpy_chunking(iterable_of_args, iterable_len,
+                                                                                        chunk_size, n_splits,
+                                                                                        self.n_jobs)
 
         # Yield results in order
         next_result_idx = 0
@@ -842,7 +891,8 @@ class WorkerPool:
 
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
-            the function should receive those as the next argument.
+            the function should receive those as the next argument. If the worker state has been enabled it should
+            receive a state variable as the next argument.
         :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
             function pointer
         :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
@@ -864,6 +914,12 @@ class WorkerPool:
             can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
         :return: Generator yielding unordered results
         """
+        # If we're dealing with numpy arrays, we have to chunk them here already
+        if isinstance(iterable_of_args, np.ndarray):
+            iterator_of_chunked_args, iterable_len, chunk_size, n_splits = apply_numpy_chunking(
+                iterable_of_args, iterable_len, chunk_size, n_splits, self.n_jobs
+            )
+
         # Check parameters and thereby obtain the number of tasks. The chunk_size and progress bar parameters could be
         # modified as well
         n_tasks, chunk_size, progress_bar = self._check_map_parameters(iterable_of_args, iterable_len, progress_bar,
@@ -875,8 +931,9 @@ class WorkerPool:
         self._cleaning_up = False
         self._ready_for_destruction.clear()
 
-        # Chunk the function arguments
-        iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size, n_splits or self.n_jobs * 4)
+        # Chunk the function arguments. Make single arguments when we're dealing with numpy arrays
+        if not isinstance(iterable_of_args, np.ndarray):
+            iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size, n_splits or self.n_jobs * 4)
 
         # Create a progress bar if requested
         progress_bar, progress_bar_progress = self._create_progress_bar(progress_bar, n_tasks)
@@ -1136,3 +1193,6 @@ class WorkerPool:
         else:
             self._exception_queue.join()
             self._exception_queue = None
+
+
+MotherForker = WorkerPool

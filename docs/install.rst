@@ -22,6 +22,7 @@ Dependencies
 
 Python packages (installed automatically when installing MPIRE):
 
+- numpy
 - tqdm_
 
 .. _tqdm: https://pypi.python.org/pypi/tqdm
