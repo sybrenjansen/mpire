@@ -1,6 +1,13 @@
 Changelog
 =========
 
+0.8.1
+-----
+
+*(2019-02-06)*
+
+* Fixed bug when process would hang when progress bar was set to ``True`` and an empty iterable was provided
+
 0.8.0
 -----
 
