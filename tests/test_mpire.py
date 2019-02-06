@@ -398,6 +398,10 @@ class MPIRETest(unittest.TestCase):
                     with WorkerPool(n_jobs=n_jobs) as pool:
                         _ = pool.map(square_numpy, self.test_data_numpy, progress_bar=progress_bar)
 
+        # Test with empty iterable (this failed before)
+        with WorkerPool() as pool:
+            self.assertListEqual(pool.map(square, [], progress_bar=True), [])
+
         print()
 
     def test_exceptions(self):
