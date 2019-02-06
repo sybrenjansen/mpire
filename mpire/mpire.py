@@ -1130,7 +1130,7 @@ class WorkerPool:
         :param progress_bar_progress: multiprocessing.Value for keeping track of the number of updates
         """
         # Clean up the progress bar
-        if isinstance(progress_bar, tqdm.tqdm):
+        if progress_bar is not None:
             # Wait until all tasks are completed (well, not when an exception was caught). We have to wait because some
             # queues can get delayed. It can occur that the results have already been processed and that this function
             # is called, before all the task_completed items have been received. This means that we would put a poison
