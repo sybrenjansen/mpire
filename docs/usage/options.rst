@@ -193,7 +193,29 @@ should be picklable. This can sometimes be a hassle when you heavily rely on lam
 interactive shell. To remedy most of these problems MPIRE can use dill_ as a replacement for pickle. Simply install the
 required :ref:`dependencies <dilldep>` and you're good to go.
 
-Additionally, global variables (constants are fine) might have a different value than you might expect.
+Additionally, global variables (constants are fine) might have a different value than you might expect. You also have to
+import packages within the called function:
+
+.. code-block:: python
+
+    import os
+
+    def failing_job(folder, filename):
+        return os.path.join(folder, filename)
+
+    # This will fail because 'os' is not copied to the child processes
+    with WorkerPool(n_jobs=2, start_method='spawn') as pool:
+        pool.map(failing_job, [('folder', '0.p3'), ('folder', '1.p3')])
+
+.. code-block:: python
+
+    def working_job(folder, filename):
+        import os
+        return os.path.join(folder, filename)
+
+    # This will work
+    with WorkerPool(n_jobs=2, start_method='spawn') as pool:
+        pool.map(working_job, [('folder', '0.p3'), ('folder', '1.p3')])
 
 .. _documentation: https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
 .. _caveats: https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods
