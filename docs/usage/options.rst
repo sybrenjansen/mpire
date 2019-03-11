@@ -172,3 +172,29 @@ constructor:
     with WorkerPool(n_jobs=4, shared_objects=results_container, pass_worker_id=True) as pool:
         # Square the results and store them in the results container
         pool.map_unordered(square_sum, range(100))
+
+
+Process start method
+--------------------
+
+The ``multiprocessing`` package allows you to start processes using a few different methods: ``'fork'``, ``'spawn'`` or
+``'forkserver'``. For detailed information, please refer to the multiprocessing documentation_ and caveats_ section. In
+short:
+
+- ``'fork'`` (the default) copies the parent process such that the child process is effectively identical. This
+  includes copying everything currently in memory. This is sometimes useful, but other times useless or even a serious
+  bottleneck.
+- ``'spawn'`` starts a fresh python interpreter where only those resources necessary are inherited.
+- ``'forkserver'`` first starts a server process. Whenever a new process is needed the parent process requests the
+  server to fork a new process.
+
+The ``'spawn'`` and ``'forkserver'`` methods have some caveats_. All resources needed for running the child process
+should be picklable. This can sometimes be a hassle when you heavily rely on lambdas or are trying to run MPIRE in an
+interactive shell. To remedy most of these problems MPIRE can use dill_ as a replacement for pickle. Simply install the
+required :ref:`dependencies <dilldep>` and you're good to go.
+
+Additionally, global variables (constants are fine) might have a different value than you might expect.
+
+.. _documentation: https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
+.. _caveats: https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods
+.. _dill: https://pypi.org/project/dill/

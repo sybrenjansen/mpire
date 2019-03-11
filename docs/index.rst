@@ -18,8 +18,11 @@ Features
 - Nested pool of workers are allowed when setting the ``daemon`` option
 - Child processes can be pinned to specific or a range of CPUs on Linux systems
 - Progress bar support
+- dill_ support
 
 If you have any issues or suggestions please inform the author.
+
+.. _dill: https://pypi.org/project/dill/
 
 Contents
 --------

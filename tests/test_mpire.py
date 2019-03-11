@@ -404,6 +404,14 @@ class MPIRETest(unittest.TestCase):
 
         print()
 
+    def test_start_method(self):
+        """
+        Test different start methods. All should work just fine
+        """
+        for n_jobs, start_method in product([1, 3], ['fork', 'forkserver', 'spawn']):
+            with WorkerPool(n_jobs, start_method=start_method) as pool:
+                self.assertListEqual(pool.map(square, self.test_data), self.test_desired_output)
+
     def test_exceptions(self):
         """
         Tests if MPIRE can handle exceptions well
