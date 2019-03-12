@@ -100,9 +100,10 @@ class AbstractWorker:
         self.worker_state = {}
 
         # Exception handling variables
+        ctx = MP_CONTEXTS[self.start_method]
         self.running = False
-        self.lock = MP_CONTEXTS[self.start_method].Lock()
-        self.stop_event = MP_CONTEXTS[self.start_method].Event()
+        self.lock = ctx.Lock()
+        self.stop_event = ctx.Event()
 
         # Register handler for graceful shutdown
         signal.signal(signal.SIGUSR1, self._exit_gracefully)
@@ -291,14 +292,14 @@ def worker_factory(start_method):
     Returns the appropriate worker class given the start method
 
     :param start_method: What Process start method to use, see the WorkerPool constructor
-    :return: Worker class
+    :return: Worker class where the start_method is already filled in
     """
     if start_method == 'fork':
-        return ForkWorker
+        return partial(ForkWorker, start_method)
     elif start_method == 'forkserver':
-        return ForkServerWorker
+        return partial(ForkServerWorker, start_method)
     elif start_method == 'spawn':
-        return SpawnWorker
+        return partial(SpawnWorker, start_method)
     else:
         raise ValueError("Unknown start method: '{}'".format(start_method))
 
@@ -333,7 +334,12 @@ class WorkerPool:
         self.n_jobs = n_jobs or mp.cpu_count()
         self.daemon = daemon
         self.cpu_ids = self._check_cpu_ids(cpu_ids)
-        self.start_method = start_method
+
+        # Multiprocessing context
+        self.ctx = MP_CONTEXTS[start_method]
+
+        # Worker factory
+        self.Worker = worker_factory(start_method)
 
         # Queue to pass on tasks to child processes
         self._tasks_queue = None
@@ -353,15 +359,15 @@ class WorkerPool:
 
         # Lock object such that child processes can only throw one at a time. The Event object ensures only one
         # exception can be thrown
-        self._exception_lock = MP_CONTEXTS[self.start_method].Lock()
-        self._exception_thrown = MP_CONTEXTS[self.start_method].Event()
+        self._exception_lock = self.ctx.Lock()
+        self._exception_thrown = self.ctx.Event()
 
         # Synchronized value counting how many child processes actually started (when calling .start() on a Process does
         # not mean that process is actually spawned yet)
         self._has_started_counter = None
 
         # Synchronized event to inform the child processes to keep order in mind (for the map functions)
-        self._keep_order_event = MP_CONTEXTS[self.start_method].Event()
+        self._keep_order_event = self.ctx.Event()
 
         # Container of the child processes
         self._workers = []
@@ -391,7 +397,7 @@ class WorkerPool:
         self._exception_thread = None
 
         # Synchronized event indicating whether or not the main process is ready for destruction in case of an exception
-        self._ready_for_destruction = MP_CONTEXTS[self.start_method].Event()
+        self._ready_for_destruction = self.ctx.Event()
 
     def _check_cpu_ids(self, cpu_ids):
         """
@@ -502,11 +508,11 @@ class WorkerPool:
         self.worker_lifespan = worker_lifespan
 
         # Start new workers
-        self._tasks_queue = MP_CONTEXTS[self.start_method].JoinableQueue()
-        self._results_queue = MP_CONTEXTS[self.start_method].JoinableQueue()
-        self._restart_queue = MP_CONTEXTS[self.start_method].JoinableQueue()
-        self._exception_queue = MP_CONTEXTS[self.start_method].JoinableQueue()
-        self._has_started_counter = MP_CONTEXTS[self.start_method].Value('i', 0, lock=True)
+        self._tasks_queue = self.ctx.JoinableQueue()
+        self._results_queue = self.ctx.JoinableQueue()
+        self._restart_queue = self.ctx.JoinableQueue()
+        self._exception_queue = self.ctx.JoinableQueue()
+        self._has_started_counter = self.ctx.Value('i', 0, lock=True)
         for worker_id in range(self.n_jobs):
             self._workers.append(self._start_worker(worker_id))
 
@@ -536,11 +542,10 @@ class WorkerPool:
         :return: Worker instance
         """
         # Create worker
-        w = worker_factory(self.start_method)(self.start_method, worker_id, self._tasks_queue, self._results_queue,
-                                              self._restart_queue, self._task_completed_queue, self._exception_queue,
-                                              self._exception_lock, self._exception_thrown, self._has_started_counter,
-                                              self.func_pointer, self._keep_order_event, self.shared_objects,
-                                              self.worker_lifespan, self.pass_worker_id, self.use_worker_state)
+        w = self.Worker(worker_id, self._tasks_queue, self._results_queue, self._restart_queue,
+                        self._task_completed_queue, self._exception_queue, self._exception_lock, self._exception_thrown,
+                        self._has_started_counter, self.func_pointer, self._keep_order_event, self.shared_objects,
+                        self.worker_lifespan, self.pass_worker_id, self.use_worker_state)
         w.daemon = self.daemon
         w.start()
 
@@ -1131,8 +1136,8 @@ class WorkerPool:
         # Create a progress bar if requested
         if progress_bar is True or isinstance(progress_bar, tqdm.tqdm):
             progress_bar = progress_bar if isinstance(progress_bar, tqdm.tqdm) else tqdm_pb(total=n_tasks)
-            progress_bar_progress = MP_CONTEXTS[self.start_method].Value('i', 0, lock=True)
-            self._task_completed_queue = MP_CONTEXTS[self.start_method].JoinableQueue()
+            progress_bar_progress = self.ctx.Value('i', 0, lock=True)
+            self._task_completed_queue = self.ctx.JoinableQueue()
 
             # Start a thread
             self._progress_bar_thread = Thread(target=self._handle_progress_bar,
