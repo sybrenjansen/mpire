@@ -1,6 +1,18 @@
 Changelog
 =========
 
+0.9.0
+-----
+
+*(2019-03-11)*
+
+* Added support for using different start methods ('spawn' and 'forkserver') instead of only the default method 'fork'
+* Added optional support for using dill_ in multiprocessing by utilizing the multiprocess_ library
+* The ``mpire.Worker`` class is no longer directly available
+
+.. _dill: https://pypi.org/project/dill/
+.. _multiprocess: https://pypi.org/project/multiprocess/
+
 0.8.1
 -----
 

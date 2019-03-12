@@ -172,3 +172,99 @@ constructor:
     with WorkerPool(n_jobs=4, shared_objects=results_container, pass_worker_id=True) as pool:
         # Square the results and store them in the results container
         pool.map_unordered(square_sum, range(100))
+
+
+Process start method
+--------------------
+
+The ``multiprocessing`` package allows you to start processes using a few different methods: ``'fork'``, ``'spawn'`` or
+``'forkserver'``. For detailed information, please refer to the multiprocessing documentation_ and caveats_ section. In
+short:
+
+- ``'fork'`` (the default) copies the parent process such that the child process is effectively identical. This
+  includes copying everything currently in memory. This is sometimes useful, but other times useless or even a serious
+  bottleneck.
+- ``'spawn'`` starts a fresh python interpreter where only those resources necessary are inherited.
+- ``'forkserver'`` first starts a server process. Whenever a new process is needed the parent process requests the
+  server to fork a new process.
+
+The ``'spawn'`` and ``'forkserver'`` methods have some caveats_. All resources needed for running the child process
+should be picklable. This can sometimes be a hassle when you heavily rely on lambdas or are trying to run MPIRE in an
+interactive shell. To remedy most of these problems MPIRE can use dill_ as a replacement for pickle. Simply install the
+required :ref:`dependencies <dilldep>` and you're good to go.
+
+Additionally, global variables (constants are fine) might have a different value than you might expect. You also have to
+import packages within the called function:
+
+.. code-block:: python
+
+    import os
+
+    def failing_job(folder, filename):
+        return os.path.join(folder, filename)
+
+    # This will fail because 'os' is not copied to the child processes
+    with WorkerPool(n_jobs=2, start_method='spawn') as pool:
+        pool.map(failing_job, [('folder', '0.p3'), ('folder', '1.p3')])
+
+.. code-block:: python
+
+    def working_job(folder, filename):
+        import os
+        return os.path.join(folder, filename)
+
+    # This will work
+    with WorkerPool(n_jobs=2, start_method='spawn') as pool:
+        pool.map(working_job, [('folder', '0.p3'), ('folder', '1.p3')])
+
+
+Unit tests
+~~~~~~~~~~
+
+When using the ``'spawn'`` or ``'forkserver'`` method you'll probably run in to one or two issues when running
+unittests. One problem that might occur is that your unittests will restart whenever the piece of code containing such
+a start method is called, leading to very funky terminal output. To remedy this problem make sure your ``setup`` call in
+``setup.py`` is surrounded by an ``if __name__ == '__main__':`` clause:
+
+.. code-block:: python
+
+    from setuptools import setup
+
+    if __name__ == '__main__':
+
+        # Call setup and install any dependencies you have inside the if-clause
+        setup(...)
+
+See the 'Safe importing of main module' section at caveats_.
+
+The second problem you might encounter is that the semaphore tracker of multiprocessing will complain when you run
+individual (or a selection of) unittests using ``python setup.py test -s tests.some_test``. At the end of the tests you
+will see errors like:
+
+.. code-block:: python
+
+    Traceback (most recent call last):
+      File ".../site-packages/multiprocess/semaphore_tracker.py", line 132, in main
+        cache.remove(name)
+    KeyError: b'/mp-d3i13qd5'
+    .../site-packages/multiprocess/semaphore_tracker.py:146: UserWarning: semaphore_tracker: There appear to be 58
+                                                             leaked semaphores to clean up at shutdown
+      len(cache))
+    .../site-packages/multiprocess/semaphore_tracker.py:158: UserWarning: semaphore_tracker: '/mp-f45dt4d6': [Errno 2]
+                                                             No such file or directory
+      warnings.warn('semaphore_tracker: %r: %s' % (name, e))
+    ...
+
+Your unittests will still succeed and run OK. Unfortunately, I've not found a remedy to this problem using
+``python setup.py test`` yet. What you can use instead is something like the following:
+
+.. code-block:: python
+
+    python -m unittest tests.some_test
+
+This will work just fine. See the unittest_ documentation for more information.
+
+.. _documentation: https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
+.. _caveats: https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods
+.. _dill: https://pypi.org/project/dill/
+.. _unittest: https://docs.python.org/3.4/library/unittest.html#command-line-interface
