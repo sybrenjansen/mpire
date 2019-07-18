@@ -10,25 +10,14 @@ import traceback
 import warnings
 from functools import partial
 from threading import Thread
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
-import tqdm
+from tqdm.auto import tqdm
 
 from mpire.exceptions import CannotPickleExceptionError, StopWorker
+from mpire.signal import DisableKeyboardInterruptSignal, DelayedKeyboardInterrupt
 from mpire.utils import chunk_tasks, apply_numpy_chunking
-
-
-# Check if we need to import the Jupyter/IPython plugin or regular progress bar
-try:
-    if get_ipython().__class__.__name__ == 'ZMQInteractiveShell':
-        # Using Jupyter/IPython notebook
-        from tqdm import tqdm_notebook as tqdm_pb
-    else:
-        # Using IPython, but in a terminal
-        from tqdm import tqdm as tqdm_pb
-except NameError:
-    # Not using IPython
-    from tqdm import tqdm as tqdm_pb
 
 
 # If multiprocess is installed we want to use that as it has more capabilities than regular multiprocessing (e.g.,
@@ -37,6 +26,10 @@ try:
     import multiprocess as mp
 except ImportError:
     import multiprocessing as mp
+
+
+# Typedefs
+CPUList = Optional[List[Union[int, List[int]]]]
 
 
 MP_CONTEXTS = {'fork': mp.get_context('fork'),
@@ -49,15 +42,17 @@ class AbstractWorker:
     A multiprocessing helper class which continuously asks the queue for new jobs, until a poison pill is inserted
     """
 
-    def __init__(self, start_method, worker_id, tasks_queue, results_queue, restart_queue, task_completed_queue,
-                 exception_queue, exception_lock, exception_thrown, has_started_counter, func_pointer, keep_order_event,
-                 shared_objects=None, worker_lifespan=None, pass_worker_id=False, use_worker_state=False):
+    def __init__(self, start_method: str, worker_id: int, tasks_queue: mp.JoinableQueue,
+                 results_queue: mp.JoinableQueue, worker_done_array: mp.Array, task_completed_queue: mp.JoinableQueue,
+                 exception_queue: mp.JoinableQueue, exception_lock: mp.Lock, exception_thrown: mp.Event,
+                 has_started_counter: mp.Value, func_pointer: Callable, keep_order: bool, shared_objects: Any = None,
+                 worker_lifespan: Optional[int] = None, pass_worker_id: bool = False, use_worker_state: bool = False):
         """
         :param start_method: What Process start method to use
         :param worker_id: Worker id
         :param tasks_queue: Queue object for retrieving new task arguments
         :param results_queue: Queue object for storing the results
-        :param restart_queue: Queue object for notifying the ``WorkerPool`` to restart this worker
+        :param worker_done_array: Array object for notifying the ``WorkerPool`` to restart a worker
         :param task_completed_queue: Queue object for notifying the main process we're done with a single task. ``None``
             when notifying is not necessary.
         :param exception_queue: Queue object for sending Exception objects to whenever an Exception was raised inside a
@@ -66,8 +61,8 @@ class AbstractWorker:
         :param exception_thrown: Event object that ensures only one exception can be thrown at all times
         :param has_started_counter: multiprocessing.Value object that tracks how many workers have started
         :param func_pointer: Function pointer to call each time new task arguments become available
-        :param keep_order_event: Event object which signals if the task arguments contain an order index which should
-            be preserved and not fed to the function pointer (e.g., used in ``map``)
+        :param keep_order: Boolean flag which signals if the task arguments contain an order index which should be
+            preserved and not fed to the function pointer (e.g., used in ``map``)
         :param shared_objects: ``None`` or an iterable of process-aware shared objects (e.g., ``multiprocessing.Array``)
             to pass to the function as the first argument.
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
@@ -83,14 +78,14 @@ class AbstractWorker:
         self.worker_id = worker_id
         self.tasks_queue = tasks_queue
         self.results_queue = results_queue
-        self.restart_queue = restart_queue
+        self.worker_done_array = worker_done_array
         self.task_completed_queue = task_completed_queue
         self.exception_queue = exception_queue
         self.exception_lock = exception_lock
         self.exception_thrown = exception_thrown
         self.has_started_counter = has_started_counter
         self.func_pointer = func_pointer
-        self.keep_order_event = keep_order_event
+        self.keep_order = keep_order
         self.shared_objects = shared_objects
         self.worker_lifespan = worker_lifespan
         self.pass_worker_id = pass_worker_id
@@ -108,7 +103,7 @@ class AbstractWorker:
         # Register handler for graceful shutdown
         signal.signal(signal.SIGUSR1, self._exit_gracefully)
 
-    def _exit_gracefully(self, *_):
+    def _exit_gracefully(self, *_) -> None:
         """
         This function is called when the main process sends a kill signal to this process. This can only mean another
         child process encountered an exception which means we should exit.
@@ -130,7 +125,7 @@ class AbstractWorker:
                 self.running = False
                 raise StopWorker
 
-    def run(self):
+    def run(self) -> None:
         """
         Continuously asks the tasks queue for new task arguments. When not receiving a poisonous pill or when the max
         life span is not yet reached it will execute the new task and put the results in the results queue.
@@ -146,7 +141,7 @@ class AbstractWorker:
 
         # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
         # with idx support which deals with the provided idx variable.
-        func = partial(self._helper_func_with_idx if self.keep_order_event.is_set() else self._helper_func,
+        func = partial(self._helper_func_with_idx if self.keep_order else self._helper_func,
                        partial(self.func_pointer, *additional_args))
 
         n_chunks_executed = 0
@@ -200,7 +195,7 @@ class AbstractWorker:
                             # know for sure that the exception queue will be empty when the first one arrives.
                             if not self.exception_thrown.is_set():
                                 # Determine function arguments
-                                func_args = args[1] if self.keep_order_event.is_set() else args
+                                func_args = args[1] if self.keep_order else args
                                 if isinstance(func_args, dict):
                                     argument_str = "\n".join("Arg %s: %s" % (str(key), str(value))
                                                              for key, value in func_args.items())
@@ -254,7 +249,7 @@ class AbstractWorker:
 
         # Notify WorkerPool to start a new worker if max lifespan is reached
         if self.worker_lifespan is not None and n_chunks_executed == self.worker_lifespan:
-            self.restart_queue.put(self.worker_id, block=True)
+            self.worker_done_array[self.worker_id] = True
 
     def _helper_func_with_idx(self, func, args):
         """ Helper function which calls the function pointer but preserves the order index """
@@ -309,23 +304,24 @@ class WorkerPool:
     A multiprocessing worker pool which acts like a ``multiprocessing.Pool``, but is faster and has more options.
     """
 
-    def __init__(self, n_jobs=None, daemon=True, cpu_ids=None, shared_objects=None, pass_worker_id=False,
-                 use_worker_state=False, start_method='fork'):
+    def __init__(self, n_jobs: Optional[int] = None, daemon: bool = True, cpu_ids: CPUList = None,
+                 shared_objects: Any = None, pass_worker_id: bool = False, use_worker_state: bool = False,
+                 start_method: str = 'fork') -> None:
         """
-        :param n_jobs: Int or ``None``. Number of workers to spawn. If ``None``, will use ``cpu_count()``.
-        :param daemon: Bool. Whether to start the child processes as daemon
-        :param cpu_ids: List or ``None``. List of CPU IDs to use for pinning child processes to specific CPUs. The list
-            must be as long as the number of jobs used (if ``n_jobs`` equals ``None`` it must be equal to
-            ``mpire.cpu_count()``), or the list must have exactly one element. In the former case, element x specifies
-            the CPU ID(s) to use for child process x. In the latter case the single element specifies the CPU ID(s) for
-            all child  processes to use. A single element can be either a single integer specifying a single CPU ID, or
-            a list of integers specifying that a single child process can make use of multiple CPU IDs. If ``None``, CPU
-            pinning will be disabled. Note that CPU pinning may only work on Linux based systems
+        :param n_jobs: Number of workers to spawn. If ``None``, will use ``cpu_count()``.
+        :param daemon: Whether to start the child processes as daemon
+        :param cpu_ids: List of CPU IDs to use for pinning child processes to specific CPUs. The list must be as long as
+            the number of jobs used (if ``n_jobs`` equals ``None`` it must be equal to ``mpire.cpu_count()``), or the
+            list must have exactly one element. In the former case, element x specifies the CPU ID(s) to use for child
+            process x. In the latter case the single element specifies the CPU ID(s) for all child  processes to use. A
+            single element can be either a single integer specifying a single CPU ID, or a list of integers specifying
+            that a single child process can make use of multiple CPU IDs. If ``None``, CPU pinning will be disabled.
+            Note that CPU pinning may only work on Linux based systems
         :param shared_objects: ``None`` or any other type of object (multiple objects can be wrapped in a single tuple).
             Shared objects is only passed on to the user function when it's not ``None``
-        :param pass_worker_id: Boolean. Whether to pass on a worker ID to the user function or not
-        :param use_worker_state: Boolean. Whether to let a worker have a worker state or not
-        :param start_method: Str. What Process start method to use, see
+        :param pass_worker_id: Whether to pass on a worker ID to the user function or not
+        :param use_worker_state: Whether to let a worker have a worker state or not
+        :param start_method: What Process start method to use, see
             https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods for more information and
             https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods for some
             caveats when using the 'spawn' or 'forkserver' methods
@@ -347,8 +343,8 @@ class WorkerPool:
         # Queue where the child processes can pass on results
         self._results_queue = None
 
-        # Queue where the child processes can request a restart
-        self._restart_queue = None
+        # Array where the child processes can request a restart
+        self._worker_done_array = None
 
         # Queue related to the progress bar. Child processes can pass on a random value whenever they are finished with
         # a job
@@ -366,8 +362,8 @@ class WorkerPool:
         # not mean that process is actually spawned yet)
         self._has_started_counter = None
 
-        # Synchronized event to inform the child processes to keep order in mind (for the map functions)
-        self._keep_order_event = self.ctx.Event()
+        # Boolean flag to inform the child processes to keep order in mind (for the map functions)
+        self._keep_order = False
 
         # Container of the child processes
         self._workers = []
@@ -389,6 +385,7 @@ class WorkerPool:
 
         # Whether or not an exception was caught by one of the child processes
         self.exception_caught = False
+        self._cleaning_up = False
 
         # Thread that handles the progress bar updates
         self._progress_bar_thread = None
@@ -399,17 +396,17 @@ class WorkerPool:
         # Synchronized event indicating whether or not the main process is ready for destruction in case of an exception
         self._ready_for_destruction = self.ctx.Event()
 
-    def _check_cpu_ids(self, cpu_ids):
+    def _check_cpu_ids(self, cpu_ids: CPUList) -> List[str]:
         """
         Checks the cpu_ids parameter for correctness
 
-        :param cpu_ids: List or ``None``. List of CPU IDs to use for pinning child processes to specific CPUs. The list
-            must be as long as the number of jobs used (if ``n_jobs`` equals ``None`` it must be equal to
-            ``mpire.cpu_count()``), or the list must have exactly one element. In the former case, element x specifies
-            the CPU ID(s) to use for child process x. In the latter case the single element specifies the CPU ID(s) for
-            all child  processes to use. A single element can be either a single integer specifying a single CPU ID, or
-            a list of integers specifying that a single child process can make use of multiple CPU IDs. If ``None``, CPU
-            pinning will be disabled. Note that CPU pinning may only work on Linux based systems
+        :param cpu_ids: List of CPU IDs to use for pinning child processes to specific CPUs. The list must be as long as
+            the number of jobs used (if ``n_jobs`` equals ``None`` it must be equal to ``mpire.cpu_count()``), or the
+            list must have exactly one element. In the former case, element x specifies the CPU ID(s) to use for child
+            process x. In the latter case the single element specifies the CPU ID(s) for all child  processes to use. A
+            single element can be either a single integer specifying a single CPU ID, or a list of integers specifying
+            that a single child process can make use of multiple CPU IDs. If ``None``, CPU pinning will be disabled.
+            Note that CPU pinning may only work on Linux based systems
         :return: cpu_ids
         """
         # Check CPU IDs
@@ -450,17 +447,17 @@ class WorkerPool:
 
         return converted_cpu_ids
 
-    def pass_on_worker_id(self, pass_on=True):
+    def pass_on_worker_id(self, pass_on: bool = True) -> None:
         """
         Set whether to pass on the worker ID to the function to be executed or not (default= ``False``).
 
         The worker ID will be the first argument passed on to the function
 
-        :param pass_on: Boolean. Whether to pass on or not.
+        :param pass_on: Whether to pass on a worker ID to the user function or not
         """
         self.pass_worker_id = pass_on
 
-    def set_shared_objects(self, shared_objects=None, has_return_value_with_shared_objects=None):
+    def set_shared_objects(self, shared_objects: Any = None) -> None:
         """
         Set shared objects to pass to the workers.
 
@@ -470,38 +467,26 @@ class WorkerPool:
         on. If the worker ID is passed on the shared objects will be the second argument.
 
         :param shared_objects: ``None`` or any other type of object (multiple objects can be wrapped in a single tuple).
-            When ``shared_objects`` is specified and the function to execute does not have any return value, set
-            ``has_return_value_with_shared_objects`` to False.
-        :param has_return_value_with_shared_objects: DEPRECATED! MPIRE now handles functions with or without return
-            values out of the box. This argument will be removed from version 1.0.0 onwards. Boolean. Whether
-            or not the function has a return value when shared objects are passed to it. If ``False``, will not put any
-            returned values in the results queue. In this case, the user has to check whether or not the workers are
-            done processing.
+            Shared objects is only passed on to the user function when it's not ``None``
         """
         self.shared_objects = shared_objects
-        if has_return_value_with_shared_objects is not None:
-            warnings.simplefilter('default')
-            warnings.warn('Argument has_return_value_with_shared_objects is deprecated. MPIRE now handles functions '
-                          'with or without return values out of the box. This argument will be removed from version '
-                          '1.0.0 onwards', DeprecationWarning, stacklevel=2)
 
-    def set_use_worker_state(self, use_state=True):
+    def set_use_worker_state(self, use_worker_state: bool = True) -> None:
         """
         Set whether or not each worker should have its own state variable. Each worker has its own state, so it's not
         shared between the workers.
 
-        :param use_state: Boolean. Whether to let a worker have a worker state or not
+        :param use_worker_state: Whether to let a worker have a worker state or not
         """
-        self.use_worker_state = use_state
+        self.use_worker_state = use_worker_state
 
-    def start_workers(self, func_pointer, worker_lifespan):
+    def start_workers(self, func_pointer: Callable, worker_lifespan: Optional[int]) -> None:
         """
         Spawns the workers and starts them so they're ready to start reading from the tasks queue.
 
         :param func_pointer: Function pointer to call each time new task arguments become available
-        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
-            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
-            course of time.
+        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
+            stay alive the entire time. Use this when workers use up too much memory over the course of time.
         """
         # Save params for later reference (for example, when restarting workers)
         self.func_pointer = func_pointer
@@ -510,71 +495,71 @@ class WorkerPool:
         # Start new workers
         self._tasks_queue = self.ctx.JoinableQueue()
         self._results_queue = self.ctx.JoinableQueue()
-        self._restart_queue = self.ctx.JoinableQueue()
+        self._worker_done_array = self.ctx.Array('b', self.n_jobs, lock=False)
         self._exception_queue = self.ctx.JoinableQueue()
         self._has_started_counter = self.ctx.Value('i', 0, lock=True)
         for worker_id in range(self.n_jobs):
             self._workers.append(self._start_worker(worker_id))
 
-    def _restart_workers(self):
+    def _restart_workers(self) -> None:
         """
         Restarts workers that need to be restarted.
         """
-        while not self.exception_caught:
-            try:
-                # Obtain worker ID that needs to be restarted and join the process
-                worker_id = self._restart_queue.get(block=False)
+        for worker_id, restart_worker in enumerate(self._worker_done_array):
+
+            # Check if it needs restarting
+            if restart_worker:
+                self._worker_done_array[worker_id] = False
                 self._workers[worker_id].join()
                 self._has_started_counter.value -= 1
 
                 # Start worker
                 self._workers[worker_id] = self._start_worker(worker_id)
-                self._restart_queue.task_done()
-            except queue.Empty:
-                # There are no workers to be restarted, we're done here
-                break
 
-    def _start_worker(self, worker_id):
+    def _start_worker(self, worker_id: int) -> mp.Process:
         """
         Creates and starts a single worker
 
         :param worker_id: ID of the worker
         :return: Worker instance
         """
-        # Create worker
-        w = self.Worker(worker_id, self._tasks_queue, self._results_queue, self._restart_queue,
-                        self._task_completed_queue, self._exception_queue, self._exception_lock, self._exception_thrown,
-                        self._has_started_counter, self.func_pointer, self._keep_order_event, self.shared_objects,
-                        self.worker_lifespan, self.pass_worker_id, self.use_worker_state)
-        w.daemon = self.daemon
-        w.start()
+        with DisableKeyboardInterruptSignal():
+            # Create worker
+            w = self.Worker(worker_id, self._tasks_queue, self._results_queue, self._worker_done_array,
+                            self._task_completed_queue, self._exception_queue, self._exception_lock,
+                            self._exception_thrown, self._has_started_counter, self.func_pointer, self._keep_order,
+                            self.shared_objects, self.worker_lifespan, self.pass_worker_id, self.use_worker_state)
+            w.daemon = self.daemon
+            w.start()
 
-        # Pin CPU if desired
-        if self.cpu_ids:
-            subprocess.call('taskset -p -c %s %d' % (self.cpu_ids[worker_id], w.pid), stdout=subprocess.DEVNULL,
-                            shell=True)
+            # Pin CPU if desired
+            if self.cpu_ids:
+                subprocess.call('taskset -p -c %s %d' % (self.cpu_ids[worker_id], w.pid), stdout=subprocess.DEVNULL,
+                                shell=True)
 
-        return w
+            return w
 
-    def add_task(self, args):
+    def add_task(self, args: Any) -> None:
         """
         Add a task to the queue so a worker can process it.
 
         :param args: A tuple of arguments to pass to a worker, which acts upon it
         """
-        self._tasks_queue.put(args)
+        with DelayedKeyboardInterrupt():
+            self._tasks_queue.put(args, block=True)
 
-    def get_result(self):
+    def get_result(self) -> Any:
         """
         Obtain the next result from the results queue.
 
-        :return: Various. The next result from the queue, which is the result of calling the function pointer.
+        :return: The next result from the queue, which is the result of calling the function pointer.
         """
-        results = self._results_queue.get(block=True)
-        self._results_queue.task_done()
+        with DelayedKeyboardInterrupt():
+            results = self._results_queue.get(block=True)
+            self._results_queue.task_done()
         return results
 
-    def insert_poison_pill(self):
+    def insert_poison_pill(self) -> None:
         """
         Tell the workers their job is done by killing them brutally.
         """
@@ -583,7 +568,7 @@ class WorkerPool:
 
     stop_workers = insert_poison_pill
 
-    def join(self):
+    def join(self) -> None:
         """
         Blocks until all workers are finished working.
 
@@ -594,7 +579,7 @@ class WorkerPool:
         for w in self._workers:
             w.join()
 
-    def stop_and_join(self):
+    def stop_and_join(self) -> None:
         """
         Inserts a poison pill and waits until all workers are finished.
 
@@ -628,7 +613,6 @@ class WorkerPool:
             # Join queues
             self._tasks_queue.join()
             self._results_queue.join()
-            self._restart_queue.join()
             if self._task_completed_queue is not None:
                 self._task_completed_queue.join()
 
@@ -636,18 +620,18 @@ class WorkerPool:
             self._workers = []
             self._tasks_queue = None
             self._results_queue = None
-            self._restart_queue = None
+            self._worker_done_array = None
             self._task_completed_queue = None
             self._exception_queue = None
             self._has_started_counter = None
 
-    def _handle_tasks_done(self):
+    def _handle_tasks_done(self) -> None:
         """
         Blocks until the tasks queue is joinable
         """
         self._tasks_queue.join()
 
-    def terminate(self, keep_exception_queue=False):
+    def terminate(self, keep_exception_queue: bool = False) -> None:
         """
         Does not wait until all workers are finished, but terminates them.
 
@@ -669,8 +653,6 @@ class WorkerPool:
             self._drain_and_join_queue(self._tasks_queue)
         if self._results_queue is not None:
             self._drain_and_join_queue(self._results_queue)
-        if self._restart_queue is not None:
-            self._drain_and_join_queue(self._restart_queue)
 
         # Make sure the progress bar handle thread is dead
         if self._progress_bar_thread is not None and self._progress_bar_thread.is_alive():
@@ -697,26 +679,26 @@ class WorkerPool:
         self._workers = []
         self._tasks_queue = None
         self._results_queue = None
-        self._restart_queue = None
+        self._worker_done_array = None
         self._task_completed_queue = None
         self._has_started_counter = None
 
     @staticmethod
-    def _terminate_worker(worker):
+    def _terminate_worker(process: mp.Process) -> None:
         """
         Terminates a single worker
 
-        :param worker: Worker instance
+        :param process: Worker instance
         """
         # We wait until workers are done terminating. However, we don't have all the patience in the world and sometimes
         # workers can get stuck when starting up when an exception is handled. So when the patience runs out we
         # terminate them.
         try_count = 10
-        while worker.is_alive() and try_count > 0:
+        while process.is_alive() and try_count > 0:
             # Send interrupt signal so the processes can die gracefully. Sometimes this will throw an exception, e.g.
             # when processes are in the middle of restarting
             try:
-                os.kill(worker.pid, signal.SIGUSR1)
+                os.kill(process.pid, signal.SIGUSR1)
             except ProcessLookupError:
                 pass
             try_count -= 1
@@ -724,16 +706,17 @@ class WorkerPool:
 
         # If a graceful kill is not possible, terminate the process.
         if try_count == 0:
-            worker.terminate()
+            process.terminate()
 
         # Join worker
-        worker.join()
+        process.join()
 
     @staticmethod
-    def _drain_and_join_queue(q, join=True):
+    def _drain_and_join_queue(q: mp.JoinableQueue, join: bool = True) -> None:
         """
         Drains a queue completely, such that it is joinable
 
+        :param q: Queue to join
         :param join: Whether to join the queue or not
         """
         # Extract all items left in the queue
@@ -756,22 +739,23 @@ class WorkerPool:
         if join:
             q.join()
 
-    def __enter__(self):
+    def __enter__(self) -> 'WorkerPool':
         """
         Enable the use of the ``with`` statement.
         """
         return self
 
-    def __exit__(self, *_):
+    def __exit__(self, *_: Any) -> None:
         """
         Enable the use of the ``with`` statement. Gracefully terminates workers when the task queue is not None.
         """
         if self._tasks_queue is not None:
             self.terminate()
 
-    def map(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-            n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False,
-            concatenate_numpy_output=True):
+    def map(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
+            iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
+            chunk_size: Optional[int] = None, n_splits: Optional[int] = None, worker_lifespan: Optional[int] = None,
+            progress_bar: Union[bool, tqdm] = False, concatenate_numpy_output: bool = True) -> Any:
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
@@ -780,8 +764,8 @@ class WorkerPool:
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
             the function should receive those as the next argument. If the worker state has been enabled it should
             receive a state variable as the next argument.
-        :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
-            function pointer
+        :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
+            passes it to the function pointer
         :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
             This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
             specifying the number of tasks.
@@ -790,10 +774,6 @@ class WorkerPool:
         :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
             ``n_jobs * 4`` number of chunks.
         :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
-        :param restart_workers: DEPRECATED! MPIRE will no longer support reusing workers. This argument will be removed
-            from version 1.0.0 onwards. Boolean. Whether to restart the possibly already existing workers or use the old
-            ones. Note: in the latter case the ``func_pointer`` parameter will have no effect. Will start workers either
-            way when there are none.
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
@@ -803,7 +783,7 @@ class WorkerPool:
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
-        self._keep_order_event.set()
+        self._keep_order = True
 
         # If we're dealing with numpy arrays, we have to chunk them here already
         if isinstance(iterable_of_args, np.ndarray):
@@ -815,11 +795,11 @@ class WorkerPool:
         if iterable_len is None and hasattr(iterable_of_args, '__len__'):
             iterable_len = len(iterable_of_args)
         results = self.map_unordered(func_pointer, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)),
-                                     iterable_len, max_tasks_active, chunk_size, n_splits, restart_workers,
-                                     worker_lifespan, progress_bar)
+                                     iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan,
+                                     progress_bar)
 
         # Notify workers to forget about order
-        self._keep_order_event.clear()
+        self._keep_order = False
 
         # Rearrange and return
         sorted_results = [result[1] for result in sorted(results, key=lambda result: result[0])]
@@ -829,8 +809,10 @@ class WorkerPool:
                 if sorted_results and concatenate_numpy_output and isinstance(sorted_results[0], np.ndarray) else
                 sorted_results)
 
-    def map_unordered(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-                      n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False):
+    def map_unordered(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
+                      iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
+                      chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
+                      worker_lifespan: Optional[int] = None, progress_bar: Union[bool, tqdm] = False) -> Any:
         """
         Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
@@ -839,8 +821,8 @@ class WorkerPool:
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
             the function should receive those as the next argument. If the worker state has been enabled it should
             receive a state variable as the next argument.
-        :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
-            function pointer
+        :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
+            passes it to the function pointer
         :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
             This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
             specifying the number of tasks.
@@ -849,10 +831,6 @@ class WorkerPool:
         :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
             ``n_jobs * 4`` number of chunks.
         :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
-        :param restart_workers: DEPRECATED! MPIRE will no longer support reusing workers. This argument will be removed
-            from version 1.0.0 onwards. Boolean. Whether to restart the possibly already existing workers or use the old
-            ones. Note: in the latter case the ``func_pointer`` parameter will have no effect. Will start workers either
-            way when there are none..
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
@@ -862,10 +840,12 @@ class WorkerPool:
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
         return list(self.imap_unordered(func_pointer, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
-                                        n_splits, restart_workers, worker_lifespan, progress_bar))
+                                        n_splits, worker_lifespan, progress_bar))
 
-    def imap(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-             n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False):
+    def imap(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
+             iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
+             chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
+             worker_lifespan: Optional[int] = None, progress_bar: Union[bool, tqdm] = False) -> Any:
         """
         Same as ``multiprocessing.imap_unordered()``, but ordered. Also allows a user to set the maximum number of
         tasks available in the queue.
@@ -874,8 +854,8 @@ class WorkerPool:
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
             the function should receive those as the next argument. If the worker state has been enabled it should
             receive a state variable as the next argument.
-        :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
-            function pointer
+        :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
+            passes it to the function pointer
         :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
             This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
             specifying the number of tasks.
@@ -884,10 +864,6 @@ class WorkerPool:
         :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
             ``n_jobs * 4`` number of chunks.
         :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
-        :param restart_workers: DEPRECATED! MPIRE will no longer support reusing workers. This argument will be removed
-            from version 1.0.0 onwards. Boolean. Whether to restart the possibly already existing workers or use the old
-            ones. Note: in the latter case the ``func_pointer`` parameter will have no effect. Will start workers either
-            way when there are none.
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
@@ -896,7 +872,7 @@ class WorkerPool:
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
-        self._keep_order_event.set()
+        self._keep_order = True
 
         # If we're dealing with numpy arrays, we have to chunk them here already
         if isinstance(iterable_of_args, np.ndarray):
@@ -911,8 +887,8 @@ class WorkerPool:
             iterable_len = len(iterable_of_args)
         for result_idx, result in self.imap_unordered(func_pointer, ((args_idx, args) for args_idx, args
                                                       in enumerate(iterable_of_args)), iterable_len, max_tasks_active,
-                                                      chunk_size, n_splits, restart_workers, worker_lifespan,
-                                                      progress_bar):
+                                                      chunk_size, n_splits, worker_lifespan, progress_bar):
+
             # Check if the next one(s) to return is/are temporarily stored. We use a while-true block with dict.pop() to
             # keep the temporary store as small as possible
             while True:
@@ -935,10 +911,12 @@ class WorkerPool:
             yield tmp_results.pop(result_idx)
 
         # Notify workers to forget about order
-        self._keep_order_event.clear()
+        self._keep_order = False
 
-    def imap_unordered(self, func_pointer, iterable_of_args, iterable_len=None, max_tasks_active=None, chunk_size=None,
-                       n_splits=None, restart_workers=None, worker_lifespan=None, progress_bar=False):
+    def imap_unordered(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
+                       iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
+                       chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
+                       worker_lifespan: Optional[int] = None, progress_bar: Union[bool, tqdm] = False) -> Any:
         """
         Same as ``multiprocessing.imap_unordered()``. Also allows a user to set the maximum number of tasks available in
         the queue.
@@ -947,8 +925,8 @@ class WorkerPool:
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
             the function should receive those as the next argument. If the worker state has been enabled it should
             receive a state variable as the next argument.
-        :param iterable_of_args: An iterable containing tuples of arguments to pass to a worker, which passes it to the
-            function pointer
+        :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
+            passes it to the function pointer
         :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
             This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
             specifying the number of tasks.
@@ -957,10 +935,6 @@ class WorkerPool:
         :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
             ``n_jobs * 4`` number of chunks.
         :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
-        :param restart_workers: DEPRECATED! MPIRE will no longer support reusing workers. This argument will be removed
-            from version 1.0.0 onwards. Boolean. Whether to restart the possibly already existing workers or use the old
-            ones. Note: in the latter case the ``func_pointer`` parameter will have no effect. Will start workers either
-            way when there are none.
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
@@ -976,9 +950,9 @@ class WorkerPool:
 
         # Check parameters and thereby obtain the number of tasks. The chunk_size and progress bar parameters could be
         # modified as well
-        n_tasks, chunk_size, progress_bar = self._check_map_parameters(iterable_of_args, iterable_len, progress_bar,
-                                                                       chunk_size, n_splits, max_tasks_active,
-                                                                       worker_lifespan, restart_workers)
+        n_tasks, chunk_size, progress_bar = self._check_map_parameters(iterable_of_args, iterable_len, max_tasks_active,
+                                                                       chunk_size, n_splits, worker_lifespan,
+                                                                       progress_bar)
 
         # Reset some variables
         self.exception_caught = False
@@ -1030,8 +1004,10 @@ class WorkerPool:
 
                 # Check if new results are available, but don't wait for it
                 try:
-                    yield from self._results_queue.get(block=False)
-                    self._results_queue.task_done()
+                    with DelayedKeyboardInterrupt():
+                        results = self._results_queue.get(block=False)
+                        self._results_queue.task_done()
+                    yield from results
                     n_active -= 1
                 except queue.Empty:
                     pass
@@ -1042,8 +1018,10 @@ class WorkerPool:
         # Obtain the results not yet obtained
         while not self.exception_caught and n_active != 0:
             try:
-                yield from self._results_queue.get(block=True, timeout=0.1)
-                self._results_queue.task_done()
+                with DelayedKeyboardInterrupt():
+                    results = self._results_queue.get(block=True, timeout=0.1)
+                    self._results_queue.task_done()
+                yield from results
                 n_active -= 1
             except queue.Empty:
                 pass
@@ -1059,12 +1037,29 @@ class WorkerPool:
         self.stop_and_join()
 
     @staticmethod
-    def _check_map_parameters(iterable_of_args, iterable_len, progress_bar, chunk_size, n_splits, max_tasks_active,
-                              worker_lifespan, restart_workers):
+    def _check_map_parameters(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int],
+                              max_tasks_active: Optional[int], chunk_size: Optional[int], n_splits: Optional[int],
+                              worker_lifespan: Optional[int], progress_bar: Union[bool, tqdm]) \
+            -> Tuple[Optional[int], Optional[int], Union[bool, tqdm]]:
         """
         Check the parameters provided to any (i)map function. Also extracts the number of tasks and can modify the
         ``chunk_size`` and ``progress_bar`` parameters.
 
+        :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
+            passes it to the function pointer
+        :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
+            This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
+            specifying the number of tasks.
+        :param max_tasks_active: Int or ``None``. Maximum number of active tasks in the queue. Use ``None`` to not limit
+            the queue
+        :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
+            ``n_jobs * 4`` number of chunks.
+        :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
+        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
+            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
+            course of time.
+        :param progress_bar: Boolean or ``tqdm`` instance. When ``True`` will display a default progress bar. Defaults
+            can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
         :return: Number of tasks, chunk size, progress bar
         """
         # Get number of tasks
@@ -1073,7 +1068,7 @@ class WorkerPool:
             n_tasks = iterable_len
         elif hasattr(iterable_of_args, '__len__'):
             n_tasks = len(iterable_of_args)
-        elif isinstance(progress_bar, tqdm.tqdm) and progress_bar.total is not None:
+        elif isinstance(progress_bar, tqdm) and progress_bar.total is not None:
             n_tasks = progress_bar.total
         elif chunk_size is None or progress_bar:
             warnings.simplefilter('default')
@@ -1113,18 +1108,13 @@ class WorkerPool:
             raise TypeError('worker_lifespan should be either None or a positive integer (> 0)')
 
         # Parameter total should be given
-        if isinstance(progress_bar, tqdm.tqdm) and progress_bar.total is None:
+        if isinstance(progress_bar, tqdm) and progress_bar.total is None:
             raise ValueError("Custom tqdm progress bar instance needs parameter 'total'")
-
-        # Deprecated feature
-        if restart_workers is not None:
-            warnings.simplefilter('default')
-            warnings.warn('Argument restart_workers is deprecated. MPIRE will no longer support reusing workers. This '
-                          'argument will be removed from version 1.0.0 onwards.', DeprecationWarning, stacklevel=2)
 
         return n_tasks, chunk_size, progress_bar
 
-    def _create_progress_bar(self, progress_bar, n_tasks):
+    def _create_progress_bar(self, progress_bar: Union[bool, tqdm], n_tasks: int) \
+            -> Tuple[Optional[tqdm], Optional[mp.Value]]:
         """
         When provided, creates a progress bar and starts a thread that updates it. Otherwise, does nothing
 
@@ -1134,8 +1124,8 @@ class WorkerPool:
         :return: False or ``tqdm`` instance.
         """
         # Create a progress bar if requested
-        if progress_bar is True or isinstance(progress_bar, tqdm.tqdm):
-            progress_bar = progress_bar if isinstance(progress_bar, tqdm.tqdm) else tqdm_pb(total=n_tasks)
+        if progress_bar is True or isinstance(progress_bar, tqdm):
+            progress_bar = progress_bar if isinstance(progress_bar, tqdm) else tqdm(total=n_tasks)
             progress_bar_progress = self.ctx.Value('i', 0, lock=True)
             self._task_completed_queue = self.ctx.JoinableQueue()
 
@@ -1151,7 +1141,7 @@ class WorkerPool:
 
         return progress_bar, progress_bar_progress
 
-    def _handle_progress_bar(self, progress_bar, progress_bar_progress):
+    def _handle_progress_bar(self, progress_bar: tqdm, progress_bar_progress: mp.Value):
         """
         When a task is completed a single item is put in the designated queue. This function, living in a thread, waits
         for items in the queue and updates the progress bar accordingly.
@@ -1176,7 +1166,7 @@ class WorkerPool:
             self._task_completed_queue.task_done()
             progress_bar_progress.value += 1
 
-    def _clean_up_progress_bar(self, progress_bar, progress_bar_progress):
+    def _clean_up_progress_bar(self, progress_bar: Optional[tqdm], progress_bar_progress: Optional[mp.Value]) -> None:
         """
         Closes the progress bar and its accompanying thread if a progress bar was provided.
 
@@ -1199,7 +1189,7 @@ class WorkerPool:
             self._progress_bar_thread = None
             progress_bar.close()
 
-    def _handle_exceptions(self):
+    def _handle_exceptions(self) -> None:
         """
         Checks for raised exceptions by child processes.
         """
@@ -1221,26 +1211,28 @@ class WorkerPool:
 
             # Pass error to main process so it can be raised there (exceptions raised from threads or child processes
             # cannot be caught directly)
-            self._exception_queue.put((err, traceback_str))
+            self._exception_queue.put((err, traceback_str), block=True)
 
         self._exception_queue.task_done()
 
-    def _clean_up_exception_handle(self):
+    def _clean_up_exception_handle(self) -> None:
         """
         Closes the exception handling thread and re-raises any exception encountered there.
         """
         # Shutdown the exception handling thread. Insert a poison pill when no exception was raised by the workers.
         # If there was an exception, the exception handling thread would already be joinable.
         if not self.exception_caught:
-            self._exception_queue.put((None, None))
+            with DelayedKeyboardInterrupt():
+                self._exception_queue.put((None, None), block=True)
         self._exception_thread.join()
         self._exception_thread = None
 
         # If there was any exception the exception handling thread passed on the error to the main process, so we can
         # raise it here.
         if self.exception_caught:
-            err, traceback_str = self._exception_queue.get(block=True)
-            self._exception_queue.task_done()
+            with DelayedKeyboardInterrupt():
+                err, traceback_str = self._exception_queue.get(block=True)
+                self._exception_queue.task_done()
             self._exception_queue.join()
             self._exception_queue = None
             raise err(traceback_str)
