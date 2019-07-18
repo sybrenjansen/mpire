@@ -10,12 +10,13 @@ import traceback
 import warnings
 from functools import partial
 from threading import Thread
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 from tqdm.auto import tqdm
 
 from mpire.exceptions import CannotPickleExceptionError, StopWorker
+from mpire.progress_bar import ProgressBarHandler
 from mpire.signal import DisableKeyboardInterruptSignal, DelayedKeyboardInterrupt
 from mpire.utils import chunk_tasks, apply_numpy_chunking
 
@@ -613,15 +614,12 @@ class WorkerPool:
             # Join queues
             self._tasks_queue.join()
             self._results_queue.join()
-            if self._task_completed_queue is not None:
-                self._task_completed_queue.join()
 
             # Reset variables
             self._workers = []
             self._tasks_queue = None
             self._results_queue = None
             self._worker_done_array = None
-            self._task_completed_queue = None
             self._exception_queue = None
             self._has_started_counter = None
 
@@ -654,17 +652,6 @@ class WorkerPool:
         if self._results_queue is not None:
             self._drain_and_join_queue(self._results_queue)
 
-        # Make sure the progress bar handle thread is dead
-        if self._progress_bar_thread is not None and self._progress_bar_thread.is_alive():
-            self._drain_and_join_queue(self._task_completed_queue, join=False)
-            self._task_completed_queue.put(None)
-            self._task_completed_queue.join()
-            try:
-                self._progress_bar_thread.join()
-            except AttributeError:
-                pass
-        self._progress_bar_thread = None
-
         # Make sure the exception bar handle thread is dead
         if not keep_exception_queue:
             if self._exception_thread is not None and self._exception_thread.is_alive():
@@ -680,7 +667,6 @@ class WorkerPool:
         self._tasks_queue = None
         self._results_queue = None
         self._worker_done_array = None
-        self._task_completed_queue = None
         self._has_started_counter = None
 
     @staticmethod
@@ -963,49 +949,64 @@ class WorkerPool:
         if not isinstance(iterable_of_args, np.ndarray):
             iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size, n_splits or self.n_jobs * 4)
 
-        # Create a progress bar if requested
-        progress_bar, progress_bar_progress = self._create_progress_bar(progress_bar, n_tasks)
+        # Create progress bar handler. This handler will receive updates from the workers and update the progress bar
+        # accordingly
+        with ProgressBarHandler(progress_bar, self._task_completed_queue):
 
-        # Start workers
-        self.start_workers(func_pointer, worker_lifespan)
+            # Start workers
+            self.start_workers(func_pointer, worker_lifespan)
 
-        # Start a thread that handles exceptions
-        self._exception_thread = Thread(target=self._handle_exceptions)
-        self._exception_thread.start()
+            # Start a thread that handles exceptions
+            self._exception_thread = Thread(target=self._handle_exceptions)
+            self._exception_thread.start()
 
-        # Process all args in the iterable. If maximum number of active tasks is None, we avoid all the if and
-        # try-except clauses to speed up the process.
-        n_active = 0
-        if max_tasks_active == 'n_jobs*2':
-            max_tasks_active = self.n_jobs * 2
+            # Process all args in the iterable. If maximum number of active tasks is None, we avoid all the if and
+            # try-except clauses to speed up the process.
+            n_active = 0
+            if max_tasks_active == 'n_jobs*2':
+                max_tasks_active = self.n_jobs * 2
 
-        if max_tasks_active is None:
-            for chunked_args in iterator_of_chunked_args:
-                # Stop given tasks when an exception was caught
-                if self.exception_caught:
-                    break
-
-                # Add task
-                self.add_task(chunked_args)
-                n_active += 1
-
-                # Restart workers if necessary
-                self._restart_workers()
-
-        elif isinstance(max_tasks_active, int):
-            while not self.exception_caught:
-                # Add task, only if allowed and if there are any
-                if n_active < max_tasks_active:
-                    try:
-                        self.add_task(next(iterator_of_chunked_args))
-                        n_active += 1
-                    except StopIteration:
+            if max_tasks_active is None:
+                for chunked_args in iterator_of_chunked_args:
+                    # Stop given tasks when an exception was caught
+                    if self.exception_caught:
                         break
 
-                # Check if new results are available, but don't wait for it
+                    # Add task
+                    self.add_task(chunked_args)
+                    n_active += 1
+
+                    # Restart workers if necessary
+                    self._restart_workers()
+
+            elif isinstance(max_tasks_active, int):
+                while not self.exception_caught:
+                    # Add task, only if allowed and if there are any
+                    if n_active < max_tasks_active:
+                        try:
+                            self.add_task(next(iterator_of_chunked_args))
+                            n_active += 1
+                        except StopIteration:
+                            break
+
+                    # Check if new results are available, but don't wait for it
+                    try:
+                        with DelayedKeyboardInterrupt():
+                            results = self._results_queue.get(block=False)
+                            self._results_queue.task_done()
+                        yield from results
+                        n_active -= 1
+                    except queue.Empty:
+                        pass
+
+                    # Restart workers if necessary
+                    self._restart_workers()
+
+            # Obtain the results not yet obtained
+            while not self.exception_caught and n_active != 0:
                 try:
                     with DelayedKeyboardInterrupt():
-                        results = self._results_queue.get(block=False)
+                        results = self._results_queue.get(block=True, timeout=0.1)
                         self._results_queue.task_done()
                     yield from results
                     n_active -= 1
@@ -1015,29 +1016,12 @@ class WorkerPool:
                 # Restart workers if necessary
                 self._restart_workers()
 
-        # Obtain the results not yet obtained
-        while not self.exception_caught and n_active != 0:
-            try:
-                with DelayedKeyboardInterrupt():
-                    results = self._results_queue.get(block=True, timeout=0.1)
-                    self._results_queue.task_done()
-                yield from results
-                n_active -= 1
-            except queue.Empty:
-                pass
+            # Clean up time
+            self._ready_for_destruction.set()
+            self._clean_up_exception_handle()
+            self.stop_and_join()
 
-            # Restart workers if necessary
-            self._restart_workers()
-
-        # Clean up time. When we're done with the progress bar we're essentially ready for destruction in the case of an
-        # exception that was raised in a child process.
-        self._clean_up_progress_bar(progress_bar, progress_bar_progress)
-        self._ready_for_destruction.set()
-        self._clean_up_exception_handle()
-        self.stop_and_join()
-
-    @staticmethod
-    def _check_map_parameters(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int],
+    def _check_map_parameters(self, iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int],
                               max_tasks_active: Optional[int], chunk_size: Optional[int], n_splits: Optional[int],
                               worker_lifespan: Optional[int], progress_bar: Union[bool, tqdm]) \
             -> Tuple[Optional[int], Optional[int], Union[bool, tqdm]]:
@@ -1111,83 +1095,14 @@ class WorkerPool:
         if isinstance(progress_bar, tqdm) and progress_bar.total is None:
             raise ValueError("Custom tqdm progress bar instance needs parameter 'total'")
 
-        return n_tasks, chunk_size, progress_bar
-
-    def _create_progress_bar(self, progress_bar: Union[bool, tqdm], n_tasks: int) \
-            -> Tuple[Optional[tqdm], Optional[mp.Value]]:
-        """
-        When provided, creates a progress bar and starts a thread that updates it. Otherwise, does nothing
-
-        :param progress_bar: Boolean or ``tqdm`` instance. When ``True`` will display a default progress bar. Defaults
-            can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
-        :param n_tasks: Int. Number of tasks we have to process.
-        :return: False or ``tqdm`` instance.
-        """
-        # Create a progress bar if requested
+        # Create progress bar
         if progress_bar is True or isinstance(progress_bar, tqdm):
             progress_bar = progress_bar if isinstance(progress_bar, tqdm) else tqdm(total=n_tasks)
-            progress_bar_progress = self.ctx.Value('i', 0, lock=True)
             self._task_completed_queue = self.ctx.JoinableQueue()
-
-            # Start a thread
-            self._progress_bar_thread = Thread(target=self._handle_progress_bar,
-                                               args=(progress_bar, progress_bar_progress))
-            self._progress_bar_thread.start()
         else:
-            self._task_completed_queue = None
-            self._progress_bar_thread = None
             progress_bar = None
-            progress_bar_progress = None
 
-        return progress_bar, progress_bar_progress
-
-    def _handle_progress_bar(self, progress_bar: tqdm, progress_bar_progress: mp.Value):
-        """
-        When a task is completed a single item is put in the designated queue. This function, living in a thread, waits
-        for items in the queue and updates the progress bar accordingly.
-
-        :param progress_bar: tqdm progress bar object.
-        :param progress_bar_progress: multiprocessing.Value for keeping track of the number of updates
-        """
-        while True:
-            # Wait for a job to finish
-            task_completed = self._task_completed_queue.get(block=True)
-
-            # If we received None, we should quit right away
-            if task_completed is None:
-                self._task_completed_queue.task_done()
-                break
-
-            # Update progress bar. Note that we also update a separate counter which is used to check if the progress
-            # bar is completed. I realize that tqdm has a public variable `n` which should keep track of the current
-            # progress, but for some reason that variable doesn't work here, it equals the `total` variable all the
-            # time.
-            progress_bar.update(1)
-            self._task_completed_queue.task_done()
-            progress_bar_progress.value += 1
-
-    def _clean_up_progress_bar(self, progress_bar: Optional[tqdm], progress_bar_progress: Optional[mp.Value]) -> None:
-        """
-        Closes the progress bar and its accompanying thread if a progress bar was provided.
-
-        :param progress_bar: False or ``tqdm`` instance
-        :param progress_bar_progress: multiprocessing.Value for keeping track of the number of updates
-        """
-        # Clean up the progress bar
-        if progress_bar is not None:
-            # Wait until all tasks are completed (well, not when an exception was caught). We have to wait because some
-            # queues can get delayed. It can occur that the results have already been processed and that this function
-            # is called, before all the task_completed items have been received. This means that we would put a poison
-            # pill in the task_completed_queue while there are still items to process. This results in a deadlock when
-            # we want to join the task_completed_queue on a later point.
-            while not self.exception_caught and progress_bar_progress.value != progress_bar.total:
-                pass
-
-            # Insert poison pill and close the progress bar and its handling thread
-            self._task_completed_queue.put(None)
-            self._progress_bar_thread.join()
-            self._progress_bar_thread = None
-            progress_bar.close()
+        return n_tasks, chunk_size, progress_bar
 
     def _handle_exceptions(self) -> None:
         """
