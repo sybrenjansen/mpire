@@ -18,7 +18,7 @@ class ProgressBarHandler:
 
     def __enter__(self) -> 'ProgressBarHandler':
         """
-        Enables the use of the ``with`` statement. Starts a new progress monitor process if a progress bar was provided
+        Enables the use of the ``with`` statement. Starts a new progress handler process if a progress bar was provided
 
         :return: self
         """
@@ -36,7 +36,7 @@ class ProgressBarHandler:
 
     def __exit__(self, *_: Any) -> None:
         """
-        Enables the use of the ``with`` statement. Terminates the progress monitor process if there is one
+        Enables the use of the ``with`` statement. Terminates the progress handler process if there is one
         """
         if self.progress_bar is not None:
 

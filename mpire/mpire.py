@@ -9,13 +9,13 @@ import time
 import traceback
 import warnings
 from functools import partial
-from threading import Thread
+from threading import Thread, Event
 from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 from tqdm.auto import tqdm
 
-from mpire.exceptions import CannotPickleExceptionError, StopWorker
+from mpire.exception import CannotPickleExceptionError, ExceptionHandler, StopWorker
 from mpire.progress_bar import ProgressBarHandler
 from mpire.signal import DisableKeyboardInterruptSignal, DelayedKeyboardInterrupt
 from mpire.utils import chunk_tasks, apply_numpy_chunking
@@ -46,7 +46,7 @@ class AbstractWorker:
     def __init__(self, start_method: str, worker_id: int, tasks_queue: mp.JoinableQueue,
                  results_queue: mp.JoinableQueue, worker_done_array: mp.Array, task_completed_queue: mp.JoinableQueue,
                  exception_queue: mp.JoinableQueue, exception_lock: mp.Lock, exception_thrown: mp.Event,
-                 has_started_counter: mp.Value, func_pointer: Callable, keep_order: bool, shared_objects: Any = None,
+                 func_pointer: Callable, keep_order: bool, shared_objects: Any = None,
                  worker_lifespan: Optional[int] = None, pass_worker_id: bool = False, use_worker_state: bool = False):
         """
         :param start_method: What Process start method to use
@@ -59,8 +59,6 @@ class AbstractWorker:
         :param exception_queue: Queue object for sending Exception objects to whenever an Exception was raised inside a
             user function
         :param exception_lock: Lock object such that child processes can only throw one at a time.
-        :param exception_thrown: Event object that ensures only one exception can be thrown at all times
-        :param has_started_counter: multiprocessing.Value object that tracks how many workers have started
         :param func_pointer: Function pointer to call each time new task arguments become available
         :param keep_order: Boolean flag which signals if the task arguments contain an order index which should be
             preserved and not fed to the function pointer (e.g., used in ``map``)
@@ -84,7 +82,6 @@ class AbstractWorker:
         self.exception_queue = exception_queue
         self.exception_lock = exception_lock
         self.exception_thrown = exception_thrown
-        self.has_started_counter = has_started_counter
         self.func_pointer = func_pointer
         self.keep_order = keep_order
         self.shared_objects = shared_objects
@@ -351,17 +348,13 @@ class WorkerPool:
         # a job
         self._task_completed_queue = None
 
-        # Queue where the child processes can pass on an encountered exceptoin
+        # Queue where the child processes can pass on an encountered exception
         self._exception_queue = None
 
         # Lock object such that child processes can only throw one at a time. The Event object ensures only one
         # exception can be thrown
         self._exception_lock = self.ctx.Lock()
         self._exception_thrown = self.ctx.Event()
-
-        # Synchronized value counting how many child processes actually started (when calling .start() on a Process does
-        # not mean that process is actually spawned yet)
-        self._has_started_counter = None
 
         # Boolean flag to inform the child processes to keep order in mind (for the map functions)
         self._keep_order = False
@@ -385,17 +378,7 @@ class WorkerPool:
         self.use_worker_state = use_worker_state
 
         # Whether or not an exception was caught by one of the child processes
-        self.exception_caught = False
-        self._cleaning_up = False
-
-        # Thread that handles the progress bar updates
-        self._progress_bar_thread = None
-
-        # Thread that handles incoming exceptions from the child processes
-        self._exception_thread = None
-
-        # Synchronized event indicating whether or not the main process is ready for destruction in case of an exception
-        self._ready_for_destruction = self.ctx.Event()
+        self.exception_caught = Event()
 
     def _check_cpu_ids(self, cpu_ids: CPUList) -> List[str]:
         """
@@ -498,7 +481,7 @@ class WorkerPool:
         self._results_queue = self.ctx.JoinableQueue()
         self._worker_done_array = self.ctx.Array('b', self.n_jobs, lock=False)
         self._exception_queue = self.ctx.JoinableQueue()
-        self._has_started_counter = self.ctx.Value('i', 0, lock=True)
+        self.exception_caught.clear()
         for worker_id in range(self.n_jobs):
             self._workers.append(self._start_worker(worker_id))
 
@@ -512,7 +495,6 @@ class WorkerPool:
             if restart_worker:
                 self._worker_done_array[worker_id] = False
                 self._workers[worker_id].join()
-                self._has_started_counter.value -= 1
 
                 # Start worker
                 self._workers[worker_id] = self._start_worker(worker_id)
@@ -528,8 +510,8 @@ class WorkerPool:
             # Create worker
             w = self.Worker(worker_id, self._tasks_queue, self._results_queue, self._worker_done_array,
                             self._task_completed_queue, self._exception_queue, self._exception_lock,
-                            self._exception_thrown, self._has_started_counter, self.func_pointer, self._keep_order,
-                            self.shared_objects, self.worker_lifespan, self.pass_worker_id, self.use_worker_state)
+                            self._exception_thrown, self.func_pointer, self._keep_order, self.shared_objects,
+                            self.worker_lifespan, self.pass_worker_id, self.use_worker_state)
             w.daemon = self.daemon
             w.start()
 
@@ -617,11 +599,6 @@ class WorkerPool:
 
             # Reset variables
             self._workers = []
-            self._tasks_queue = None
-            self._results_queue = None
-            self._worker_done_array = None
-            self._exception_queue = None
-            self._has_started_counter = None
 
     def _handle_tasks_done(self) -> None:
         """
@@ -629,11 +606,9 @@ class WorkerPool:
         """
         self._tasks_queue.join()
 
-    def terminate(self, keep_exception_queue: bool = False) -> None:
+    def terminate(self) -> None:
         """
         Does not wait until all workers are finished, but terminates them.
-
-        :param keep_exception_queue: Whether to keep the exception queue or not
         """
         # Create cleanup threads such that processes can get killed simultaneously, which can save quite some time
         threads = []
@@ -652,22 +627,8 @@ class WorkerPool:
         if self._results_queue is not None:
             self._drain_and_join_queue(self._results_queue)
 
-        # Make sure the exception bar handle thread is dead
-        if not keep_exception_queue:
-            if self._exception_thread is not None and self._exception_thread.is_alive():
-                self._drain_and_join_queue(self._exception_queue, join=False)
-                self._exception_queue.put((None, None))
-                self._exception_queue.join()
-                self._exception_thread.join()
-            self._exception_thread = None
-            self._exception_queue = None
-
         # Reset variables
         self._workers = []
-        self._tasks_queue = None
-        self._results_queue = None
-        self._worker_done_array = None
-        self._has_started_counter = None
 
     @staticmethod
     def _terminate_worker(process: mp.Process) -> None:
@@ -940,25 +901,18 @@ class WorkerPool:
                                                                        chunk_size, n_splits, worker_lifespan,
                                                                        progress_bar)
 
-        # Reset some variables
-        self.exception_caught = False
-        self._cleaning_up = False
-        self._ready_for_destruction.clear()
-
         # Chunk the function arguments. Make single arguments when we're dealing with numpy arrays
         if not isinstance(iterable_of_args, np.ndarray):
             iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size, n_splits or self.n_jobs * 4)
 
-        # Create progress bar handler. This handler will receive updates from the workers and update the progress bar
-        # accordingly
-        with ProgressBarHandler(progress_bar, self._task_completed_queue):
+        # Start workers
+        self.start_workers(func_pointer, worker_lifespan)
 
-            # Start workers
-            self.start_workers(func_pointer, worker_lifespan)
-
-            # Start a thread that handles exceptions
-            self._exception_thread = Thread(target=self._handle_exceptions)
-            self._exception_thread.start()
+        # Create exception and progress bar handlers. The exception handler will receive any exceptions thrown by the
+        # workers, terminates everything and re-raise an exceptoin in the main process. The progress bar handler will
+        # receive updates from the workers and updates the progress bar accordingly
+        with ExceptionHandler(self.terminate, self._exception_queue, self.exception_caught) as exception_handler, \
+             ProgressBarHandler(progress_bar, self._task_completed_queue):
 
             # Process all args in the iterable. If maximum number of active tasks is None, we avoid all the if and
             # try-except clauses to speed up the process.
@@ -969,7 +923,7 @@ class WorkerPool:
             if max_tasks_active is None:
                 for chunked_args in iterator_of_chunked_args:
                     # Stop given tasks when an exception was caught
-                    if self.exception_caught:
+                    if self.exception_caught.is_set():
                         break
 
                     # Add task
@@ -980,7 +934,7 @@ class WorkerPool:
                     self._restart_workers()
 
             elif isinstance(max_tasks_active, int):
-                while not self.exception_caught:
+                while not self.exception_caught.is_set():
                     # Add task, only if allowed and if there are any
                     if n_active < max_tasks_active:
                         try:
@@ -1003,7 +957,7 @@ class WorkerPool:
                     self._restart_workers()
 
             # Obtain the results not yet obtained
-            while not self.exception_caught and n_active != 0:
+            while not self.exception_caught.is_set() and n_active != 0:
                 try:
                     with DelayedKeyboardInterrupt():
                         results = self._results_queue.get(block=True, timeout=0.1)
@@ -1017,8 +971,7 @@ class WorkerPool:
                 self._restart_workers()
 
             # Clean up time
-            self._ready_for_destruction.set()
-            self._clean_up_exception_handle()
+            exception_handler.raise_on_exception()
             self.stop_and_join()
 
     def _check_map_parameters(self, iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int],
@@ -1103,57 +1056,6 @@ class WorkerPool:
             progress_bar = None
 
         return n_tasks, chunk_size, progress_bar
-
-    def _handle_exceptions(self) -> None:
-        """
-        Checks for raised exceptions by child processes.
-        """
-        # Wait for an exception to occur
-        err, traceback_str = self._exception_queue.get(block=True)
-
-        # If we received None, we should just quit quietly
-        if err is not None:
-            # Let main process know we can stop working
-            self.exception_caught = True
-
-            # Wait until the main process realizes it should stop. We have to wait because the main process could be
-            # right in the middle of adding tasks to queues. If we terminate and drain a queue while at the same time it
-            # is being written to we can get errors.
-            self._ready_for_destruction.wait()
-
-            # Kill processes
-            self.terminate(keep_exception_queue=True)
-
-            # Pass error to main process so it can be raised there (exceptions raised from threads or child processes
-            # cannot be caught directly)
-            self._exception_queue.put((err, traceback_str), block=True)
-
-        self._exception_queue.task_done()
-
-    def _clean_up_exception_handle(self) -> None:
-        """
-        Closes the exception handling thread and re-raises any exception encountered there.
-        """
-        # Shutdown the exception handling thread. Insert a poison pill when no exception was raised by the workers.
-        # If there was an exception, the exception handling thread would already be joinable.
-        if not self.exception_caught:
-            with DelayedKeyboardInterrupt():
-                self._exception_queue.put((None, None), block=True)
-        self._exception_thread.join()
-        self._exception_thread = None
-
-        # If there was any exception the exception handling thread passed on the error to the main process, so we can
-        # raise it here.
-        if self.exception_caught:
-            with DelayedKeyboardInterrupt():
-                err, traceback_str = self._exception_queue.get(block=True)
-                self._exception_queue.task_done()
-            self._exception_queue.join()
-            self._exception_queue = None
-            raise err(traceback_str)
-        else:
-            self._exception_queue.join()
-            self._exception_queue = None
 
 
 MotherForker = WorkerPool
