@@ -53,9 +53,11 @@ class ProgressBarHandler:
             # Wait for a job to finish
             task_completed = self.task_completed_queue.get(block=True)
 
-            # If we received None, we should quit right away
+            # If we received None, we should quit right away. We do force a final refresh of the progress bar to show
+            # the latest status
             if task_completed is None:
                 self.task_completed_queue.task_done()
+                self.progress_bar.refresh()
                 break
 
             # Update progress bar. Note that we also update a separate counter which is used to check if the progress
@@ -65,5 +67,8 @@ class ProgressBarHandler:
             self.progress_bar.update(1)
             self.task_completed_queue.task_done()
 
-        # Force a final refresh
-        self.progress_bar.refresh()
+            # Force a refresh when we're at 100%. Tqdm doesn't always show the last update. It does when we close the
+            # progress bar, but because that happens in the main process it won't show it properly (tqdm and pickle
+            # don't like eachother that much)
+            if self.progress_bar.n == self.progress_bar.total:
+                self.progress_bar.refresh()
