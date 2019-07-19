@@ -51,7 +51,6 @@ class ExceptionHandler:
             with DelayedKeyboardInterrupt():
                 self.exception_queue.put((None, None), block=True)
         self.thread.join()
-        self.exception_queue.join()
 
     def _exception_handler(self) -> None:
         """

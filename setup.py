@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import find_packages, setup
 
 
 def read_description():
@@ -14,9 +14,11 @@ if __name__ == '__main__':
         author_email="sybren.jansen@target-holding.nl",
         description="A Python package for multiprocessing, but faster than multiprocessing",
         long_description=read_description(),
-        packages=["mpire"],
+        packages=find_packages(),
         install_requires=["numpy", "tqdm"],
+        include_package_data=True,
         extras_require={
+            'dashboard': ['flask'],
             'docs': ['sphinx', 'sphinx-rtd-theme'],
             'dill': ['multiprocess']
         },

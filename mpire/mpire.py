@@ -17,9 +17,8 @@ from tqdm.auto import tqdm
 
 from mpire.exception import CannotPickleExceptionError, ExceptionHandler, StopWorker
 from mpire.progress_bar import ProgressBarHandler
-from mpire.signal import DisableKeyboardInterruptSignal, DelayedKeyboardInterrupt
+from mpire.signal import DisableSignal, DelayedKeyboardInterrupt
 from mpire.utils import chunk_tasks, apply_numpy_chunking
-
 
 # If multiprocess is installed we want to use that as it has more capabilities than regular multiprocessing (e.g.,
 # pickling lambdas en functions located in __main__)
@@ -50,7 +49,7 @@ class AbstractWorker:
                  worker_lifespan: Optional[int] = None, pass_worker_id: bool = False, use_worker_state: bool = False):
         """
         :param start_method: What Process start method to use
-        :param worker_id: Worker id
+        :param worker_id: Worker ID
         :param tasks_queue: Queue object for retrieving new task arguments
         :param results_queue: Queue object for storing the results
         :param worker_done_array: Array object for notifying the ``WorkerPool`` to restart a worker
@@ -64,11 +63,10 @@ class AbstractWorker:
             preserved and not fed to the function pointer (e.g., used in ``map``)
         :param shared_objects: ``None`` or an iterable of process-aware shared objects (e.g., ``multiprocessing.Array``)
             to pass to the function as the first argument.
-        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
-            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
-            course of time.
-        :param pass_worker_id: Boolean. Whether or not to pass the worker ID to the function
-        :param use_worker_state: Boolean. Whether to let a worker have a worker state or not
+        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
+            stay alive the entire time. Use this when workers use up too much memory over the course of time.
+        :param pass_worker_id: Whether or not to pass the worker ID to the function
+        :param use_worker_state: Whether to let a worker have a worker state or not
         """
         super().__init__()
 
@@ -504,7 +502,7 @@ class WorkerPool:
         :param worker_id: ID of the worker
         :return: Worker instance
         """
-        with DisableKeyboardInterruptSignal():
+        with DisableSignal():
             # Create worker
             w = self.Worker(worker_id, self._tasks_queue, self._results_queue, self._worker_done_array,
                             self._task_completed_queue, self._exception_queue, self._exception_lock,
@@ -914,7 +912,7 @@ class WorkerPool:
         # workers, terminates everything and re-raise an exceptoin in the main process. The progress bar handler will
         # receive updates from the workers and updates the progress bar accordingly
         with ExceptionHandler(self.terminate, self._exception_queue, self.exception_caught) as exception_handler, \
-             ProgressBarHandler(progress_bar, self._task_completed_queue):
+             ProgressBarHandler(func_pointer, progress_bar, self._task_completed_queue):
 
             # Process all args in the iterable. If maximum number of active tasks is None, we avoid all the if and
             # try-except clauses to speed up the process.
