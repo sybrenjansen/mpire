@@ -94,9 +94,8 @@ class AbstractWorker:
 
         # Exception handling variables
         ctx = MP_CONTEXTS[self.start_method]
-        self.running = False
-        self.lock = ctx.Lock()
-        self.stop_event = ctx.Event()
+        self.is_running = False
+        self.is_running_lock = ctx.Lock()
 
         # Register handler for graceful shutdown
         signal.signal(signal.SIGUSR1, self._exit_gracefully)
@@ -110,17 +109,14 @@ class AbstractWorker:
         by raising a StopWorker exception (which is then caught by the ``run()`` function) so we can quit gracefully.
         """
         # A rather complex locking mechanism is used here so we can make sure we only raise an exception when we should.
-        # We want to make sure we only raise an exception when the user function is called. If it is not running, the
-        # stop event will make sure `run` will return. However, this may be a bit delayed because we could be in the
-        # middle of sending items through the queue. If it is running the exception is caught and `run` will return.
-        # If it is running and the user function throws another exception first, it depends on who obtains the lock
-        # first. If `run` obtains it it will set `running` to False, meaning we won't raise and `run` will return. If
-        # this function obtains it first it will throw, which again is caught by the `run` function, which will return.
-        # It should be bullet proof :)
-        with self.lock:
-            self.stop_event.set()
-            if self.running:
-                self.running = False
+        # We want to make sure we only raise an exception when the user function is called. If it is running the
+        # exception is caught and `run` will return. If it is running and the user function throws another exception
+        # first, it depends on who obtains the lock first. If `run` obtains it it will set `running` to False, meaning
+        # we won't raise and `run` will return. If this function obtains it first it will throw, which again is caught
+        # by the `run` function, which will return.
+        with self.is_running_lock:
+            if self.is_running:
+                self.is_running = False
                 raise StopWorker
 
     def run(self) -> None:
@@ -144,92 +140,40 @@ class AbstractWorker:
 
         n_chunks_executed = 0
         while self.worker_lifespan is None or n_chunks_executed < self.worker_lifespan:
-            # Obtain new chunk of jobs and occasionally poll the stop event
-            while not self.stop_event.is_set():
-                try:
-                    next_chunked_args = self.tasks_queue.get(block=True, timeout=0.1)
-                    break
-                except queue.Empty:
-                    pass
-            else:
-                # Stop event is set, we should shut down
-                return
 
-            # If we obtained a poison pill, we stop
-            if next_chunked_args is '\0':
-                self.tasks_queue.task_done()
+            # Obtain new chunk of jobs
+            next_chunked_args = self._retrieve_task()
+
+            # If we obtained a poison pill, we stop. When we receive None this means we stop because of an exception
+            if next_chunked_args is '\0' or next_chunked_args is None:
+                if next_chunked_args is '\0':
+                    self.tasks_queue.task_done()
                 return
 
             # Execute jobs in this chunk
             results = []
             for args in next_chunked_args:
                 try:
-                    # Set running to True, so when we need to shut down the signal handler knows it can raise
-                    with self.lock:
-                        self.running = True
 
-                        # Before every task, we also check the stop event. This is needed when the kill signal is given
-                        # in this loop, right after we have set running to False. In that case the signal handler will
-                        # not raise, but we would be still running tasks.
-                        if self.stop_event.is_set():
-                            self.tasks_queue.task_done()
-                            return
-
-                    # This can fail if an exception occurs in the user provided function
                     try:
+                        # Try to run this function and save results
+                        with self.is_running_lock:
+                            self.is_running = True
                         results.append(func(args))
+                        with self.is_running_lock:
+                            self.is_running = False
+
                     except StopWorker:
                         raise
+
                     except Exception as err:
                         # Let the signal handler know it shouldn't raise any exception anymore, we got this.
-                        with self.lock:
-                            self.running = False
+                        with self.is_running_lock:
+                            self.is_running = False
 
-                        # Only one process can throw at a time
-                        with self.exception_lock:
-                            # Only raise an exception when this process is the first one to raise. We do this because
-                            # when the first exception is caught by the main process the workers are joined which can
-                            # cause a deadlock on draining the exception queue. By only allowing one process to throw we
-                            # know for sure that the exception queue will be empty when the first one arrives.
-                            if not self.exception_thrown.is_set():
-                                # Determine function arguments
-                                func_args = args[1] if self.keep_order else args
-                                if isinstance(func_args, dict):
-                                    argument_str = "\n".join("Arg %s: %s" % (str(key), str(value))
-                                                             for key, value in func_args.items())
-                                elif isinstance(func_args, collections.Iterable) \
-                                        and not isinstance(func_args, (str, bytes)):
-                                    argument_str = "\n".join("Arg %d: %s" % (arg_nr, str(arg))
-                                                             for arg_nr, arg in enumerate(func_args))
-                                else:
-                                    argument_str = "Arg 0: %s" % func_args
-
-                                # Create traceback string
-                                traceback_str = \
-                                    "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % \
-                                    (self.worker_id, argument_str, traceback.format_exc())
-
-                                # Sometimes an exception cannot be pickled (i.e., we get the _pickle.PickleError:
-                                # Can't pickle <class ...>: it's not the same object as ...). We check that here by
-                                # trying the pickle.dumps manually. The call to `queue.put` creates a thread in which it
-                                # pickles and when that raises an exception we cannot catch it.
-                                try:
-                                    pickle.dumps(type(err))
-                                except pickle.PicklingError:
-                                    err = CannotPickleExceptionError()
-
-                                # Add exception to queue
-                                self.exception_queue.put((type(err), traceback_str), block=False, timeout=2)
-                                self.exception_thrown.set()
-
-                        # Return
-                        self.tasks_queue.task_done()
-                        return
-
-                    # Set running to False, so when we need to shut down the signal handler knows it should only set the
-                    # stop event
-                    with self.lock:
-                        self.running = False
+                        # Pass exception to parent process and stop
+                        self._raise(args, err)
+                        raise StopWorker
 
                 except StopWorker:
                     # The main process tells us to stop working, shutting down
@@ -248,6 +192,60 @@ class AbstractWorker:
         # Notify WorkerPool to start a new worker if max lifespan is reached
         if self.worker_lifespan is not None and n_chunks_executed == self.worker_lifespan:
             self.worker_done_array[self.worker_id] = True
+
+    def _retrieve_task(self) -> Any:
+        """
+        Obtain new chunk of jobs and occasionally poll the stop event
+
+        :return: chunked args
+        """
+        while not self.exception_thrown.is_set():
+            try:
+                return self.tasks_queue.get(block=True, timeout=0.1)
+            except queue.Empty:
+                pass
+
+        return None
+
+    def _raise(self, args: Any, err: Exception) -> None:
+        """
+        Create exception and pass it to the parent process. Let other processes know an exception is set
+        """
+        # Only one process can throw at a time
+        with self.exception_lock:
+
+            # Only raise an exception when this process is the first one to raise. We do this because when the first
+            # exception is caught by the main process the workers are joined which can cause a deadlock on draining the
+            # exception queue. By only allowing one process to throw we know for sure that the exception queue will be
+            # empty when the first one arrives.
+            if not self.exception_thrown.is_set():
+
+                # Determine function arguments
+                func_args = args[1] if self.keep_order else args
+                if isinstance(func_args, dict):
+                    argument_str = "\n".join("Arg %s: %s" % (str(key), str(value)) for key, value in func_args.items())
+                elif isinstance(func_args, collections.Iterable) and not isinstance(func_args, (str, bytes)):
+                    argument_str = "\n".join("Arg %d: %s" % (arg_nr, str(arg)) for arg_nr, arg in enumerate(func_args))
+                else:
+                    argument_str = "Arg 0: %s" % func_args
+
+                # Create traceback string
+                traceback_str = "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % (
+                    self.worker_id, argument_str, traceback.format_exc()
+                )
+
+                # Sometimes an exception cannot be pickled (i.e., we get the _pickle.PickleError: Can't pickle
+                # <class ...>: it's not the same object as ...). We check that here by trying the pickle.dumps manually.
+                # The call to `queue.put` creates a thread in which it pickles and when that raises an exception we
+                # cannot catch it.
+                try:
+                    pickle.dumps(type(err))
+                except pickle.PicklingError:
+                    err = CannotPickleExceptionError()
+
+                # Add exception to queue
+                self.exception_queue.put((type(err), traceback_str))
+                self.exception_thrown.set()
 
     def _helper_func_with_idx(self, func, args):
         """ Helper function which calls the function pointer but preserves the order index """
@@ -584,7 +582,6 @@ class WorkerPool:
             t = Thread(target=self._handle_tasks_done)
             t.start()
             while True:
-                # If not done, try restarting workings
                 t.join(timeout=0.1)
                 if not t.is_alive():
                     break
@@ -610,6 +607,9 @@ class WorkerPool:
         """
         Does not wait until all workers are finished, but terminates them.
         """
+        # Set exception thrown so workers know to stop fetching new tasks
+        self._exception_thrown.set()
+
         # Create cleanup threads such that processes can get killed simultaneously, which can save quite some time
         threads = []
         for w in self._workers:
@@ -622,10 +622,8 @@ class WorkerPool:
             t.join()
 
         # Drain and join the queues
-        if self._tasks_queue is not None:
-            self._drain_and_join_queue(self._tasks_queue)
-        if self._results_queue is not None:
-            self._drain_and_join_queue(self._results_queue)
+        self._drain_and_join_queue(self._tasks_queue)
+        self._drain_and_join_queue(self._results_queue)
 
         # Reset variables
         self._workers = []
@@ -640,7 +638,7 @@ class WorkerPool:
         # We wait until workers are done terminating. However, we don't have all the patience in the world and sometimes
         # workers can get stuck when starting up when an exception is handled. So when the patience runs out we
         # terminate them.
-        try_count = 10
+        try_count = 3
         while process.is_alive() and try_count > 0:
             # Send interrupt signal so the processes can die gracefully. Sometimes this will throw an exception, e.g.
             # when processes are in the middle of restarting
@@ -652,7 +650,7 @@ class WorkerPool:
             time.sleep(0.1)
 
         # If a graceful kill is not possible, terminate the process.
-        if try_count == 0:
+        if process.is_alive():
             process.terminate()
 
         # Join worker
@@ -666,6 +664,10 @@ class WorkerPool:
         :param q: Queue to join
         :param join: Whether to join the queue or not
         """
+        # Do nothing when it's not set
+        if q is None:
+            return
+
         # Extract all items left in the queue
         try:
             while True:
