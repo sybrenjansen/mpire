@@ -93,6 +93,9 @@ class ProgressBarHandler:
                     self._send_update(failed=True)
                 break
 
+            # Register progress bar to dashboard in case a dashboard is started after the progress bar was created
+            self._register_progress_bar()
+
             # Update progress bar. Note that we also update a separate counter which is used to check if the progress
             # bar is completed. I realize that tqdm has a public variable `n` which should keep track of the current
             # progress, but for some reason that variable doesn't work here, it equals the `total` variable all the
@@ -105,9 +108,7 @@ class ProgressBarHandler:
             # don't like eachother that much)
             if self.progress_bar.n == self.progress_bar.total:
                 self.progress_bar.refresh()
-
-            # Register progress bar to dashboard in case a dashboard is started after the progress bar was created
-            self._register_progress_bar()
+                self._send_update()
 
             # Send update to dashboard in case a dashboard is started, but only when tqdm updated its view as well. This
             # will make the dashboard a lot more responsive
