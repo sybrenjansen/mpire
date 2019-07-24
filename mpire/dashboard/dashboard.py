@@ -6,12 +6,14 @@ import socket
 from datetime import datetime
 from multiprocessing import Event, Process, Value
 from pkg_resources import resource_string
+from typing import Dict, Optional, Union
 
 from flask import escape, Flask, jsonify, render_template, request
 from werkzeug.serving import make_server
 
 from mpire.signal import DisableSignal
-from mpire.dashboard.manager import get_manager_client_dicts, start_manager_server
+from mpire.dashboard.manager import (DASHBOARD_MANAGER_HOST, DASHBOARD_MANAGER_PORT,
+                                     get_manager_client_dicts, start_manager_server)
 
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
@@ -70,48 +72,69 @@ def progress_bar_new() -> str:
     ))
 
 
-def start_dashboard() -> int:
+def start_dashboard(connect=False, manager_host: Optional[str] = None, manager_port_nr: Optional[int] = None) \
+        -> Optional[Dict[str, Union[int, str]]]:
     """
-    Starts an MPIRE dashboard
+    Starts a new or connects to an existing MPIRE dashboard
 
-    :return: port number that is used
+    :param connect: whether to connect to an existing dashboard or start a new one
+    :param manager_host: host to use when connecting to a manager. If ``None`` it will use localhost
+    :param manager_port_nr: port to use when connecting to a manager. If ``None`` and ``connect=True`` it will raise an 
+        error
+    :return: when ``connect=False`` a dictionary containing the dashboard port number and manager host and port_nr
+        being used
     """
-    global _DASHBOARD_MANAGER
+    global _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
 
     if not DASHBOARD_STARTED_EVENT.is_set():
 
         # Prevent signal from propagating to child process
         with DisableSignal():
 
-            # Set up manager server
-            _DASHBOARD_MANAGER = start_manager_server()
+            # Connect to an existing manager server
+            if connect:
+                DASHBOARD_MANAGER_HOST.value = manager_host.encode()
+                DASHBOARD_MANAGER_PORT.value = manager_port_nr
+                _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _ = get_manager_client_dicts()
 
-            # Start flask server
-            logging.getLogger('werkzeug').setLevel(logging.WARN)
-            port_nr = Value('i', 0, lock=False)
-            Process(target=_run, args=(DASHBOARD_STARTED_EVENT, port_nr), daemon=True, name='dashboard-thread').start()
-            DASHBOARD_STARTED_EVENT.wait()
-            return port_nr.value
+            # Set up manager server
+            else:
+                _DASHBOARD_MANAGER = start_manager_server()
+
+                # Start flask server
+                logging.getLogger('werkzeug').setLevel(logging.WARN)
+                dashboard_port_nr = Value('i', 0, lock=False)
+                Process(target=_run, args=(DASHBOARD_STARTED_EVENT, dashboard_port_nr),
+                        daemon=True, name='dashboard-process').start()
+                DASHBOARD_STARTED_EVENT.wait()
+
+                # Return connect information
+                return {'dashboard_port_nr': dashboard_port_nr.value,
+                        'manager_host': DASHBOARD_MANAGER_HOST.value.decode() or socket.gethostname(),
+                        'manager_port_nr': DASHBOARD_MANAGER_PORT.value}
+
     else:
         raise RuntimeError("You already have a running dashboard")
 
 
-def _run(started: Event, port_nr: Value) -> None:
+def _run(started: Event, dashboard_port_nr: Value) \
+        -> None:
     """
     Starts a dashboard server
 
     :param started: Event that signals the dashboard server has started
+    :param dashboard_port_nr: Value object for storing the dashboad port number that is used
     """
     # Connect to manager from this process
     global _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
     _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _ = get_manager_client_dicts()
 
     # Try different ports, until a free one is found
-    for port in range(8080, 8200):
+    for port in range(8080, 8999):
         try:
             global _server
             _server = make_server('0.0.0.0', port, app)
-            port_nr.value = port
+            dashboard_port_nr.value = port
             started.set()
             logger.info("Server started on 0.0.0.0:%d", port)
             _server.serve_forever()

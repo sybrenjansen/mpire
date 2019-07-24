@@ -1,5 +1,6 @@
 import socket
-from multiprocessing import Lock, Value
+from ctypes import c_char
+from multiprocessing import Array, Lock, Value
 from multiprocessing.managers import BaseProxy, SyncManager
 from typing import Dict, Tuple
 
@@ -12,7 +13,8 @@ DASHBOARD_TQDM_DETAILS_DICT = {}
 # Lock for registering new progress bars
 DASHBOARD_TQDM_LOCK = Lock()
 
-# Value which tells which port to use for connecting to a manager
+# Array which tells which host and a value which tells which port to use for connecting to a manager
+DASHBOARD_MANAGER_HOST = Array(c_char, 10000)
 DASHBOARD_MANAGER_PORT = Value('i', lock=True)
 
 
@@ -59,7 +61,8 @@ def start_manager_server() -> SyncManager:
             sm.register('get_dashboard_tqdm_lock', get_dashboard_tqdm_lock)
             sm.start()
 
-            # Set port number so other processes know which port to use
+            # Set host and port number so other processes know where to connect to
+            DASHBOARD_MANAGER_HOST.value = b''
             DASHBOARD_MANAGER_PORT.value = port_nr
 
             return sm
@@ -67,6 +70,8 @@ def start_manager_server() -> SyncManager:
         except OSError:
             # Port is occupied, ignore it and try another
             pass
+
+    raise OSError("All ports (50000-50100) are in use")
 
 
 def get_manager_client_dicts() -> Tuple[BaseProxy, BaseProxy, BaseProxy]:
@@ -76,7 +81,8 @@ def get_manager_client_dicts() -> Tuple[BaseProxy, BaseProxy, BaseProxy]:
     :return: synchronized tqdm dict, tqdm details dict, tqdm lock
     """
     # Connect to a server
-    sm = SyncManager(address=('', DASHBOARD_MANAGER_PORT.value), authkey=b'mpire_dashboard')
+    sm = SyncManager(address=(DASHBOARD_MANAGER_HOST.value.decode(), DASHBOARD_MANAGER_PORT.value),
+                     authkey=b'mpire_dashboard')
     sm.register('get_dashboard_tqdm_dict', get_dashboard_tqdm_dict)
     sm.register('get_dashboard_tqdm_details_dict', get_dashboard_tqdm_details_dict)
     sm.register('get_dashboard_tqdm_lock', get_dashboard_tqdm_lock)
