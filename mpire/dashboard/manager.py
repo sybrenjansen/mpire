@@ -14,7 +14,7 @@ DASHBOARD_TQDM_DETAILS_DICT = {}
 DASHBOARD_TQDM_LOCK = Lock()
 
 # Array which tells which host and a value which tells which port to use for connecting to a manager
-DASHBOARD_MANAGER_HOST = Array(c_char, 10000)
+DASHBOARD_MANAGER_HOST = Array(c_char, 10000, lock=True)
 DASHBOARD_MANAGER_PORT = Value('i', lock=True)
 
 
@@ -45,7 +45,7 @@ def start_manager_server() -> SyncManager:
 
     :return: SyncManager
     """
-    for port_nr in range(50000, 50100):
+    for port_nr in range(8080, 8999):
         try:
             # If a port is already occupied the SyncManager process will spit out EOFError and OSError messages. The
             # former can be catched, but the latter will still show up. So we first check if a port is available
@@ -71,7 +71,7 @@ def start_manager_server() -> SyncManager:
             # Port is occupied, ignore it and try another
             pass
 
-    raise OSError("All ports (50000-50100) are in use")
+    raise OSError("All ports (8080-8999) are in use")
 
 
 def get_manager_client_dicts() -> Tuple[BaseProxy, BaseProxy, BaseProxy]:

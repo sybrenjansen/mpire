@@ -1,4 +1,6 @@
+import getpass
 import inspect
+import socket
 from typing import Callable, Dict, List, Union
 
 
@@ -39,7 +41,8 @@ def get_function_details(func_pointer: Callable) -> Dict[str, Union[str, int]]:
     code_context = ' '.join(line.strip() for line in code_context)
 
     # Populate details
-    func_details = {'function_filename': inspect.getabsfile(func_pointer),
+    func_details = {'user': '{}@{}'.format(getpass.getuser(), socket.gethostname()),
+                    'function_filename': inspect.getabsfile(func_pointer),
                     'function_line_no': func_pointer.__code__.co_firstlineno,
                     'function_name': func_pointer.__name__,
                     'invoked_filename': invoked_frame.filename,

@@ -66,10 +66,16 @@ def progress_bar_new() -> str:
 
     :return: JSON string containing new progress bar HTML
     """
-    return jsonify(result=_progress_bar_html.format(
-        id=request.args['pb_id'],
-        **{k: escape(v) for k, v in _DASHBOARD_TQDM_DETAILS_DICT.get(int(request.args['pb_id'])).items()}
-    ))
+    # Obtain progress bar details. Only show the user@host part if it doesn't equal the user@host of this process
+    # (in case someone connected to this dashboard from another machine or user)
+    progress_bar_details = _DASHBOARD_TQDM_DETAILS_DICT.get(int(request.args['pb_id']))
+    if progress_bar_details['user'] == '{}@{}'.format(getpass.getuser(), socket.gethostname()):
+        progress_bar_details['user'] = ''
+    else:
+        progress_bar_details['user'] = '{}:'.format(progress_bar_details['user'])
+
+    return jsonify(result=_progress_bar_html.format(id=request.args['pb_id'],
+                                                    **{k: escape(v) for k, v in progress_bar_details.items()}))
 
 
 def start_dashboard(connect=False, manager_host: Optional[str] = None, manager_port_nr: Optional[int] = None) \
@@ -91,11 +97,11 @@ def start_dashboard(connect=False, manager_host: Optional[str] = None, manager_p
         # Prevent signal from propagating to child process
         with DisableSignal():
 
-            # Connect to an existing manager server
+            # Set connection variables so we can connect to the right manager
             if connect:
                 DASHBOARD_MANAGER_HOST.value = manager_host.encode()
                 DASHBOARD_MANAGER_PORT.value = manager_port_nr
-                _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _ = get_manager_client_dicts()
+                DASHBOARD_STARTED_EVENT.set()
 
             # Set up manager server
             else:
