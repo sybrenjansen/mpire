@@ -33,7 +33,9 @@ def index() -> str:
 
     :return: HTML
     """
-    return render_template('index.html', username=getpass.getuser(), hostname=socket.gethostname())
+    return render_template('index.html', username=getpass.getuser(), hostname=socket.gethostname(),
+                           manager_host=DASHBOARD_MANAGER_HOST.value.decode() or 'localhost',
+                           manager_port_nr=DASHBOARD_MANAGER_PORT.value)
 
 
 @app.route('/_progress_bar_update')

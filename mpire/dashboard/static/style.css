@@ -9,6 +9,7 @@ h1 {
 h1 .username {
     font-size: 0.4em;
     vertical-align: middle;
+    cursor: help;
 }
 
 h1 .username_brackets {

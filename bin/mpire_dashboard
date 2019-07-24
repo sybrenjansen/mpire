@@ -1,0 +1,17 @@
+#!/usr/bin/env python
+import signal
+
+from mpire.dashboard import start_dashboard
+
+if __name__ == '__main__':
+    # Start a dashboard
+    print("Starting MPIRE dashboard...")
+    dashboard_details = start_dashboard()
+
+    # Print some details on how to connect
+    print()
+    print("MPIRE dashboard started on http://localhost:{}".format(dashboard_details['dashboard_port_nr']))
+    print("Server is listening on {}:{}".format(dashboard_details['manager_host'],
+                                                dashboard_details['manager_port_nr']))
+    print("-" * 50)
+    signal.pause()

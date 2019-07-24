@@ -15,6 +15,7 @@ if __name__ == '__main__':
         description="A Python package for multiprocessing, but faster than multiprocessing",
         long_description=read_description(),
         packages=find_packages(),
+        scripts=['bin/mpire_dashboard'],
         install_requires=["numpy", "tqdm"],
         include_package_data=True,
         extras_require={
