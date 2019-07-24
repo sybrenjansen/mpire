@@ -109,8 +109,10 @@ class ProgressBarHandler:
             # Register progress bar to dashboard in case a dashboard is started after the progress bar was created
             self._register_progress_bar()
 
-            # Send update to dashboard in case a dashboard is started
-            self._send_update()
+            # Send update to dashboard in case a dashboard is started, but only when tqdm updated its view as well. This
+            # will make the dashboard a lot more responsive
+            if self.progress_bar.n == self.progress_bar.last_print_n:
+                self._send_update()
 
     def _register_progress_bar(self) -> None:
         """

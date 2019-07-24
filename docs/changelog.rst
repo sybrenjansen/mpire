@@ -1,6 +1,14 @@
 Changelog
 =========
 
+Dev
+---
+
+* Refactoring of code and small bug fixes in error handling
+* Progress bar handling now occurs in a separate process, instead of a thread, to improve responsiveness
+* Added the MPIRE dashboard
+* Removed deprecated functionality
+
 0.9.0
 -----
 

@@ -20,7 +20,7 @@ if __name__ == '__main__':
         include_package_data=True,
         extras_require={
             'dashboard': ['flask'],
-            'docs': ['sphinx', 'sphinx-rtd-theme'],
+            'docs': ['sphinx', 'sphinx-rtd-theme', 'sphinx-autodoc-typehints'],
             'dill': ['multiprocess']
         },
         test_suite='tests'

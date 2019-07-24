@@ -40,3 +40,18 @@ like lambdas. Install the appropriate dependencies to enable this:
     pip install mpire[dill]
 
 .. _dill: https://pypi.org/project/dill/
+
+.. _dashboarddep:
+
+Dashboard
+~~~~~~~~~
+
+Optionally, you can install the dependencies for the MPIRE dashboard, which depends on Flask_. The dashboard allows you
+to see progress information from a browser. This is convenient when running scripts in a notebook or screen, or want to
+share the progress information with others. Install the appropriate dependencies to enable this:
+
+.. code-block:: bash
+
+    pip install mpire[dashboard]
+
+.. _Flask: https://flask.palletsprojects.com/en/1.1.x/

@@ -80,7 +80,7 @@ def progress_bar_new() -> str:
                                                     **{k: escape(v) for k, v in progress_bar_details.items()}))
 
 
-def start_dashboard(connect=False, manager_host: Optional[str] = None, manager_port_nr: Optional[int] = None) \
+def start_dashboard(connect: bool = False, manager_host: Optional[str] = None, manager_port_nr: Optional[int] = None) \
         -> Optional[Dict[str, Union[int, str]]]:
     """
     Starts a new or connects to an existing MPIRE dashboard

@@ -6,4 +6,5 @@ Usage
 
     setup
     map
-    options
+    dashboard
+    known_issues

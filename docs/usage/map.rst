@@ -1,4 +1,4 @@
-map family
+Map family
 ==========
 
 This section describes the different ways of interacting with a :obj:`mpire.WorkerPool` object.
@@ -77,7 +77,7 @@ The final example shows the use of an iterable of dictionaries. The (key, value)
 ``**``-operator, as you would expect. So it doesn't matter in what order the keys are stored. This should work for
 ``collection.OrderedDict`` objects as well.
 
-If you want to pass those dictionaries in example 4 as a whole to, for example, the following function:
+If you want to pass those dictionaries in example 4 as a whole to the following function, for example:
 
 .. code-block:: python
 
@@ -118,8 +118,8 @@ Task chunking
 
 By default, MPIRE chunks the given tasks in to four times the number of jobs chunks. Each worker is given one chunk of
 tasks at a time before returning its results. This usually makes processing faster when you have rather small tasks
-(computation wise) as tasks and results are pickled/unpickled when they are send to a worker or main process. Chunking
-the tasks and results ensures that each process has to pickle/unpickle less often.
+(computation wise) and results are pickled/unpickled when they are send to a worker or main process. Chunking the tasks
+and results ensures that each process has to pickle/unpickle less often.
 
 However, to determine the number of tasks in the argument list the iterable should implement the ``__len__`` method,
 which is available in default containers like ``list`` or ``tuple``, but isn't available in most generator objects
@@ -315,9 +315,9 @@ Worker lifespan
 ---------------
 
 Occasionally, workers that process multiple, memory intensive tasks do not release their used up memory properly, which
-results in memory usage building up. This is not a bug in MPIRE, but a consequence of Python's poor garbage collection
-in child processes. To avoid this type of problem you can set the worker lifespan: the number of tasks (well, actually
-the number of chunks of tasks) after which a worker should restart.
+results in memory usage building up. This is not a bug in MPIRE, but a consequence of Python's poor garbage collection.
+To avoid this type of problem you can set the worker lifespan: the number of tasks (well, actually the number of chunks
+of tasks) after which a worker should restart.
 
 .. code-block:: python
 
@@ -326,38 +326,6 @@ the number of chunks of tasks) after which a worker should restart.
         results = pool.map(square, range(100), worker_lifespan=1)
 
 In this example each worker is restarted after finishing a single chunk of tasks.
-
-
-Restarting workers
-~~~~~~~~~~~~~~~~~~
-
-.. important::
-
-    MPIRE will no longer support reusing workers (from 0.6.0). This argument will be removed from version 1.0.0 onwards.
-
-The first time you call one of the ``map`` functions the pool of workers is started with the appropriate argument
-values, including the function pointer, lifespan, etc. When you want to call a ``map`` function for the second time the
-workers of the first call still exist and they can be reused if you don't want to change the settings of the first call.
-The main benefit to this is that the overhead of starting/terminating child processes is avoided:
-
-.. code-block:: python
-
-    with WorkerPool(n_jobs=4) as pool:
-        # 1. Square the numbers using a generator, results should be: [0, 1, 4, 9, 16, 25, ...]
-        results = pool.map(square, range(100), worker_lifespan=1)
-
-        # 2. Still square the numbers using a generator, results should be: [0, 1, 4, 9, 16, 25, ...]
-        results = pool.map(multiply, range(100), worker_lifespan=2, restart_workers=False)
-
-        # 3. Multiply the numbers using a generator, results should be [0, 101, 204, 309, 416, ...]
-        results = pool.map(multiply, zip(range(100), range(100, 200)),
-                           worker_lifespan=2, restart_workers=True)
-
-The first example spawns workers with the task of squaring the provided numbers. In the second example we reuse the
-workers of the first example by stating that we don't want to restart the workers. This means that the function pointer
-and worker lifespan are not provided to the workers, so this example is still calling the ``square`` function. Only when
-we tell the function that we want to restart the workers we can provide a different function pointer and worker
-lifespan.
 
 
 Progress bar
@@ -405,6 +373,9 @@ to use:
     # Otherwise
     from tqdm import tqdm
 
+    # Or, more conveniently:
+    from tqdm.auto import tqdm
+
 .. note::
 
     When providing a custom ``tqdm`` progress bar you will need to pass on the total number of tasks to the ``total``
@@ -412,13 +383,10 @@ to use:
 
 For all the configurable options, please refer to the `tqdm documentation`_.
 
-.. warning::
+.. note::
 
-    When you have a lot of small tasks the addition of a progress bar can slow down your task considerably as it will
-    send progress updates after each completed task. One way to fix this is to chunk the tasks yourselves using
-    :meth:`mpire.utils.chunk_tasks` such that progress is updated every chunk. Or you can make a PR to include an
-    additional parameter ``progress_frequency=1`` in the map functions which indicates how many jobs have to be
-    completed before a worker sends a progress update.
+    Please keep in mind that to show real-time progress information MPIRE starts an additional child process, which
+    could consume a bit of the available compute power of your machine.
 
 
 Multiple progress bars with nested WorkerPools
@@ -438,8 +406,7 @@ using multiple progress bars using nested WorkerPools:
                                    progress_bar=tqdm(total=len(X), position=worker_id + 1))
 
     def main():
-        with WorkerPool(n_jobs=4, daemon=False) as pool:
-            pool.pass_on_worker_id()
+        with WorkerPool(n_jobs=4, daemon=False, pass_worker_id=True) as pool:
             pool.map(dispatcher, ((range(x, x + 100),) for x in range(100)), iterable_len=100,
                      n_splits=4, progress_bar=True)
 
@@ -451,7 +418,8 @@ the main WorkerPool.
 .. note::
 
     Unfortunately, starting a ``tqdm`` progress bar from a child process in a Jupyter/IPython notebook doesn't seem to
-    work. You'll get ``WARNING: attempted to send message from fork`` messages from the IPython kernel.
+    work. You'll get ``WARNING: attempted to send message from fork`` messages from the IPython kernel. You can use the
+    MPIRE dashboard instead.
 
 
 .. _tqdm: https://pypi.python.org/pypi/tqdm

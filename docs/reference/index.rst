@@ -16,3 +16,8 @@ Task chunking
 Converting iterable of arguments
 --------------------------------
 .. autofunction:: mpire.utils.make_single_arguments
+
+
+Dashboard
+---------
+.. autofunction:: mpire.dashboard.start_dashboard
