@@ -17,15 +17,18 @@ class CannotPickleExceptionError(Exception):
 
 class ExceptionHandler:
 
-    def __init__(self, terminate: Callable, exception_queue: JoinableQueue, exception_caught: Event) -> None:
+    def __init__(self, terminate: Callable, exception_queue: JoinableQueue, exception_caught: Event,
+                 has_progress_bar: bool) -> None:
         """
         :param terminate: terminate function of the WorkerPool
         :param exception_queue: Queue where the workers can pass on an encountered exception
         :param exception_caught: Event indicating whether or not an exception was caught by one of the workers
+        :param has_progress_bar: whether or not a progress bar is active
         """
         self.terminate = terminate
         self.exception_queue = exception_queue
         self.exception_caught = exception_caught
+        self.has_progress_bar = has_progress_bar
         self.thread = None
 
     def __enter__(self) -> 'ExceptionHandler':
@@ -69,8 +72,10 @@ class ExceptionHandler:
             self.terminate()
 
             # Pass error to main process so it can be raised there (exceptions raised from threads or child processes
-            # cannot be caught directly)
+            # cannot be caught directly). Pass another error in case we have a progress bar
             self.exception_queue.put((err, traceback_str), block=True)
+            if self.has_progress_bar:
+                self.exception_queue.put((err, traceback_str), block=True)
 
         self.exception_queue.task_done()
 

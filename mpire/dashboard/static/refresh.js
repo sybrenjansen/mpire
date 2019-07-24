@@ -90,6 +90,10 @@ function refresh()
                 // Danger if we've encountered a failure
                 $('#pb_' + pb.id).addClass('bg-danger');
 
+                // Add traceback info
+                $('#pb_' + pb.id + '_traceback').show();
+                $('#pb_' + pb.id + '_traceback').text(pb.traceback);
+
                 // Add a flashing flash
                 $('#pb_' + pb.id + '_flash').fadeIn(200).fadeOut(200).fadeIn(200).fadeOut(200).fadeIn(200);
 

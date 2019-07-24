@@ -8,6 +8,7 @@ class DelayedKeyboardInterrupt(object):
         :param in_thread: Whether or not we're living in a thread or not
         """
         self.in_thread = in_thread
+        self.signal_received = None
 
     def __enter__(self):
         # When we're in a thread we can't use signal handling

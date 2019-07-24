@@ -32,11 +32,13 @@ h1 .username_at {
     margin-left: 10px;
 }
 
-.fixed-bottom-right {
+.mpire {
     position: fixed;
     bottom: 0;
     right: 40px;
     z-index: -99;
+    font-size: 60%;
+    color: #6c757d;
 }
 
 .lightsaber {
@@ -95,4 +97,12 @@ code {
 
 p {
     margin-bottom: 0.4em;
+}
+
+.traceback {
+    display: none;
+    color: rgb(255, 100, 100);
+    border-top: 1px dashed;
+    margin-top: 20px;
+    padding-top: 20px;
 }

@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from multiprocessing import JoinableQueue, Process
+from multiprocessing import Event, JoinableQueue, Process
 from typing import Any, Callable, Dict, Optional
 
 from tqdm import tqdm
@@ -19,16 +19,20 @@ DATETIME_FORMAT = "%Y-%m-%d, %H:%M:%S"
 
 class ProgressBarHandler:
 
-    def __init__(self, func_pointer: Callable, progress_bar: Optional[tqdm], task_completed_queue: JoinableQueue) \
-            -> None:
+    def __init__(self, func_pointer: Callable, progress_bar: Optional[tqdm], task_completed_queue: JoinableQueue,
+                 exception_queue: JoinableQueue, exception_caught: Event) -> None:
         """
         :param func_pointer: Function pointer passed on to a WorkerPool map function
         :param progress_bar: tqdm progress bar or None when no progress bar should be shown
         :param task_completed_queue: Queue related to the progress bar. Child processes can pass on a random value
             whenever they are finished with a job
+        :param exception_queue: Queue where the workers can pass on an encountered exception
+        :param exception_caught: whether or not an exception was caught by one of the child processes
         """
         self.progress_bar = progress_bar
         self.task_completed_queue = task_completed_queue
+        self.exception_queue = exception_queue
+        self.exception_caught = exception_caught
         self.function_details = get_function_details(func_pointer) if progress_bar else None
 
         self.process = None
@@ -87,7 +91,6 @@ class ProgressBarHandler:
                 # the dashboard in the case a dashboard is started
                 if self.progress_bar.n != self.progress_bar.total:
                     self._send_update(failed=True)
-
                 break
 
             # Update progress bar. Note that we also update a separate counter which is used to check if the progress
@@ -135,6 +138,12 @@ class ProgressBarHandler:
         if self.progress_bar_id is not None:
             self.dashboard_dict.update([(self.progress_bar_id, self._get_progress_bar_update_dict(failed))])
 
+        # In case we have a failure and are not using a dashboard we need to remove the additional error put in the
+        # exception queue by the exception handler. We won't be using it
+        elif failed and self.exception_caught.is_set():
+            self.exception_queue.get(block=True)
+            self.exception_queue.task_done()
+
     def _get_progress_bar_update_dict(self, failed: bool) -> Dict[str, Any]:
         """
         Obtain update dictionary with all the information needed for displaying on the dashboard
@@ -149,6 +158,18 @@ class ProgressBarHandler:
         now = datetime.now()
         remaining_time = ((total - n) * avg_time) if avg_time else None
 
+        # Obtain traceback string in case of failure. If an exception was caught an additional traceback string will be
+        # available in the exception_queue. Otherwise, it will be a KeyboardInterrupt
+        if failed:
+            if self.exception_caught.is_set():
+                _, traceback_str = self.exception_queue.get(block=True)
+                traceback_str = traceback_str.strip()
+                self.exception_queue.task_done()
+            else:
+                traceback_str = 'KeyboardInterrupt'
+        else:
+            traceback_str = None
+
         return {"id": self.progress_bar_id,
                 "success": not failed,
                 "n": n,
@@ -161,4 +182,5 @@ class ProgressBarHandler:
                 "started": self.start_t.strftime(DATETIME_FORMAT),
                 "finished_raw": now + timedelta(seconds=remaining_time) if remaining_time is not None else None,
                 "finished": ((now + timedelta(seconds=remaining_time)).strftime(DATETIME_FORMAT)
-                             if remaining_time is not None else '-')}
+                             if remaining_time is not None else '-'),
+                "traceback": traceback_str}

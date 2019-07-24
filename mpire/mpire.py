@@ -9,7 +9,7 @@ import time
 import traceback
 import warnings
 from functools import partial
-from threading import Thread, Event
+from threading import Thread
 from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
@@ -374,7 +374,7 @@ class WorkerPool:
         self.use_worker_state = use_worker_state
 
         # Whether or not an exception was caught by one of the child processes
-        self.exception_caught = Event()
+        self.exception_caught = mp.Event()
 
     def _check_cpu_ids(self, cpu_ids: CPUList) -> List[str]:
         """
@@ -911,8 +911,10 @@ class WorkerPool:
         # Create exception and progress bar handlers. The exception handler will receive any exceptions thrown by the
         # workers, terminates everything and re-raise an exceptoin in the main process. The progress bar handler will
         # receive updates from the workers and updates the progress bar accordingly
-        with ExceptionHandler(self.terminate, self._exception_queue, self.exception_caught) as exception_handler, \
-             ProgressBarHandler(func_pointer, progress_bar, self._task_completed_queue):
+        with ExceptionHandler(self.terminate, self._exception_queue, self.exception_caught,
+                              progress_bar is not None) as exception_handler, \
+             ProgressBarHandler(func_pointer, progress_bar, self._task_completed_queue, self._exception_queue,
+                                self.exception_caught):
 
             # Process all args in the iterable. If maximum number of active tasks is None, we avoid all the if and
             # try-except clauses to speed up the process.
@@ -1054,6 +1056,7 @@ class WorkerPool:
             self._task_completed_queue = self.ctx.JoinableQueue()
         else:
             progress_bar = None
+            self._task_completed_queue = None
 
         return n_tasks, chunk_size, progress_bar
 
