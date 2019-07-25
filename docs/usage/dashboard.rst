@@ -33,7 +33,7 @@ which will print:
      'manager_port_nr': 8081}
 
 This will start a dashboard on your local machine on port 8080. When the port is already in use MPIRE will try the next,
-until it finds an unused one. In the rare case that no ports are available up to port 8999 the function will raise an
+until it finds an unused one. In the rare case that no ports are available up to port 8099 the function will raise an
 ``OSError``.
 
 The returned dictionary contains the port number that is ultimately chosen. It also contains information on how to
@@ -43,7 +43,7 @@ Another way of starting a dashboard is by using the bash script:
 
 .. code-block:: bash
 
-    $ mpire_dashboard
+    $ mpire-dashboard
 
 This will start a dashboard with the connection details printed on screen. It will say something like:
 
@@ -52,7 +52,7 @@ This will start a dashboard with the connection details printed on screen. It wi
     Starting MPIRE dashboard...
 
     MPIRE dashboard started on http://localhost:8080
-    Server is listening on localhost:8081
+    Server is listening on localhost:8098
     --------------------------------------------------
 
 The server part corresponds to the ``manager_host`` and ``manager_port_nr`` from the dictionary returned by

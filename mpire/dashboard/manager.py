@@ -45,7 +45,7 @@ def start_manager_server() -> SyncManager:
 
     :return: SyncManager
     """
-    for port_nr in reversed(range(8080, 8099)):
+    for port_nr in reversed(range(8080, 8100)):
         try:
             # If a port is already occupied the SyncManager process will spit out EOFError and OSError messages. The
             # former can be catched, but the latter will still show up. So we first check if a port is available

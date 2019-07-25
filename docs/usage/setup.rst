@@ -275,8 +275,8 @@ Process start method
 --------------------
 
 The ``multiprocessing`` package allows you to start processes using a few different methods: ``'fork'``, ``'spawn'`` or
-``'forkserver'``. For detailed information, please refer to the multiprocessing documentation_ and caveats_ section. In
-short:
+``'forkserver'``. Threading is also available by using ``'threading'``. For detailed information on the multiprocessing
+contexts, please refer to the multiprocessing documentation_ and caveats_ section. In short:
 
 - ``'fork'`` (the default) copies the parent process such that the child process is effectively identical. This
   includes copying everything currently in memory. This is sometimes useful, but other times useless or even a serious
@@ -284,6 +284,7 @@ short:
 - ``'spawn'`` starts a fresh python interpreter where only those resources necessary are inherited.
 - ``'forkserver'`` first starts a server process. Whenever a new process is needed the parent process requests the
   server to fork a new process.
+- ``'threading'`` starts child threads
 
 The ``'spawn'`` and ``'forkserver'`` methods have some caveats_. All resources needed for running the child process
 should be picklable. This can sometimes be a hassle when you heavily rely on lambdas or are trying to run MPIRE in an

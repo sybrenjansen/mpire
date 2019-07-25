@@ -138,7 +138,7 @@ def _run(started: Event, dashboard_port_nr: Value) \
     _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _ = get_manager_client_dicts()
 
     # Try different ports, until a free one is found
-    for port in range(8080, 8099):
+    for port in range(8080, 8100):
         try:
             _server = make_server('0.0.0.0', port, app)
             dashboard_port_nr.value = port
