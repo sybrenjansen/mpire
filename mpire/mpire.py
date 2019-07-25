@@ -5,11 +5,11 @@ import pickle
 import queue
 import signal
 import subprocess
+import threading
 import time
 import traceback
 import warnings
 from functools import partial
-from threading import Thread
 from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
@@ -32,9 +32,22 @@ except ImportError:
 CPUList = Optional[List[Union[int, List[int]]]]
 
 
+# Threading context so we can use threading as backend as well
+class ThreadingContext:
+
+    Event = threading.Event
+    Lock = threading.Lock
+    Thread = threading.Thread
+
+    # threading doesn't have Array and JoinableQueue, so we take it from multiprocessing. Both are thread-safe
+    Array = mp.Array
+    JoinableQueue = mp.JoinableQueue
+
+
 MP_CONTEXTS = {'fork': mp.get_context('fork'),
                'forkserver': mp.get_context('forkserver'),
-               'spawn': mp.get_context('spawn')}
+               'spawn': mp.get_context('spawn'),
+               'threading': ThreadingContext}
 
 
 class AbstractWorker:
@@ -276,11 +289,15 @@ class SpawnWorker(AbstractWorker, MP_CONTEXTS['spawn'].Process):
     pass
 
 
+class ThreadingWorker(AbstractWorker, MP_CONTEXTS['threading'].Thread):
+    pass
+
+
 def worker_factory(start_method):
     """
     Returns the appropriate worker class given the start method
 
-    :param start_method: What Process start method to use, see the WorkerPool constructor
+    :param start_method: What Process/Threading start method to use, see the WorkerPool constructor
     :return: Worker class where the start_method is already filled in
     """
     if start_method == 'fork':
@@ -289,6 +306,8 @@ def worker_factory(start_method):
         return partial(ForkServerWorker, start_method)
     elif start_method == 'spawn':
         return partial(SpawnWorker, start_method)
+    elif start_method == 'threading':
+        return partial(ThreadingWorker, start_method)
     else:
         raise ValueError("Unknown start method: '{}'".format(start_method))
 
@@ -315,7 +334,8 @@ class WorkerPool:
             Shared objects is only passed on to the user function when it's not ``None``
         :param pass_worker_id: Whether to pass on a worker ID to the user function or not
         :param use_worker_state: Whether to let a worker have a worker state or not
-        :param start_method: What Process start method to use, see
+        :param start_method: What process start method to use. Options for multiprocessing: 'fork' (default),
+            'forkserver' and 'spawn'. For multithreading use 'threading'. See
             https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods for more information and
             https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods for some
             caveats when using the 'spawn' or 'forkserver' methods
@@ -577,7 +597,7 @@ class WorkerPool:
             # this problem we start a thread which waits for the tasks queue (including poison pills) to be empty. If
             # this thread isn't done that means that some tasks/poison pills are still there, meaning that there are
             # child processes which could/should be restarted, but aren't.
-            t = Thread(target=self._handle_tasks_done)
+            t = threading.Thread(target=self._handle_tasks_done)
             t.start()
             while True:
                 t.join(timeout=0.1)
@@ -611,7 +631,7 @@ class WorkerPool:
         # Create cleanup threads such that processes can get killed simultaneously, which can save quite some time
         threads = []
         for w in self._workers:
-            t = Thread(target=self._terminate_worker, args=(w,))
+            t = threading.Thread(target=self._terminate_worker, args=(w,))
             t.start()
             threads.append(t)
 
