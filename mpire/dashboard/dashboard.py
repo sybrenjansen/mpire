@@ -101,7 +101,7 @@ def start_dashboard(connect: bool = False, manager_host: Optional[str] = None, m
 
             # Set connection variables so we can connect to the right manager
             if connect:
-                DASHBOARD_MANAGER_HOST.value = manager_host.encode()
+                DASHBOARD_MANAGER_HOST.value = (manager_host or '').encode()
                 DASHBOARD_MANAGER_PORT.value = manager_port_nr
                 DASHBOARD_STARTED_EVENT.set()
 
@@ -134,13 +134,12 @@ def _run(started: Event, dashboard_port_nr: Value) \
     :param dashboard_port_nr: Value object for storing the dashboad port number that is used
     """
     # Connect to manager from this process
-    global _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
+    global _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _server
     _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _ = get_manager_client_dicts()
 
     # Try different ports, until a free one is found
-    for port in range(8080, 8999):
+    for port in range(8080, 8099):
         try:
-            global _server
             _server = make_server('0.0.0.0', port, app)
             dashboard_port_nr.value = port
             started.set()
@@ -150,6 +149,9 @@ def _run(started: Event, dashboard_port_nr: Value) \
         except OSError as exc:
             if exc.errno != errno.EADDRINUSE:
                 raise exc
+
+    if not _server:
+        raise OSError("All ports (8080-8099) are in use")
 
 
 @atexit.register

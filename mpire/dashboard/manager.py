@@ -45,7 +45,7 @@ def start_manager_server() -> SyncManager:
 
     :return: SyncManager
     """
-    for port_nr in range(8080, 8999):
+    for port_nr in reversed(range(8080, 8099)):
         try:
             # If a port is already occupied the SyncManager process will spit out EOFError and OSError messages. The
             # former can be catched, but the latter will still show up. So we first check if a port is available
@@ -71,7 +71,7 @@ def start_manager_server() -> SyncManager:
             # Port is occupied, ignore it and try another
             pass
 
-    raise OSError("All ports (8080-8999) are in use")
+    raise OSError("All ports (8080-8099) are in use")
 
 
 def get_manager_client_dicts() -> Tuple[BaseProxy, BaseProxy, BaseProxy]:

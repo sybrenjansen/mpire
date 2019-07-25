@@ -1,5 +1,7 @@
 import getpass
 import inspect
+from unittest.mock import MagicMock
+
 import socket
 from typing import Callable, Dict, List, Union
 
@@ -40,11 +42,21 @@ def get_function_details(func_pointer: Callable) -> Dict[str, Union[str, int]]:
     invoked_line_no = invoked_frame.lineno - (len(code_context) - 1)
     code_context = ' '.join(line.strip() for line in code_context)
 
+    # Inspect function. In the case the function is a MagicMock (i.e., in unit tests) these inspections will fail
+    if isinstance(func_pointer, MagicMock):
+        function_filename = 'n/a'
+        function_line_no = 'n/a'
+        function_name = 'n/a'
+    else:
+        function_filename = inspect.getabsfile(func_pointer)
+        function_line_no = func_pointer.__code__.co_firstlineno
+        function_name = func_pointer.__name__
+
     # Populate details
     func_details = {'user': '{}@{}'.format(getpass.getuser(), socket.gethostname()),
-                    'function_filename': inspect.getabsfile(func_pointer),
-                    'function_line_no': func_pointer.__code__.co_firstlineno,
-                    'function_name': func_pointer.__name__,
+                    'function_filename': function_filename,
+                    'function_line_no': function_line_no,
+                    'function_name': function_name,
                     'invoked_filename': invoked_frame.filename,
                     'invoked_line_no': invoked_line_no,
                     'invoked_code_context': code_context}
