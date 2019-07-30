@@ -11,7 +11,7 @@ from typing import Dict, Optional, Union
 from flask import escape, Flask, jsonify, render_template, request
 from werkzeug.serving import make_server
 
-from mpire.signal import DisableSignal
+from mpire.signal import DisableKeyboardInterruptSignal
 from mpire.dashboard.manager import (DASHBOARD_MANAGER_HOST, DASHBOARD_MANAGER_PORT,
                                      get_manager_client_dicts, start_manager_server)
 
@@ -97,7 +97,7 @@ def start_dashboard(connect: bool = False, manager_host: Optional[str] = None, m
     if not DASHBOARD_STARTED_EVENT.is_set():
 
         # Prevent signal from propagating to child process
-        with DisableSignal():
+        with DisableKeyboardInterruptSignal():
 
             # Set connection variables so we can connect to the right manager
             if connect:
@@ -125,8 +125,7 @@ def start_dashboard(connect: bool = False, manager_host: Optional[str] = None, m
         raise RuntimeError("You already have a running dashboard")
 
 
-def _run(started: Event, dashboard_port_nr: Value) \
-        -> None:
+def _run(started: Event, dashboard_port_nr: Value) -> None:
     """
     Starts a dashboard server
 

@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from mpire.dashboard.manager import get_manager_client_dicts
 from mpire.dashboard.utils import get_function_details
-from mpire.signal import DisableSignal
+from mpire.signal import DisableKeyboardInterruptSignal
 
 # If a user has not installed the dashboard dependencies than the imports below will fail
 try:
@@ -50,7 +50,7 @@ class ProgressBarHandler:
         if self.progress_bar is not None:
 
             # Disable the interrupt signal. We let the process die gracefully
-            with DisableSignal():
+            with DisableKeyboardInterruptSignal():
 
                 # We start a new process because updating the progress bar in a thread can slow down processing of
                 # results and can fail to show real-time updates
@@ -96,10 +96,7 @@ class ProgressBarHandler:
             # Register progress bar to dashboard in case a dashboard is started after the progress bar was created
             self._register_progress_bar()
 
-            # Update progress bar. Note that we also update a separate counter which is used to check if the progress
-            # bar is completed. I realize that tqdm has a public variable `n` which should keep track of the current
-            # progress, but for some reason that variable doesn't work here, it equals the `total` variable all the
-            # time.
+            # Update progress bar
             self.progress_bar.update(1)
             self.task_completed_queue.task_done()
 
@@ -121,7 +118,7 @@ class ProgressBarHandler:
         """
         if self.progress_bar_id is None and DASHBOARD_STARTED_EVENT is not None and DASHBOARD_STARTED_EVENT.is_set():
 
-            # Import only when needed
+            # Connect to manager server
             self.dashboard_dict, self.dashboard_details_dict, dashboard_tqdm_lock = get_manager_client_dicts()
 
             # Register new progress bar
@@ -180,10 +177,10 @@ class ProgressBarHandler:
                 "percentage": n / total,
                 "duration": str(now - self.start_t).rsplit('.', 1)[0],
                 "remaining": (str(timedelta(seconds=remaining_time)).rsplit('.', 1)[0]
-                              if remaining_time is not None else '-'),
+                              if remaining_time is not None else ''),
                 "started_raw": self.start_t,
                 "started": self.start_t.strftime(DATETIME_FORMAT),
                 "finished_raw": now + timedelta(seconds=remaining_time) if remaining_time is not None else None,
                 "finished": ((now + timedelta(seconds=remaining_time)).strftime(DATETIME_FORMAT)
-                             if remaining_time is not None else '-'),
+                             if remaining_time is not None else ''),
                 "traceback": traceback_str}

@@ -1,4 +1,4 @@
-from signal import getsignal, SIG_IGN, SIGINT, signal as signal_, Signals
+from signal import getsignal, SIG_IGN, SIGINT, signal as signal_
 
 
 class DelayedKeyboardInterrupt(object):
@@ -26,19 +26,13 @@ class DelayedKeyboardInterrupt(object):
                 self.old_handler(*self.signal_received)
 
 
-class DisableSignal:
-
-    def __init__(self, signal: Signals = SIGINT):
-        """
-        :param signal: signal to suppress
-        """
-        self.signal = signal
+class DisableKeyboardInterruptSignal:
 
     def __enter__(self):
         # Prevent signal from propagating to child process
-        self._handler = getsignal(self.signal)
-        signal_(self.signal, SIG_IGN)
+        self._handler = getsignal(SIGINT)
+        signal_(SIGINT, SIG_IGN)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         # Restore signal
-        signal_(self.signal, self._handler)
+        signal_(SIGINT, self._handler)
