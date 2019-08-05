@@ -1,5 +1,6 @@
 import getpass
 import inspect
+from functools import partial
 from unittest.mock import MagicMock
 
 import socket
@@ -41,6 +42,10 @@ def get_function_details(func_pointer: Callable) -> Dict[str, Union[str, int]]:
     code_context = find_calling_lines(code_context)
     invoked_line_no = invoked_frame.lineno - (len(code_context) - 1)
     code_context = ' '.join(line.strip() for line in code_context)
+
+    # If we're dealing with a partial, obtain the function within
+    if isinstance(func_pointer, partial):
+        func_pointer = func_pointer.func
 
     # Inspect function. In the case the function is a MagicMock (i.e., in unit tests) these inspections will fail
     if isinstance(func_pointer, MagicMock):
