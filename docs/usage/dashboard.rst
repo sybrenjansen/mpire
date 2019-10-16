@@ -69,13 +69,14 @@ If you have started a dashboard elsewhere, you can connect to it using:
 
 .. code-block:: python
 
-    from mpire.dashboard import start_dashboard
+    from mpire.dashboard import connect_to_dashboard
 
-    start_dashboard(connect=True, manager_host='localhost', manager_port_nr=8081)
+    connect_to_dashboard(manager_port_nr=8081, manager_host='localhost')
 
 Make sure you use the ``manager_port_nr``, not the ``dashboard_port_nr`` in the examples above.
 
-You can connect to an existing dashboard on the same, but also on a remote machine (if the ports are open).
+You can connect to an existing dashboard on the same, but also on a remote machine (if the ports are open). If
+``manager_host`` is omitted it will fall back to using ``'localhost'``.
 
 
 Using the dashboard
@@ -83,9 +84,33 @@ Using the dashboard
 
 When you have connected to a dashboard you don't need to change anything to your code. When you have enabled the use of
 a progress bar in your ``map`` call the progress bar will automatically register itself to the dashboard server and show
-up.
+up, like here:
 
-You can click on a progress bar row to view details about the function that is called. It will also show the traceback
-information in case of an exception or let you know when a ``KeyboardInterrupt`` signal was send to the running process.
+.. code-block:: python
 
-The dashboard will update every 0.5 seconds.
+    from mpire.dashboard import connect_to_dashboard
+
+    connect_to_dashboard(8099)
+
+    with WorkerPool(4):
+        pool.map(square, range(10000), progress_bar=True)
+
+This will show something like:
+
+.. thumbnail:: mpire_dashboard.png
+    :title: MPIRE dashboard
+
+You can click on a progress bar row to view details about the function that is called (which has already been done in
+the screenshot above).
+
+It will let you know when a ``KeyboardInterrupt`` signal was send to the running process:
+
+.. thumbnail:: mpire_dashboard_keyboard_interrupt.png
+    :title: MPIRE dashboard - KeyboardInterrupt has been raised
+
+or show the traceback information in case of an exception:
+
+.. thumbnail:: mpire_dashboard_error.png
+    :title: MPIRE dashboard - Error traceback
+
+The dashboard will update automatically every 0.5 seconds.

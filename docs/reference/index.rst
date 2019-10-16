@@ -1,6 +1,9 @@
 API Reference
 =============
 
+.. contents:: Contents
+    :local:
+
 WorkerPool
 ----------
 .. autoclass:: mpire.WorkerPool
@@ -21,3 +24,5 @@ Converting iterable of arguments
 Dashboard
 ---------
 .. autofunction:: mpire.dashboard.start_dashboard
+
+.. autofunction:: mpire.dashboard.connect_to_dashboard

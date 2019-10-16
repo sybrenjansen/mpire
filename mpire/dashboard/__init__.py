@@ -1,1 +1,1 @@
-from mpire.dashboard.dashboard import start_dashboard
+from mpire.dashboard.dashboard import connect_to_dashboard, start_dashboard

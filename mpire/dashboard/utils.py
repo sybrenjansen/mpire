@@ -1,7 +1,6 @@
 import getpass
 import inspect
 from functools import partial
-from unittest.mock import MagicMock
 
 import socket
 from typing import Callable, Dict, List, Union
@@ -47,15 +46,16 @@ def get_function_details(func_pointer: Callable) -> Dict[str, Union[str, int]]:
     if isinstance(func_pointer, partial):
         func_pointer = func_pointer.func
 
-    # Inspect function. In the case the function is a MagicMock (i.e., in unit tests) these inspections will fail
-    if isinstance(func_pointer, MagicMock):
-        function_filename = 'n/a'
-        function_line_no = 'n/a'
-        function_name = 'n/a'
-    else:
+    # We use a try/except block as some constructs don't allow this. E.g., in the case the function is a MagicMock
+    # (i.e., in unit tests) these inspections will fail
+    try:
         function_filename = inspect.getabsfile(func_pointer)
         function_line_no = func_pointer.__code__.co_firstlineno
         function_name = func_pointer.__name__
+    except:
+        function_filename = 'n/a'
+        function_line_no = 'n/a'
+        function_name = 'n/a'
 
     # Populate details
     func_details = {'user': '{}@{}'.format(getpass.getuser(), socket.gethostname()),

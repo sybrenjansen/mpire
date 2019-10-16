@@ -80,17 +80,11 @@ def progress_bar_new() -> str:
                                                     **{k: escape(v) for k, v in progress_bar_details.items()}))
 
 
-def start_dashboard(connect: bool = False, manager_host: Optional[str] = None, manager_port_nr: Optional[int] = None) \
-        -> Optional[Dict[str, Union[int, str]]]:
+def start_dashboard() -> Dict[str, Union[int, str]]:
     """
-    Starts a new or connects to an existing MPIRE dashboard
+    Starts a new MPIRE dashboard
 
-    :param connect: whether to connect to an existing dashboard or start a new one
-    :param manager_host: host to use when connecting to a manager. If ``None`` it will use localhost
-    :param manager_port_nr: port to use when connecting to a manager. If ``None`` and ``connect=True`` it will raise an 
-        error
-    :return: when ``connect=False`` a dictionary containing the dashboard port number and manager host and port_nr
-        being used
+    :return: a dictionary containing the dashboard port number and manager host and port_nr being used
     """
     global _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
 
@@ -99,30 +93,41 @@ def start_dashboard(connect: bool = False, manager_host: Optional[str] = None, m
         # Prevent signal from propagating to child process
         with DisableKeyboardInterruptSignal():
 
-            # Set connection variables so we can connect to the right manager
-            if connect:
-                DASHBOARD_MANAGER_HOST.value = (manager_host or '').encode()
-                DASHBOARD_MANAGER_PORT.value = manager_port_nr
-                DASHBOARD_STARTED_EVENT.set()
-
             # Set up manager server
-            else:
-                _DASHBOARD_MANAGER = start_manager_server()
+            _DASHBOARD_MANAGER = start_manager_server()
 
-                # Start flask server
-                logging.getLogger('werkzeug').setLevel(logging.WARN)
-                dashboard_port_nr = Value('i', 0, lock=False)
-                Process(target=_run, args=(DASHBOARD_STARTED_EVENT, dashboard_port_nr),
-                        daemon=True, name='dashboard-process').start()
-                DASHBOARD_STARTED_EVENT.wait()
+            # Start flask server
+            logging.getLogger('werkzeug').setLevel(logging.WARN)
+            dashboard_port_nr = Value('i', 0, lock=False)
+            Process(target=_run, args=(DASHBOARD_STARTED_EVENT, dashboard_port_nr),
+                    daemon=True, name='dashboard-process').start()
+            DASHBOARD_STARTED_EVENT.wait()
 
-                # Return connect information
-                return {'dashboard_port_nr': dashboard_port_nr.value,
-                        'manager_host': DASHBOARD_MANAGER_HOST.value.decode() or socket.gethostname(),
-                        'manager_port_nr': DASHBOARD_MANAGER_PORT.value}
+            # Return connect information
+            return {'dashboard_port_nr': dashboard_port_nr.value,
+                    'manager_host': DASHBOARD_MANAGER_HOST.value.decode() or socket.gethostname(),
+                    'manager_port_nr': DASHBOARD_MANAGER_PORT.value}
 
     else:
         raise RuntimeError("You already have a running dashboard")
+
+
+def connect_to_dashboard(manager_port_nr: int, manager_host: Optional[str] = None) -> None:
+    """
+    Connects to an existing MPIRE dashboard
+
+    :param manager_port_nr: port to use when connecting to a manager
+    :param manager_host: host to use when connecting to a manager. If ``None`` it will use localhost
+    """
+    global _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
+
+    if not DASHBOARD_STARTED_EVENT.is_set():
+        # Set connection variables so we can connect to the right manager
+        DASHBOARD_MANAGER_HOST.value = (manager_host or '').encode()
+        DASHBOARD_MANAGER_PORT.value = manager_port_nr
+        DASHBOARD_STARTED_EVENT.set()
+    else:
+        raise RuntimeError("You're already connected to a running dashboard")
 
 
 def _run(started: Event, dashboard_port_nr: Value) -> None:

@@ -163,7 +163,8 @@ that comes with it. However, in some cases you can safely disable locking, as is
     # 2, Use a shared array of size 100 and type float to store the results
     square_results_container = Array('f', 100, lock=False)
     add_results_container = Array('f', 100, lock=False)
-    with WorkerPool(n_jobs=4, shared_objects=(square_results_container, add_results_container)) as pool:
+    with WorkerPool(n_jobs=4,
+                    shared_objects=(square_results_container, add_results_container)) as pool:
 
         # Square, add and modulo the results and store them in the results containers
         modulo_results = pool.map(square_add_and_modulo_with_index,
@@ -284,7 +285,7 @@ contexts, please refer to the multiprocessing documentation_ and caveats_ sectio
 - ``'spawn'`` starts a fresh python interpreter where only those resources necessary are inherited.
 - ``'forkserver'`` first starts a server process. Whenever a new process is needed the parent process requests the
   server to fork a new process.
-- ``'threading'`` starts child threads
+- ``'threading'`` starts child threads.
 
 The ``'spawn'`` and ``'forkserver'`` methods have some caveats_. All resources needed for running the child process
 should be picklable. This can sometimes be a hassle when you heavily rely on lambdas or are trying to run MPIRE in an
