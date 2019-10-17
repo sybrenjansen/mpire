@@ -4,15 +4,22 @@ from typing import Any, Callable, Dict, Optional
 
 from tqdm import tqdm
 
-from mpire.dashboard.manager import get_manager_client_dicts
-from mpire.dashboard.utils import get_function_details
 from mpire.signal import DisableKeyboardInterruptSignal
+from mpire.worker import mp
 
 # If a user has not installed the dashboard dependencies than the imports below will fail
 try:
     from mpire.dashboard.dashboard import DASHBOARD_STARTED_EVENT
+    from mpire.dashboard.utils import get_function_details
+    from mpire.dashboard.manager import get_manager_client_dicts
 except ImportError:
     DASHBOARD_STARTED_EVENT = None
+
+    def get_function_details(_):
+        pass
+
+    def get_manager_client_dicts():
+        raise NotImplementedError
 
 DATETIME_FORMAT = "%Y-%m-%d, %H:%M:%S"
 
@@ -36,6 +43,7 @@ class ProgressBarHandler:
         self.function_details = get_function_details(func_pointer) if progress_bar else None
 
         self.process = None
+        self.progress_bar_n = mp.Value('i', 0, lock=False)
         self.progress_bar_id = None
         self.dashboard_dict = None
         self.dashboard_details_dict = None
@@ -54,7 +62,7 @@ class ProgressBarHandler:
 
                 # We start a new process because updating the progress bar in a thread can slow down processing of
                 # results and can fail to show real-time updates
-                self.process = Process(target=self._progress_bar_handler)
+                self.process = Process(target=self._progress_bar_handler, args=(self.progress_bar_n,))
                 self.process.start()
 
         return self
@@ -68,11 +76,15 @@ class ProgressBarHandler:
             # Insert poison pill and close the progress bar and its handling process
             self.task_completed_queue.put(None)
             self.process.join()
+            self.progress_bar.n = self.progress_bar_n.value
+            self.progress_bar.refresh()
             self.progress_bar.close()
 
-    def _progress_bar_handler(self) -> None:
+    def _progress_bar_handler(self, progress_bar_n: mp.Value) -> None:
         """
         Keeps track of the progress made by the workers and updates the progress bar accordingly
+
+        :param progress_bar_n: multiprocessing Value instance for setting the latest progress bar progress value
         """
         # Register progress bar to dashboard in case a dashboard is started
         self._register_progress_bar()
@@ -86,6 +98,7 @@ class ProgressBarHandler:
             if task_completed is None:
                 self.task_completed_queue.task_done()
                 self.progress_bar.refresh()
+                progress_bar_n.value = self.progress_bar.n
 
                 # If, at this point, the progress bar is not at 100% it means we had a failure. We send the failure to
                 # the dashboard in the case a dashboard is started

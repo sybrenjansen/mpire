@@ -17,13 +17,6 @@ from mpire.signal import DelayedKeyboardInterrupt, DisableKeyboardInterruptSigna
 from mpire.utils import apply_numpy_chunking, chunk_tasks
 from mpire.worker import MP_CONTEXTS, worker_factory, mp
 
-# If multiprocess is installed we want to use that as it has more capabilities than regular multiprocessing (e.g.,
-# pickling lambdas en functions located in __main__)
-try:
-    import multiprocess as mp
-except ImportError:
-    import multiprocessing as mp
-
 
 # Typedefs
 CPUList = Optional[List[Union[int, List[int]]]]
@@ -89,8 +82,8 @@ class WorkerPool:
         self._exception_lock = self.ctx.Lock()
         self._exception_thrown = self.ctx.Event()
 
-        # Boolean flag to inform the child processes to keep order in mind (for the map functions)
-        self._keep_order = False
+        # Whether or not to inform the child processes to keep order in mind (for the map functions)
+        self._keep_order = mp.Event()
 
         # Container of the child processes
         self._workers = []
@@ -214,6 +207,7 @@ class WorkerPool:
         self._results_queue = self.ctx.JoinableQueue()
         self._worker_done_array = self.ctx.Array('b', self.n_jobs, lock=False)
         self._exception_queue = self.ctx.JoinableQueue()
+        self._exception_thrown.clear()
         self.exception_caught.clear()
         for worker_id in range(self.n_jobs):
             self._workers.append(self._start_worker(worker_id))
@@ -243,7 +237,7 @@ class WorkerPool:
             # Create worker
             w = self.Worker(worker_id, self._tasks_queue, self._results_queue, self._worker_done_array,
                             self._task_completed_queue, self._exception_queue, self._exception_lock,
-                            self._exception_thrown, self.func_pointer, self._keep_order, self.shared_objects,
+                            self._exception_thrown, self.func_pointer, self._keep_order.is_set(), self.shared_objects,
                             self.worker_lifespan, self.pass_worker_id, self.use_worker_state)
             w.daemon = self.daemon
             w.start()
@@ -264,14 +258,16 @@ class WorkerPool:
         with DelayedKeyboardInterrupt():
             self._tasks_queue.put(args, block=True)
 
-    def get_result(self) -> Any:
+    def get_result(self, block: bool = True, timeout: Optional[float] = None) -> Any:
         """
         Obtain the next result from the results queue.
 
+        :param block: whether to block (wait for results) or not
+        :param timeout: how long to wait for results in case ``block==True``
         :return: The next result from the queue, which is the result of calling the function pointer.
         """
         with DelayedKeyboardInterrupt():
-            results = self._results_queue.get(block=True)
+            results = self._results_queue.get(block=block, timeout=timeout)
             self._results_queue.task_done()
         return results
 
@@ -467,7 +463,7 @@ class WorkerPool:
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
-        self._keep_order = True
+        self._keep_order.set()
 
         # If we're dealing with numpy arrays, we have to chunk them here already
         if isinstance(iterable_of_args, np.ndarray):
@@ -483,7 +479,7 @@ class WorkerPool:
                                      progress_bar)
 
         # Notify workers to forget about order
-        self._keep_order = False
+        self._keep_order.clear()
 
         # Rearrange and return
         sorted_results = [result[1] for result in sorted(results, key=lambda result: result[0])]
@@ -556,7 +552,7 @@ class WorkerPool:
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
-        self._keep_order = True
+        self._keep_order.set()
 
         # If we're dealing with numpy arrays, we have to chunk them here already
         if isinstance(iterable_of_args, np.ndarray):
@@ -595,7 +591,7 @@ class WorkerPool:
             yield tmp_results.pop(result_idx)
 
         # Notify workers to forget about order
-        self._keep_order = False
+        self._keep_order.clear()
 
     def imap_unordered(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
                        iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
@@ -648,7 +644,7 @@ class WorkerPool:
         # Create exception and progress bar handlers. The exception handler will receive any exceptions thrown by the
         # workers, terminates everything and re-raise an exceptoin in the main process. The progress bar handler will
         # receive updates from the workers and updates the progress bar accordingly
-        with ExceptionHandler(self.terminate, self._exception_queue, self.exception_caught,
+        with ExceptionHandler(self.terminate, self._exception_queue, self.exception_caught, self._keep_order,
                               progress_bar is not None) as exception_handler, \
              ProgressBarHandler(func_pointer, progress_bar, self._task_completed_queue, self._exception_queue,
                                 self.exception_caught):
@@ -684,10 +680,7 @@ class WorkerPool:
 
                     # Check if new results are available, but don't wait for it
                     try:
-                        with DelayedKeyboardInterrupt():
-                            results = self._results_queue.get(block=False)
-                            self._results_queue.task_done()
-                        yield from results
+                        yield from self.get_result(block=False)
                         n_active -= 1
                     except queue.Empty:
                         pass
@@ -698,10 +691,7 @@ class WorkerPool:
             # Obtain the results not yet obtained
             while not self.exception_caught.is_set() and n_active != 0:
                 try:
-                    with DelayedKeyboardInterrupt():
-                        results = self._results_queue.get(block=True, timeout=0.1)
-                        self._results_queue.task_done()
-                    yield from results
+                    yield from self.get_result(block=True, timeout=0.1)
                     n_active -= 1
                 except queue.Empty:
                     pass
@@ -791,9 +781,11 @@ class WorkerPool:
         if progress_bar is True or isinstance(progress_bar, tqdm):
             progress_bar = progress_bar if isinstance(progress_bar, tqdm) else tqdm(total=n_tasks)
             self._task_completed_queue = self.ctx.JoinableQueue()
-        else:
+        elif progress_bar is False:
             progress_bar = None
             self._task_completed_queue = None
+        else:
+            raise TypeError("Invalid progress bar class provided")
 
         return n_tasks, chunk_size, progress_bar
 

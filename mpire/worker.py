@@ -1,5 +1,4 @@
 import collections
-import pickle
 import queue
 import signal
 import traceback
@@ -15,8 +14,10 @@ from mpire.exception import CannotPickleExceptionError, StopWorker
 # pickling lambdas en functions located in __main__)
 try:
     import multiprocess as mp
+    import dill as pickle
 except ImportError:
     import multiprocessing as mp
+    import pickle
 
 
 class AbstractWorker:
