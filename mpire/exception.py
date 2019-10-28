@@ -87,7 +87,7 @@ class ExceptionHandler:
         """
         if self.exception_caught.is_set():
 
-            # Clear keep order event
+            # Clear keep order event so we can safely reuse the WorkerPool and use (i)map_unordered after an (i)map call
             self.keep_order.clear()
 
             with DelayedKeyboardInterrupt():

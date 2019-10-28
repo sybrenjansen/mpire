@@ -581,7 +581,6 @@ class ExceptionTest(unittest.TestCase):
                     list(pool.imap_unordered(self._square_raises_on_idx, self.test_data,
                                              max_tasks_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                              progress_bar=progress_bar))
-                break
 
     @staticmethod
     def _square_raises(_, x):
