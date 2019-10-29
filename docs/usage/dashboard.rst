@@ -92,7 +92,7 @@ up, like here:
 
     connect_to_dashboard(8099)
 
-    with WorkerPool(4):
+    with WorkerPool(4) as pool:
         pool.map(square, range(10000), progress_bar=True)
 
 This will show something like:

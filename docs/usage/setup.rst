@@ -101,15 +101,15 @@ parameter in the constructor:
         ...
 
     # All child processes have to share a single core:
-    with WorkerPool(n_jobs=4, cpu_ids=[0]):
+    with WorkerPool(n_jobs=4, cpu_ids=[0]) as pool:
         ...
 
     # All child processes have to share multiple cores, namely 4-7:
-    with WorkerPool(n_jobs=4, cpu_ids=[[4, 5, 6, 7]]):
+    with WorkerPool(n_jobs=4, cpu_ids=[[4, 5, 6, 7]]) as pool:
         ...
 
     # Each child process can use two distinctive cores:
-    with WorkerPool(n_jobs=4, cpu_ids=[[0, 1], [2, 3], [4, 5], [6, 7]]):
+    with WorkerPool(n_jobs=4, cpu_ids=[[0, 1], [2, 3], [4, 5], [6, 7]]) as pool:
         ...
 
 CPU IDs have to be positive integers, not exceeding the number of CPUs available (which can be retrieved by using
