@@ -4,7 +4,7 @@ Changelog
 1.0.0
 -----
 
-*(2019-10-29)**
+*(2019-10-29)*
 
 * Added the MPIRE dashboard
 * Added ``threading`` as a possible backend
