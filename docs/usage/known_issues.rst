@@ -56,3 +56,16 @@ This will work just fine. See the unittest_ documentation for more information.
 
 .. _caveats: https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods
 .. _unittest: https://docs.python.org/3.4/library/unittest.html#command-line-interface
+
+
+Unpicklable tasks/results
+-------------------------
+
+Sometimes you can encounter deadlocks in your code when using MPIRE. When you encounter this, it could well be that some
+tasks or results from your script can't be pickled. MPIRE makes use of multiprocessing queues for inter-process
+communication and if your function returns unpicklable results the queue will unfortunately deadlock.
+
+The only way I could remedy this problem in MPIRE would be to manually pickle objects before sending it to a queue and
+quit gracefully when encountering a pickle error. However, this would mean objects would always be pickled twice. This
+would add a heavy performance penalty and is therefore not an acceptable solution. Instead, the user should make sure
+their tasks and results are always picklable (which in most cases won't be a problem).
