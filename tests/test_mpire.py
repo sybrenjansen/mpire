@@ -533,6 +533,7 @@ class StartMethodTest(unittest.TestCase):
                  WorkerPool(n_jobs, start_method=start_method) as pool:
                 self.assertListEqual(pool.map(square, self.test_data), self.test_desired_output)
 
+
 class ExceptionTest(unittest.TestCase):
 
     def setUp(self):

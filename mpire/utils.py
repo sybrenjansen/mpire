@@ -1,7 +1,7 @@
 import itertools
 import math
 from multiprocessing import cpu_count
-from typing import Generator, Iterable, List, Optional, Tuple, Union, Any
+from typing import Generator, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -66,9 +66,9 @@ def chunk_tasks(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Opt
         n_elements_returned += len(chunk)
 
 
-def apply_numpy_chunking(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int],
-                         chunk_size: Optional[int], n_splits: Optional[int], n_jobs: Optional[int]) \
-        -> Tuple[Iterable, int, int, None]:
+def apply_numpy_chunking(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int] = None,
+                         chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
+                         n_jobs: Optional[int] = None) -> Tuple[Iterable, int, int, None]:
     """
     If we're dealing with numpy arrays, chunk them using numpy slicing and return changed map parameters
 
@@ -82,9 +82,11 @@ def apply_numpy_chunking(iterable_of_args: Union[Iterable, np.ndarray], iterable
     :param n_jobs: Number of workers to spawn. If ``None``, will use ``cpu_count()``.
     :return: Chunked ``iterable_of_args`` with updated ``iterable_len``, ``chunk_size`` and ``n_splits``
     """
+    if iterable_len is not None:
+        iterable_of_args = iterable_of_args[:iterable_len]
     iterable_len = get_n_chunks(iterable_of_args, iterable_len, chunk_size, n_splits, n_jobs)
     iterable_of_args = make_single_arguments(chunk_tasks(iterable_of_args, len(iterable_of_args), chunk_size,
-                                                         n_splits or n_jobs * 4))
+                                                         n_splits or (n_jobs * 4 if n_jobs is not None else None)))
     chunk_size = 1
     n_splits = None
 
