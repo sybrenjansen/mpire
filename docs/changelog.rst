@@ -1,6 +1,17 @@
 Changelog
 =========
 
+1.0.0
+-----
+
+*(2019-10-29)**
+
+* Added the MPIRE dashboard
+* Added ``threading`` as a possible backend
+* Progress bar handling now occurs in a separate process, instead of a thread, to improve responsiveness
+* Refactoring of code and small bug fixes in error handling
+* Removed deprecated functionality
+
 0.9.0
 -----
 

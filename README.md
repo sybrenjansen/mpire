@@ -9,13 +9,17 @@ Features
 
 - Multiprocessing with map/map_unordered/imap/imap_unordered functions
 - Easy use of copy-on-write shared objects with a pool of workers
-- Automatic task chunking for all available map functions to speed up processing of small task queues
-- Functions are only pickled once for each worker
+- Each worker can have its own state (e.g., to load a memory-intensive model only once for each worker without the
+  need of sending it through a queue)
+- Automatic task chunking for all available map functions to speed up processing of small task queues (including numpy
+  arrays)
 - Adjustable maximum number of active tasks to avoid memory problems
 - Automatic restarting of workers after a specified number of tasks to reduce memory footprint
 - Nested pool of workers are allowed when setting the ``daemon`` option
-- Child processes can be pinned to specific CPUs on Linux systems
-- Progress bar support
+- Child processes can be pinned to specific or a range of CPUs on Linux systems
+- Progress bar support using tqdm_
+- Progress dashboard support
+- (Optional) dill_ support
 
 Installation
 ------------
@@ -23,7 +27,7 @@ Installation
 Through pip (localshop):
 
 ```
-pip install mpire -i http://localshop.priv.tgho.nl/repo/tgho --trusted-host localshop.priv.tgho.nl
+pip install mpire -i http://localshop.tgho.nl/repo/tgho --trusted-host localshop.tgho.nl
 ```
 
 From source:

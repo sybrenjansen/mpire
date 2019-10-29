@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="utf-8" />
+	<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+
+	<title>MPIRE</title>
+
+	<link rel="stylesheet" href="{{ url_for('static', filename='bootstrap.min.css') }}" />
+	<link rel="stylesheet" href="{{ url_for('static', filename='glyphicons.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"/>
+
+    <script type="text/javascript">
+        $SCRIPT_ROOT = {{ request.script_root|tojson|safe }};
+    </script>
+    <script src="{{ url_for('static', filename='jquery.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='jquery-ui.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='bootstrap.bundle.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='refresh.js') }}"></script>
+</head>
+
+<body>
+
+{% include 'menu_top_right.html' %}
+
+<h1>MPIRE
+    <span class="username" title="Listening on {{ manager_host }}:{{ manager_port_nr }}"><span class="username_brackets">[</span>{{ username }}<span class="username_at">@</span>{{ hostname }}<span class="username_brackets">]</span></span>
+</h1>
+
+<table id="progress-table" class="table table-dark table-hover small">
+    <thead>
+        <tr>
+            <th width="3%">#</th>
+            <th width="9%">Tasks</th>
+            <th width="42%">Progress</th>
+            <th width="9%">Duration</th>
+            <th width="9%">Remaining</th>
+            <th width="14%">Started</th>
+            <th width="14%">Finished / ETA</th>
+        </tr>
+    </thead>
+    <tbody>
+    </tbody>
+</table>
+
+{% include 'mpire.html' %}
+
+</body>
+
+</html>

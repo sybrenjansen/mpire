@@ -1,0 +1,109 @@
+body {
+    margin: 40px;
+}
+
+h1 {
+    margin-bottom: 40px;
+}
+
+h1 .username {
+    font-size: 0.4em;
+    vertical-align: middle;
+    cursor: help;
+}
+
+h1 .username_brackets {
+    margin-left: 0.3em;
+    margin-right: 0.3em;
+    color: rgb(0, 255, 255);
+}
+
+h1 .username_at {
+    margin-left: 0.1em;
+    margin-right: 0.1em;
+}
+
+#menu-top-right {
+    float: right;
+}
+
+#menu-top-right > div,
+#menu-top-right > a {
+    display: inline-block;
+    margin-left: 10px;
+}
+
+.mpire {
+    position: fixed;
+    bottom: 0;
+    right: 40px;
+    z-index: -99;
+    font-size: 60%;
+    color: #6c757d;
+}
+
+.lightsaber {
+    color: #dc3545;
+}
+
+.pb_container {
+    width: 100%;
+    height: 18px;
+    border-radius: .25rem;
+    overflow: hidden;
+    background-color: #FFF;
+}
+
+.pb {
+    height: 100%;
+    background-color: #007bff;
+    text-align: center;
+}
+
+.clickable {
+    cursor: pointer;
+}
+
+td.pb_details {
+    padding: 0;
+    background-color: rgba(255, 255, 255, .025);
+}
+
+td.pb_details > div {
+    display: none;
+    padding: 12px;
+}
+
+.glyphicon {
+    display: none;
+}
+
+.pb_details_left_filler {
+    float: left;
+    width: 3%;
+    height: 1em;
+}
+
+.pb_details_right {
+    overflow: hidden;
+    margin-top: 6px;
+    padding-right: 2em;
+}
+
+code {
+    margin-left: 0.4em;
+    margin-right: 0.4em;
+    color: rgb(0, 255, 255);
+}
+
+p {
+    margin-bottom: 0.4em;
+}
+
+.traceback {
+    display: none;
+    color: rgb(255, 100, 100);
+    border-top: 1px dashed;
+    margin-top: 20px;
+    padding-top: 20px;
+}

@@ -1,0 +1,28 @@
+        <tr class="clickable" onclick="$('#pb_{id}_details').slideToggle(200);">
+            <td>{id}</td>
+            <td><span id="pb_{id}_n">-</span> / <span id="pb_{id}_total">-</span></td>
+            <td>
+                <div id="pb_{id}_container" class="pb_container">
+                    <div id="pb_{id}" class="pb" style="width: 0"></div>
+                </div>
+            </td>
+            <td><span id="pb_{id}_duration">-</span></td>
+            <td><span id="pb_{id}_flash" class="glyphicon glyphicon-flash text-danger"></span>
+                <span id="pb_{id}_remaining">-</span></td>
+            <td><span id="pb_{id}_started">-</span></td>
+            <td><span id="pb_{id}_finished">-</span></td>
+        </tr>
+        <tr >
+            <td colspan="7" class="pb_details">
+                <div id="pb_{id}_details">
+                    <div class="pb_details_left_filler"></div>
+                    <div class="pb_details_right">
+                        <p>Function: <code>{function_name}</code>, on line <code>{function_line_no}</code>
+                            of <code>{user}{function_filename}</code></p>
+                        <p>Invoked on line <code>{invoked_line_no}</code> of <code>{invoked_filename}</code>,
+                            through <code>{invoked_code_context}</code></p>
+                        <pre id="pb_{id}_traceback" class="traceback"></pre>
+                    </div>
+                </div>
+            </td>
+        </tr>

@@ -1,4 +1,6 @@
 include README.md
+recursive-include mpire/dashboard/static *.eot *.svg *.ttf *.woff *.woff2 *.js *.css
+recursive-include mpire/dashboard/templates *.html
 include requirements.txt
 include setup.cfg
 include MANIFEST.in
