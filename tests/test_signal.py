@@ -1,6 +1,7 @@
 import multiprocessing as mp
 import os
 import signal
+import time
 import unittest
 
 from mpire.signal import DelayedKeyboardInterrupt, DisableKeyboardInterruptSignal
@@ -38,10 +39,15 @@ class DelayedKeyboardInterruptTest(unittest.TestCase):
 
     @staticmethod
     def delayed_thread_job(started_event: mp.Event, quit_event: mp.Event, value: mp.Value):
+        """
+        Should not be affected by interrupt. Note that we introduce a time.sleep() here because the quit_event can be
+        set before the kill signal comes through
+        """
         try:
             with DelayedKeyboardInterrupt(in_thread=True):
                 started_event.set()
                 quit_event.wait()
+                time.sleep(60)
                 value.value = 1
         except KeyboardInterrupt:
             pass
@@ -49,7 +55,7 @@ class DelayedKeyboardInterruptTest(unittest.TestCase):
     @staticmethod
     def delayed_process_job(started_event: mp.Event, quit_event: mp.Event, value: mp.Value):
         """
-        Should be effected by interrupt
+        Should be affected by interrupt
         """
         try:
             with DelayedKeyboardInterrupt(in_thread=False):
