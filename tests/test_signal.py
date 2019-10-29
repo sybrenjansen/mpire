@@ -12,45 +12,26 @@ class DelayedKeyboardInterruptTest(unittest.TestCase):
     def test_delayed_keyboard_interrupt(self):
         """
         The process should delay the keyboard interrupt in case ``in_thread=False``, so the expected value should be 1.
-        However, we can't send signals to  threads and so the DelayedKeyboardInterrupt doesn't do anything in that case.
-        So there's no point in testing this with threading. We can test that it does nothing in a process though, so the
-        expected value should be 0 there.
+        However, we can't send signals to threads and so the DelayedKeyboardInterrupt doesn't do anything in that case.
+        So there's no point in testing this with threading
         """
-        for in_thread, function, expected_value in [(True, self.delayed_thread_job, 0),
-                                                    (False, self.delayed_process_job, 1)]:
+        # Create events so we know when the process has started and we can send an interrupt
+        started_event = mp.Event()
+        quit_event = mp.Event()
+        value = mp.Value('i', 0)
 
-            # Create events so we know when the process has started and we can send an interrupt
-            started_event = mp.Event()
-            quit_event = mp.Event()
-            value = mp.Value('i', 0)
+        # Start process and wait until it starts
+        p = mp.Process(target=self.delayed_process_job, args=(started_event, quit_event, value))
+        p.start()
+        started_event.wait()
 
-            # Start process and wait until it starts
-            p = mp.Process(target=function, args=(started_event, quit_event, value))
-            p.start()
-            started_event.wait()
+        # Send kill signal and wait for it to join
+        os.kill(p.pid, signal.SIGINT)
+        quit_event.set()
+        p.join()
 
-            # Send kill signal and wait for it to join
-            os.kill(p.pid, signal.SIGINT)
-            quit_event.set()
-            p.join()
-
-            # Verify expected value.
-            self.assertEqual(value.value, expected_value)
-
-    @staticmethod
-    def delayed_thread_job(started_event: mp.Event, quit_event: mp.Event, value: mp.Value):
-        """
-        Should not be affected by interrupt. Note that we introduce a time.sleep() here because the quit_event can be
-        set before the kill signal comes through
-        """
-        try:
-            with DelayedKeyboardInterrupt(in_thread=True):
-                started_event.set()
-                quit_event.wait()
-                time.sleep(60)
-                value.value = 1
-        except KeyboardInterrupt:
-            pass
+        # Verify expected value.
+        self.assertEqual(value.value, 1)
 
     @staticmethod
     def delayed_process_job(started_event: mp.Event, quit_event: mp.Event, value: mp.Value):
