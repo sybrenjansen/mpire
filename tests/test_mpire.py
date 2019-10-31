@@ -463,13 +463,12 @@ class ProgressBarTest(unittest.TestCase):
 
     def test_valid_progress_bars_regular_input(self):
         """
-        Valid progress bars are either False/True or custom tqdm instance with the `total` attribute filled in
+        Valid progress bars are either False/True
         """
         print()
-        for n_jobs, progress_bar in product([None, 1, 2], [True, tqdm(total=len(self.test_data)),
-                                                           tqdm(total=len(self.test_data), ascii=True)]):
+        for n_jobs, progress_bar in product([None, 1, 2], [True, False]):
 
-            with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar), WorkerPool(n_jobs=n_jobs) as pool:
+            with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs) as pool:
                 results_list = pool.map(square, self.test_data, progress_bar=progress_bar)
                 self.assertTrue(isinstance(results_list, list))
                 self.assertEqual(self.test_desired_output, results_list)
@@ -479,13 +478,7 @@ class ProgressBarTest(unittest.TestCase):
         Test with numpy, as that will change the number of tasks
         """
         print()
-        for n_jobs, progress_bar in product([None, 1, 2], [True, 1, 2]):
-
-            # Obtain progress bar. We create it here as it's dependent on n_jobs
-            progress_bar = {True: lambda: True,
-                            1: lambda: tqdm(total=get_n_chunks(self.test_data_numpy, n_jobs=n_jobs)),
-                            2: lambda: tqdm(total=get_n_chunks(self.test_data_numpy, n_jobs=n_jobs),
-                                            ascii=True)}.get(progress_bar)()
+        for n_jobs, progress_bar in product([None, 1, 2], [True, False]):
 
             # Should work just fine
             with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar), WorkerPool(n_jobs=n_jobs) as pool:
@@ -501,18 +494,19 @@ class ProgressBarTest(unittest.TestCase):
         with WorkerPool() as pool:
             self.assertListEqual(pool.map(square, [], progress_bar=True), [])
 
-    def test_invalid_progress_bars(self):
+    def test_invalid_progress_bar_position(self):
         """
-        When total is not provided or a completely different object is provided, it should raise
+        Test different values of progress_bar_position, which should be positive integer >= 0
         """
-        for progress_bar, error in [(tqdm(), ValueError), (WorkerPool(), TypeError)]:
-            with self.subTest(input='regular input', progress_bar=progress_bar), self.assertRaises(error), \
-                 WorkerPool(n_jobs=1) as pool:
-                pool.map(square, self.test_data, progress_bar=progress_bar)
+        for progress_bar_position, error in [(-1, ValueError), ('numero uno', TypeError)]:
+            with self.subTest(input='regular input', progress_bar_position=progress_bar_position), \
+                    self.assertRaises(error), WorkerPool(n_jobs=1) as pool:
+                pool.map(square, self.test_data, progress_bar=True, progress_bar_position=progress_bar_position)
 
-            with self.subTest(input='numpy input', progress_bar=progress_bar), self.assertRaises(error), \
-                 WorkerPool(n_jobs=1) as pool:
-                pool.map(square_numpy, self.test_data_numpy, progress_bar=progress_bar)
+            with self.subTest(input='numpy input', progress_bar_position=progress_bar_position), \
+                    self.assertRaises(error), WorkerPool(n_jobs=1) as pool:
+                pool.map(square_numpy, self.test_data_numpy, progress_bar=True,
+                         progress_bar_position=progress_bar_position)
 
 
 class StartMethodTest(unittest.TestCase):

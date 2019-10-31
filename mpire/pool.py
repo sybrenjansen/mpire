@@ -435,7 +435,7 @@ class WorkerPool:
     def map(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
             iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
             chunk_size: Optional[int] = None, n_splits: Optional[int] = None, worker_lifespan: Optional[int] = None,
-            progress_bar: Union[bool, tqdm] = False, concatenate_numpy_output: bool = True) -> Any:
+            progress_bar: bool = False, progress_bar_position: int = 0, concatenate_numpy_output: bool = True) -> Any:
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
@@ -457,8 +457,9 @@ class WorkerPool:
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
-        :param progress_bar: Boolean or ``tqdm`` instance. When ``True`` will display a default progress bar. Defaults
-            can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
+        :param progress_bar: Boolean. When ``True`` will display a progress bar
+        :param progress_bar_position: Int. Denotes the position (line nr) of the progress bar. This is useful wel using
+            multiple progress bars at the same time.
         :param concatenate_numpy_output: Boolean. When ``True`` it will concatenate numpy output to a single numpy array
         :return: List with ordered results
         """
@@ -476,7 +477,7 @@ class WorkerPool:
             iterable_len = len(iterable_of_args)
         results = self.map_unordered(func_pointer, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)),
                                      iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan,
-                                     progress_bar)
+                                     progress_bar, progress_bar_position)
 
         # Notify workers to forget about order
         self._keep_order.clear()
@@ -492,7 +493,8 @@ class WorkerPool:
     def map_unordered(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
                       iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                       chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
-                      worker_lifespan: Optional[int] = None, progress_bar: Union[bool, tqdm] = False) -> Any:
+                      worker_lifespan: Optional[int] = None, progress_bar: bool = False,
+                      progress_bar_position: int = 0) -> Any:
         """
         Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
@@ -514,18 +516,19 @@ class WorkerPool:
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
-        :param progress_bar: Boolean or ``tqdm`` instance. When ``True`` will display a default progress bar. Defaults
-            can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
+        :param progress_bar: Boolean. When ``True`` will display a progress bar
+        :param progress_bar_position: Int. Denotes the position (line nr) of the progress bar. This is useful wel using
+            multiple progress bars at the same time.
         :return: List with unordered results
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
         return list(self.imap_unordered(func_pointer, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
-                                        n_splits, worker_lifespan, progress_bar))
+                                        n_splits, worker_lifespan, progress_bar, progress_bar_position))
 
     def imap(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
              iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
              chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
-             worker_lifespan: Optional[int] = None, progress_bar: Union[bool, tqdm] = False) -> Any:
+             worker_lifespan: Optional[int] = None, progress_bar: bool = False, progress_bar_position: int = 0) -> Any:
         """
         Same as ``multiprocessing.imap_unordered()``, but ordered. Also allows a user to set the maximum number of
         tasks available in the queue.
@@ -547,8 +550,9 @@ class WorkerPool:
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
-        :param progress_bar: Boolean or ``tqdm`` instance. When ``True`` will display a default progress bar. Defaults
-            can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
+        :param progress_bar: Boolean. When ``True`` will display a progress bar
+        :param progress_bar_position: Int. Denotes the position (line nr) of the progress bar. This is useful wel using
+            multiple progress bars at the same time.
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
@@ -567,7 +571,8 @@ class WorkerPool:
             iterable_len = len(iterable_of_args)
         for result_idx, result in self.imap_unordered(func_pointer, ((args_idx, args) for args_idx, args
                                                       in enumerate(iterable_of_args)), iterable_len, max_tasks_active,
-                                                      chunk_size, n_splits, worker_lifespan, progress_bar):
+                                                      chunk_size, n_splits, worker_lifespan, progress_bar,
+                                                      progress_bar_position):
 
             # Check if the next one(s) to return is/are temporarily stored. We use a while-true block with dict.pop() to
             # keep the temporary store as small as possible
@@ -596,7 +601,8 @@ class WorkerPool:
     def imap_unordered(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
                        iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                        chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
-                       worker_lifespan: Optional[int] = None, progress_bar: Union[bool, tqdm] = False) -> Any:
+                       worker_lifespan: Optional[int] = None, progress_bar: bool = False,
+                       progress_bar_position: int = 0) -> Any:
         """
         Same as ``multiprocessing.imap_unordered()``. Also allows a user to set the maximum number of tasks available in
         the queue.
@@ -618,8 +624,9 @@ class WorkerPool:
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
-        :param progress_bar: Boolean or ``tqdm`` instance. When ``True`` will display a default progress bar. Defaults
-            can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
+        :param progress_bar: Boolean. When ``True`` will display a progress bar
+        :param progress_bar_position: Int. Denotes the position (line nr) of the progress bar. This is useful wel using
+            multiple progress bars at the same time.
         :return: Generator yielding unordered results
         """
         # If we're dealing with numpy arrays, we have to chunk them here already
@@ -632,7 +639,7 @@ class WorkerPool:
         # modified as well
         n_tasks, chunk_size, progress_bar = self._check_map_parameters(iterable_of_args, iterable_len, max_tasks_active,
                                                                        chunk_size, n_splits, worker_lifespan,
-                                                                       progress_bar)
+                                                                       progress_bar, progress_bar_position)
 
         # Chunk the function arguments. Make single arguments when we're dealing with numpy arrays
         if not isinstance(iterable_of_args, np.ndarray):
@@ -646,8 +653,8 @@ class WorkerPool:
         # receive updates from the workers and updates the progress bar accordingly
         with ExceptionHandler(self.terminate, self._exception_queue, self.exception_caught, self._keep_order,
                               progress_bar is not None) as exception_handler, \
-             ProgressBarHandler(func_pointer, progress_bar, self._task_completed_queue, self._exception_queue,
-                                self.exception_caught):
+             ProgressBarHandler(func_pointer, progress_bar, n_tasks, progress_bar_position, self._task_completed_queue,
+                                self._exception_queue, self.exception_caught):
 
             # Process all args in the iterable. If maximum number of active tasks is None, we avoid all the if and
             # try-except clauses to speed up the process.
@@ -705,7 +712,7 @@ class WorkerPool:
 
     def _check_map_parameters(self, iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int],
                               max_tasks_active: Optional[int], chunk_size: Optional[int], n_splits: Optional[int],
-                              worker_lifespan: Optional[int], progress_bar: Union[bool, tqdm]) \
+                              worker_lifespan: Optional[int], progress_bar: bool, progress_bar_position: int) \
             -> Tuple[Optional[int], Optional[int], Union[bool, tqdm]]:
         """
         Check the parameters provided to any (i)map function. Also extracts the number of tasks and can modify the
@@ -724,8 +731,9 @@ class WorkerPool:
         :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
             ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
             course of time.
-        :param progress_bar: Boolean or ``tqdm`` instance. When ``True`` will display a default progress bar. Defaults
-            can be overridden by supplying a custom ``tqdm`` progress bar instance. Use ``False`` to disable.
+        :param progress_bar: Boolean. When ``True`` will display a progress bar
+        :param progress_bar_position: Int. Denotes the position (line nr) of the progress bar. This is useful wel using
+            multiple progress bars at the same time.
         :return: Number of tasks, chunk size, progress bar
         """
         # Get number of tasks
@@ -734,8 +742,6 @@ class WorkerPool:
             n_tasks = iterable_len
         elif hasattr(iterable_of_args, '__len__'):
             n_tasks = len(iterable_of_args)
-        elif isinstance(progress_bar, tqdm) and progress_bar.total is not None:
-            n_tasks = progress_bar.total
         elif chunk_size is None or progress_bar:
             warnings.simplefilter('default')
             warnings.warn('Failed to obtain length of iterable when chunk size or number of splits is None and/or a '
@@ -773,19 +779,14 @@ class WorkerPool:
         elif worker_lifespan is not None:
             raise TypeError('worker_lifespan should be either None or a positive integer (> 0)')
 
-        # Parameter total should be given
-        if isinstance(progress_bar, tqdm) and progress_bar.total is None:
-            raise ValueError("Custom tqdm progress bar instance needs parameter 'total'")
+        # Progress bar position should be a positive integer
+        if not isinstance(progress_bar_position, int):
+            raise TypeError('progress_bar_position should be a positive integer (>= 0)')
+        if progress_bar_position < 0:
+            raise ValueError('progress_bar_position should be a positive integer (>= 0)')
 
-        # Create progress bar
-        if progress_bar is True or isinstance(progress_bar, tqdm):
-            progress_bar = progress_bar if isinstance(progress_bar, tqdm) else tqdm(total=n_tasks)
-            self._task_completed_queue = self.ctx.JoinableQueue()
-        elif progress_bar is False:
-            progress_bar = None
-            self._task_completed_queue = None
-        else:
-            raise TypeError("Invalid progress bar class provided")
+        # Create queue for the progress bar
+        self._task_completed_queue = self.ctx.JoinableQueue() if progress_bar else None
 
         return n_tasks, chunk_size, progress_bar
 
