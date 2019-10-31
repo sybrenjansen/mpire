@@ -351,38 +351,6 @@ When inside a Jupyter/IPython notebook, the progress bar will change automatical
     by executing ``jupyter nbextension enable --py --sys-prefix widgetsnbextension`` in your terminal before starting
     the notebook.
 
-If you want a custom ``tqdm`` progress bar you can pass a custom instance to the ``progress_bar`` parameter (instead of
-providing a boolean value):
-
-.. code-block:: python
-
-    from mpire import tqdm
-
-    with WorkerPool(n_jobs=4) as pool:
-        pool.map(square, range(100), progress_bar=tqdm(total=100, ascii=True))
-
-You can also import ``tqdm`` from the ``tqdm`` package itself, but when importing from MPIRE you will automatically
-get the notebook widget when working in a Jupyter/IPython notebook. When importing from ``tqdm`` you would have
-to use:
-
-.. code-block:: python
-
-    # Inside a Jupyter notebook
-    from tqdm import tqdm_notebook as tqdm
-
-    # Otherwise
-    from tqdm import tqdm
-
-    # Or, more conveniently:
-    from tqdm.auto import tqdm
-
-.. note::
-
-    When providing a custom ``tqdm`` progress bar you will need to pass on the total number of tasks to the ``total``
-    parameter.
-
-For all the configurable options, please refer to the `tqdm documentation`_.
-
 .. note::
 
     Please keep in mind that to show real-time progress information MPIRE starts an additional child process, which
@@ -392,9 +360,9 @@ For all the configurable options, please refer to the `tqdm documentation`_.
 Multiple progress bars with nested WorkerPools
 ----------------------------------------------
 
-With the tqdm_ package you can easily print a progress bar on a different position on the terminal using the
-``position`` parameter in the constructor, which facilitates the use of multiple progress bars. Here's an example of
-using multiple progress bars using nested WorkerPools:
+In MPIRE you can easily print a progress bar on a different position on the terminal using the ``progress_bar_position``
+parameter in the map functions, which facilitates the use of multiple progress bars. Here's an example of using multiple
+progress bars using nested WorkerPools:
 
 .. code-block:: python
 
@@ -402,8 +370,7 @@ using multiple progress bars using nested WorkerPools:
 
     def dispatcher(worker_id, X):
         with WorkerPool(n_jobs=4) as nested_pool:
-            return nested_pool.map(square, X,
-                                   progress_bar=tqdm(total=len(X), position=worker_id + 1))
+            return nested_pool.map(square, X, progress_bar=True, progress_bar_position=worker_id + 1)
 
     def main():
         with WorkerPool(n_jobs=4, daemon=False, pass_worker_id=True) as pool:
@@ -413,13 +380,13 @@ using multiple progress bars using nested WorkerPools:
     main()
 
 We use ``worker_id + 1`` here because the worker IDs start at zero, and we reserve position 0 for the progress bar of
-the main WorkerPool.
+the main WorkerPool (which is the default).
 
 .. note::
 
-    Unfortunately, starting a ``tqdm`` progress bar from a child process in a Jupyter/IPython notebook doesn't seem to
-    work. You'll get ``WARNING: attempted to send message from fork`` messages from the IPython kernel. You can use the
-    MPIRE dashboard instead.
+    Unfortunately, multiple ``tqdm`` progress bars from child processes don't play that nicely within a Jupyter/IPython
+    notebook session. It'll work but you'll get some additional new lines in your output and it could be that your main
+    progress bar won't update as you would expect. Note that you can always use the MPIRE dashboard.
 
 
 .. _tqdm: https://pypi.python.org/pypi/tqdm

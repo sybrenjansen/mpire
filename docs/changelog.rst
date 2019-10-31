@@ -1,6 +1,16 @@
 Changelog
 =========
 
+1.1.0
+-----
+
+*(2019-10-31)*
+
+* Removed custom progress bar support to fix Jupyter notebook support
+* New ``progress_bar_position`` parameter is now available to set the position of the progress bar when using nested
+  worker pools
+* Screen resizing is now supported when using a progress bar
+
 1.0.0
 -----
 
