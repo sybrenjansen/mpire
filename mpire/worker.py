@@ -206,7 +206,7 @@ class AbstractWorker:
                 func_args = args[1] if self.keep_order else args
                 if isinstance(func_args, dict):
                     argument_str = "\n".join("Arg %s: %s" % (str(key), str(value)) for key, value in func_args.items())
-                elif isinstance(func_args, collections.Iterable) and not isinstance(func_args, (str, bytes)):
+                elif isinstance(func_args, collections.abc.Iterable) and not isinstance(func_args, (str, bytes)):
                     argument_str = "\n".join("Arg %d: %s" % (arg_nr, str(arg)) for arg_nr, arg in enumerate(func_args))
                 else:
                     argument_str = "Arg 0: %s" % func_args
@@ -242,7 +242,7 @@ class AbstractWorker:
         """ Helper function which calls the function pointer and passes the arguments in the correct way """
         if isinstance(args, dict):
             return func(**args)
-        elif isinstance(args, collections.Iterable) and not isinstance(args, (str, bytes, np.ndarray)):
+        elif isinstance(args, collections.abc.Iterable) and not isinstance(args, (str, bytes, np.ndarray)):
             return func(*args)
         else:
             return func(args)

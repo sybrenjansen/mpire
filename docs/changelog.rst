@@ -1,6 +1,13 @@
 Changelog
 =========
 
+1.1.1
+-----
+
+*(2020-02-19)*
+
+* Change collections.Iterable to collections.abc.Iterable due to deprecation of the former.
+
 1.1.0
 -----
 
