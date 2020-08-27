@@ -1,3 +1,5 @@
+![Build](https://github.com/Slimmer-AI/mpire/workflows/Python%20package/badge.svg?branch=master)
+
 MPIRE (MultiProcessing: Insanely Rapid Execution)
 -------------------------------------------------
 
