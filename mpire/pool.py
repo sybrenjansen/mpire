@@ -761,7 +761,7 @@ class WorkerPool:
         if isinstance(max_tasks_active, int):
             if max_tasks_active <= 0:
                 raise ValueError('max_tasks_active should be a positive integer, None or "n_jobs*2')
-        elif max_tasks_active is not None and max_tasks_active is not 'n_jobs*2':
+        elif max_tasks_active is not None and max_tasks_active != 'n_jobs*2':
             raise TypeError('max_tasks_active should be a positive integer, None or "n_jobs*2"')
 
         # If worker lifespan is not None or not a positive integer, raise

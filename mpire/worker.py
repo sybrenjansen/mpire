@@ -127,8 +127,8 @@ class AbstractWorker:
             next_chunked_args = self._retrieve_task()
 
             # If we obtained a poison pill, we stop. When we receive None this means we stop because of an exception
-            if next_chunked_args is '\0' or next_chunked_args is None:
-                if next_chunked_args is '\0':
+            if next_chunked_args == '\0' or next_chunked_args is None:
+                if next_chunked_args == '\0':
                     self.tasks_queue.task_done()
                 return
 
