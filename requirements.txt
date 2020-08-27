@@ -1,0 +1,3 @@
+# Make requirements.txt and setup.py work together properly
+# https://caremad.io/2013/07/setup-vs-requirement/
+-e .
