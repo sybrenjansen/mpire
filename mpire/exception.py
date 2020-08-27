@@ -24,7 +24,7 @@ class ExceptionHandler:
         :param exception_queue: Queue where the workers can pass on an encountered exception
         :param exception_caught: Event indicating whether or not an exception was caught by one of the workers
         :param keep_order: Event that we need to clear in case of an exception
-        :param has_progress_bar: whether or not a progress bar is active
+        :param has_progress_bar: Whether or not a progress bar is active
         """
         self.terminate = terminate
         self.exception_queue = exception_queue

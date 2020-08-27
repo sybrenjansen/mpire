@@ -16,10 +16,10 @@ def chunk_tasks(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Opt
     :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
         passes it to the function pointer
     :param iterable_len: Number of tasks available in ``iterable_of_args``. Only needed when ``iterable_of_args`` is a
-        generator.
+        generator
     :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None``, will use ``n_splits`` to determine
         the chunk size
-    :param n_splits: Number of splits to use when ``chunk_size`` is ``None``.
+    :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
     :return: Generator of chunked task arguments
     """
     if chunk_size is None and n_splits is None:
@@ -75,10 +75,10 @@ def apply_numpy_chunking(iterable_of_args: Union[Iterable, np.ndarray], iterable
     :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
         passes it to the function pointer
     :param iterable_len: When chunk_size is set to ``None`` it needs to know the number of tasks. This can either be
-        provided by implementing the ``__len__`` function on the iterable object, or by specifying the number of tasks.
+        provided by implementing the ``__len__`` function on the iterable object, or by specifying the number of tasks
     :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None``, will generate ``n_jobs * 4``
-        number of chunks.
-    :param n_splits: Number of splits to use when ``chunk_size`` is ``None``.
+        number of chunks
+    :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
     :param n_jobs: Number of workers to spawn. If ``None``, will use ``cpu_count()``.
     :return: Chunked ``iterable_of_args`` with updated ``iterable_len``, ``chunk_size`` and ``n_splits``
     """
@@ -101,11 +101,11 @@ def get_n_chunks(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Op
     :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
         passes it to the function pointer
     :param iterable_len: Number of tasks available in ``iterable_of_args``. Only needed when ``iterable_of_args`` is a
-        generator.
+        generator
     :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None``, will use ``n_splits`` to determine
         the chunk size
-    :param n_splits: Number of splits to use when ``chunk_size`` is ``None``.
-    :param n_jobs: Number of workers to spawn. If ``None``, will use ``cpu_count()``.
+    :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
+    :param n_jobs: Number of workers to spawn. If ``None``, will use ``cpu_count()``
     :return: Number of chunks that will be created by the chunker
     """
     # Get number of tasks
@@ -132,7 +132,7 @@ def make_single_arguments(iterable_of_args: Union[Iterable, np.ndarray], generat
     :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
         passes it to the function pointer
     :param generator: Whether or not to return a generator, otherwise a materialized list will be returned
-    :return: iterable of single argument tuples
+    :return: Iterable of single argument tuples
     """
     gen = ((arg,) for arg in iterable_of_args)
     return gen if generator else list(gen)

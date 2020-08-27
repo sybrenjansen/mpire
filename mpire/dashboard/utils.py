@@ -20,8 +20,8 @@ def get_function_details(func_pointer: Callable) -> Dict[str, Union[str, int]]:
     :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
         worker ID the function should receive the worker ID as its first argument. If shared objects are provided
         the function should receive those as the next argument. If the worker state has been enabled it should
-        receive a state variable as the next argument.
-    :return: function details dictionary
+        receive a state variable as the next argument
+    :return: Function details dictionary
     """
     # Get the frame in which the pool.map(...) was called. We obtain the current stack and skip all those which
     # involve the current mpire module and stop right after that
@@ -73,8 +73,8 @@ def find_calling_lines(code_context: List[str]) -> List[str]:
     """
     Tries to find the lines corresponding to the calling function
 
-    :param code_context: list of code lines
-    :return: list of code lines
+    :param code_context: List of code lines
+    :return: List of code lines
     """
     # Traverse the lines in reverse order. We need a closing bracket to indicate the end of the calling function. From
     # that point on we work our way backward until we find the corresponding opening bracket. There can be more bracket

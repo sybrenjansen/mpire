@@ -6,7 +6,7 @@ import subprocess
 import threading
 import time
 import warnings
-from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
+from typing import Any, Callable, Generator, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 from tqdm.auto import tqdm
@@ -31,7 +31,7 @@ class WorkerPool:
                  shared_objects: Any = None, pass_worker_id: bool = False, use_worker_state: bool = False,
                  start_method: str = 'fork') -> None:
         """
-        :param n_jobs: Number of workers to spawn. If ``None``, will use ``cpu_count()``.
+        :param n_jobs: Number of workers to spawn. If ``None``, will use ``cpu_count()``
         :param daemon: Whether to start the child processes as daemon
         :param cpu_ids: List of CPU IDs to use for pinning child processes to specific CPUs. The list must be as long as
             the number of jobs used (if ``n_jobs`` equals ``None`` it must be equal to ``mpire.cpu_count()``), or the
@@ -196,7 +196,7 @@ class WorkerPool:
 
         :param func_pointer: Function pointer to call each time new task arguments become available
         :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
-            stay alive the entire time. Use this when workers use up too much memory over the course of time.
+            stay alive the entire time. Use this when workers use up too much memory over the course of time
         """
         # Save params for later reference (for example, when restarting workers)
         self.func_pointer = func_pointer
@@ -262,9 +262,9 @@ class WorkerPool:
         """
         Obtain the next result from the results queue.
 
-        :param block: whether to block (wait for results) or not
-        :param timeout: how long to wait for results in case ``block==True``
-        :return: The next result from the queue, which is the result of calling the function pointer.
+        :param block: Whether to block (wait for results) or not
+        :param timeout: How long to wait for results in case ``block==True``
+        :return: The next result from the queue, which is the result of calling the function pointer
         """
         with DelayedKeyboardInterrupt():
             results = self._results_queue.get(block=block, timeout=timeout)
@@ -435,7 +435,8 @@ class WorkerPool:
     def map(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
             iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
             chunk_size: Optional[int] = None, n_splits: Optional[int] = None, worker_lifespan: Optional[int] = None,
-            progress_bar: bool = False, progress_bar_position: int = 0, concatenate_numpy_output: bool = True) -> Any:
+            progress_bar: bool = False, progress_bar_position: int = 0,
+            concatenate_numpy_output: bool = True) -> Union[List[Any], np.ndarray]:
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
@@ -443,24 +444,22 @@ class WorkerPool:
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
             the function should receive those as the next argument. If the worker state has been enabled it should
-            receive a state variable as the next argument.
+            receive a state variable as the next argument
         :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
             passes it to the function pointer
-        :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
-            This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
-            specifying the number of tasks.
-        :param max_tasks_active: Int or ``None``. Maximum number of active tasks in the queue. Use ``None`` to not limit
-            the queue
-        :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
-            ``n_jobs * 4`` number of chunks.
-        :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
-        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
-            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
-            course of time.
-        :param progress_bar: Boolean. When ``True`` will display a progress bar
-        :param progress_bar_position: Int. Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time.
-        :param concatenate_numpy_output: Boolean. When ``True`` it will concatenate numpy output to a single numpy array
+        :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
+            to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
+            iterable object, or by specifying the number of tasks
+        :param max_tasks_active: Maximum number of active tasks in the queue. Use ``None`` to not limit the queue
+        :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
+            number of chunks
+        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
+        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
+            stay alive the entire time. Use this when workers use up too much memory over the course of time
+        :param progress_bar: When ``True`` it will display a progress bar
+        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
+            multiple progress bars at the same time
+        :param concatenate_numpy_output: When ``True`` it will concatenate numpy output to a single numpy array
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
@@ -494,7 +493,7 @@ class WorkerPool:
                       iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                       chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                       worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                      progress_bar_position: int = 0) -> Any:
+                      progress_bar_position: int = 0) -> List[Any]:
         """
         Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
@@ -502,23 +501,21 @@ class WorkerPool:
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
             the function should receive those as the next argument. If the worker state has been enabled it should
-            receive a state variable as the next argument.
+            receive a state variable as the next argument
         :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
             passes it to the function pointer
-        :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
-            This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
-            specifying the number of tasks.
-        :param max_tasks_active: Int or ``None``. Maximum number of active tasks in the queue. Use ``None`` to not limit
-            the queue
-        :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
-            ``n_jobs * 4`` number of chunks.
-        :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
-        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
-            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
-            course of time.
-        :param progress_bar: Boolean. When ``True`` will display a progress bar
-        :param progress_bar_position: Int. Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time.
+        :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
+            to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
+            iterable object, or by specifying the number of tasks
+        :param max_tasks_active: Maximum number of active tasks in the queue. Use ``None`` to not limit the queue
+        :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
+            number of chunks
+        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
+        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
+            stay alive the entire time. Use this when workers use up too much memory over the course of time
+        :param progress_bar: When ``True`` it will display a progress bar
+        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
+            multiple progress bars at the same time
         :return: List with unordered results
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
@@ -528,7 +525,8 @@ class WorkerPool:
     def imap(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
              iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
              chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
-             worker_lifespan: Optional[int] = None, progress_bar: bool = False, progress_bar_position: int = 0) -> Any:
+             worker_lifespan: Optional[int] = None, progress_bar: bool = False,
+             progress_bar_position: int = 0) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``, but ordered. Also allows a user to set the maximum number of
         tasks available in the queue.
@@ -536,23 +534,21 @@ class WorkerPool:
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
             the function should receive those as the next argument. If the worker state has been enabled it should
-            receive a state variable as the next argument.
+            receive a state variable as the next argument
         :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
             passes it to the function pointer
-        :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
-            This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
-            specifying the number of tasks.
-        :param max_tasks_active: Int or ``None``. Maximum number of active tasks in the queue. Use ``None`` to not limit
-            the queue
-        :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
-            ``n_jobs * 4`` number of chunks.
-        :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
-        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
-            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
-            course of time.
-        :param progress_bar: Boolean. When ``True`` will display a progress bar
-        :param progress_bar_position: Int. Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time.
+        :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
+            to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
+            iterable object, or by specifying the number of tasks
+        :param max_tasks_active: Maximum number of active tasks in the queue. Use ``None`` to not limit the queue
+        :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
+            number of chunks
+        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
+        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
+            stay alive the entire time. Use this when workers use up too much memory over the course of time
+        :param progress_bar: When ``True`` it will display a progress bar
+        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
+            multiple progress bars at the same time
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
@@ -602,7 +598,7 @@ class WorkerPool:
                        iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                        chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                        worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                       progress_bar_position: int = 0) -> Any:
+                       progress_bar_position: int = 0) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``. Also allows a user to set the maximum number of tasks available in
         the queue.
@@ -610,23 +606,21 @@ class WorkerPool:
         :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
             worker ID the function should receive the worker ID as its first argument. If shared objects are provided
             the function should receive those as the next argument. If the worker state has been enabled it should
-            receive a state variable as the next argument.
+            receive a state variable as the next argument
         :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
             passes it to the function pointer
-        :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
-            This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
-            specifying the number of tasks.
-        :param max_tasks_active: Int or ``None``. Maximum number of active tasks in the queue. Use ``None`` to not limit
-            the queue
-        :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
-            ``n_jobs * 4`` number of chunks.
-        :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
-        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
-            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
-            course of time.
-        :param progress_bar: Boolean. When ``True`` will display a progress bar
-        :param progress_bar_position: Int. Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time.
+        :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
+            to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
+            iterable object, or by specifying the number of tasks
+        :param max_tasks_active: Maximum number of active tasks in the queue. Use ``None`` to not limit the queue
+        :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
+            number of chunks
+        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
+        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
+            stay alive the entire time. Use this when workers use up too much memory over the course of time
+        :param progress_bar: When ``True`` it will display a progress bar
+        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
+            multiple progress bars at the same time
         :return: Generator yielding unordered results
         """
         # If we're dealing with numpy arrays, we have to chunk them here already
@@ -720,20 +714,18 @@ class WorkerPool:
 
         :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
             passes it to the function pointer
-        :param iterable_len: Int or ``None``. When chunk_size is set to ``None`` it needs to know the number of tasks.
-            This  can either be provided by implementing the ``__len__`` function on the iterable object, or by
-            specifying the number of tasks.
-        :param max_tasks_active: Int or ``None``. Maximum number of active tasks in the queue. Use ``None`` to not limit
-            the queue
-        :param chunk_size: Int or ``None``. Number of simultaneous tasks to give to a worker. If ``None``, will generate
-            ``n_jobs * 4`` number of chunks.
-        :param n_splits: Int or ``None``. Number of splits to use when ``chunk_size`` is ``None``.
-        :param worker_lifespan: Int or ``None``. Number of chunks a worker can handle before it is restarted. If
-            ``None``, workers will stay alive the entire time. Use this when workers use up too much memory over the
-            course of time.
-        :param progress_bar: Boolean. When ``True`` will display a progress bar
-        :param progress_bar_position: Int. Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time.
+        :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
+            to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
+            iterable object, or by specifying the number of tasks
+        :param max_tasks_active: Maximum number of active tasks in the queue. Use ``None`` to not limit the queue
+        :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
+            number of chunks
+        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
+        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
+            stay alive the entire time. Use this when workers use up too much memory over the course of time
+        :param progress_bar: When ``True`` it will display a progress bar
+        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
+            multiple progress bars at the same time
         :return: Number of tasks, chunk size, progress bar
         """
         # Get number of tasks
@@ -789,6 +781,3 @@ class WorkerPool:
         self._task_completed_queue = self.ctx.JoinableQueue() if progress_bar else None
 
         return n_tasks, chunk_size, progress_bar
-
-
-MotherForker = WorkerPool

@@ -9,10 +9,10 @@ def read_description():
 if __name__ == '__main__':
     setup(
         name="mpire",
-        version='1.1.1',
-        author="Sybren Jansen (Target Holding)",
-        author_email="sybren.jansen@target-holding.nl",
-        description="A Python package for multiprocessing, but faster than multiprocessing",
+        version='1.1.2',
+        author="Sybren Jansen (Slimmer AI)",
+        author_email="sybren.jansen@slimmer.ai",
+        description="A Python package for easy multiprocessing, but faster than multiprocessing",
         long_description=read_description(),
         packages=find_packages(),
         scripts=['bin/mpire-dashboard'],

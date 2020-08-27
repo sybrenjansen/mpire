@@ -20,7 +20,7 @@
 from datetime import datetime
 import re
 
-_version = '1.1.1'
+_version = '1.1.2'
 
 
 def isBoostFunc(what, obj):
@@ -498,7 +498,7 @@ man_pages = [
 #  dir menu entry, description, category)
 texinfo_documents = [
     (master_doc, 'mpire', 'mpire Documentation',
-     author, 'mpire', 'One line description of project.',
+     author, 'mpire', 'A Python package for easy multiprocessing, but faster than multiprocessing.',
      'Miscellaneous'),
 ]
 

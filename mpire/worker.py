@@ -3,7 +3,7 @@ import queue
 import signal
 import traceback
 from functools import partial
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Tuple
 
 import numpy as np
 
@@ -29,8 +29,8 @@ class AbstractWorker:
                  results_queue: mp.JoinableQueue, worker_done_array: mp.Array, task_completed_queue: mp.JoinableQueue,
                  exception_queue: mp.JoinableQueue, exception_lock: mp.Lock, exception_thrown: mp.Event,
                  func_pointer: Callable, keep_order: bool, shared_objects: Any = None,
-                 worker_lifespan: Optional[int] = None, pass_worker_id: bool = False, use_worker_state: bool = False) \
-            -> None:
+                 worker_lifespan: Optional[int] = None, pass_worker_id: bool = False,
+                 use_worker_state: bool = False) -> None:
         """
         :param start_method: What Process start method to use
         :param worker_id: Worker ID
@@ -38,17 +38,17 @@ class AbstractWorker:
         :param results_queue: Queue object for storing the results
         :param worker_done_array: Array object for notifying the ``WorkerPool`` to restart a worker
         :param task_completed_queue: Queue object for notifying the main process we're done with a single task. ``None``
-            when notifying is not necessary.
+            when notifying is not necessary
         :param exception_queue: Queue object for sending Exception objects to whenever an Exception was raised inside a
             user function
-        :param exception_lock: Lock object such that child processes can only throw one at a time.
+        :param exception_lock: Lock object such that child processes can only throw one at a time
         :param func_pointer: Function pointer to call each time new task arguments become available
         :param keep_order: Boolean flag which signals if the task arguments contain an order index which should be
             preserved and not fed to the function pointer (e.g., used in ``map``)
         :param shared_objects: ``None`` or an iterable of process-aware shared objects (e.g., ``multiprocessing.Array``)
-            to pass to the function as the first argument.
+            to pass to the function as the first argument
         :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
-            stay alive the entire time. Use this when workers use up too much memory over the course of time.
+            stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param pass_worker_id: Whether or not to pass the worker ID to the function
         :param use_worker_state: Whether to let a worker have a worker state or not
         """
@@ -179,7 +179,7 @@ class AbstractWorker:
         """
         Obtain new chunk of jobs and occasionally poll the stop event
 
-        :return: chunked args
+        :return: Chunked args
         """
         while not self.exception_thrown.is_set():
             try:
@@ -192,6 +192,9 @@ class AbstractWorker:
     def _raise(self, args: Any, err: Exception) -> None:
         """
         Create exception and pass it to the parent process. Let other processes know an exception is set
+
+        :param args: Funtion arguments where exception was raised
+        :param err: Exception that should be passed on to parent process
         """
         # Only one process can throw at a time
         with self.exception_lock:
@@ -229,17 +232,36 @@ class AbstractWorker:
                 self.exception_queue.put((type(err), traceback_str))
                 self.exception_thrown.set()
 
-    def _helper_func_with_idx(self, func, args):
-        """ Helper function which calls the function pointer but preserves the order index """
+    def _helper_func_with_idx(self, func: Callable, args: Tuple[int, Any]) -> Tuple[int, Any]:
+        """
+        Helper function which calls the function pointer but preserves the order index
+
+        :param func: Function pointer to call each time new task arguments become available
+        :param args: Tuple of ``(idx, _args)`` where ``_args`` correspond to the arguments to pass on to the function.
+            ``idx`` is used to preserve order
+        :return: (idx, result of calling the function with the given arguments) tuple
+        """
         return args[0], self._call_func(func, args[1])
 
-    def _helper_func(self, func, args):
-        """ Helper function which calls the function pointer """
+    def _helper_func(self, func: Callable, args: Any) -> Any:
+        """
+        Helper function which calls the function pointer
+
+        :param func: Function pointer to call each time new task arguments become available
+        :param args: Arguments to pass on to the function
+        :return: Result of calling the function with the given arguments) tuple
+        """
         return self._call_func(func, args)
 
     @staticmethod
-    def _call_func(func, args):
-        """ Helper function which calls the function pointer and passes the arguments in the correct way """
+    def _call_func(func: Callable, args: Any) -> Any:
+        """
+        Helper function which calls the function pointer and passes the arguments in the correct way
+
+        :param func: Function pointer to call each time new task arguments become available
+        :param args: Arguments to pass on to the function
+        :return: Result of calling the function with the given arguments) tuple
+        """
         if isinstance(args, dict):
             return func(**args)
         elif isinstance(args, collections.abc.Iterable) and not isinstance(args, (str, bytes, np.ndarray)):

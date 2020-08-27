@@ -1,12 +1,21 @@
 Changelog
 =========
 
+1.1.2
+-----
+
+*(2020-08-27)*
+
+* Added missing typing information
+* Updated some docstrings
+* Added license
+
 1.1.1
 -----
 
 *(2020-02-19)*
 
-* Change collections.Iterable to collections.abc.Iterable due to deprecation of the former.
+* Changed ``collections.Iterable`` to ``collections.abc.Iterable`` due to deprecation of the former.
 
 1.1.0
 -----
@@ -117,8 +126,8 @@ Changelog
 
 *(2017-10-12)*
 
-* Child processes can now also be pinned to a range of CPUs, instead of only a single one. You can also use specify a
-  single CPU or range of CPUs that have to be shared between all child processes.
+* Child processes can now also be pinned to a range of CPUs, instead of only a single one. You can also specify a single
+  CPU or range of CPUs that have to be shared between all child processes.
 
 0.5.0
 -----
@@ -153,6 +162,11 @@ Changelog
 *(2017-06-27)*
 
 * Added docs
+
+0.1.0
+-----
+
+First release
 
 
 .. _tqdm: https://pypi.python.org/pypi/tqdm

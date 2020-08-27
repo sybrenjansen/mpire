@@ -84,7 +84,7 @@ def start_dashboard() -> Dict[str, Union[int, str]]:
     """
     Starts a new MPIRE dashboard
 
-    :return: a dictionary containing the dashboard port number and manager host and port_nr being used
+    :return: A dictionary containing the dashboard port number and manager host and port_nr being used
     """
     global _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
 
@@ -116,8 +116,8 @@ def connect_to_dashboard(manager_port_nr: int, manager_host: Optional[str] = Non
     """
     Connects to an existing MPIRE dashboard
 
-    :param manager_port_nr: port to use when connecting to a manager
-    :param manager_host: host to use when connecting to a manager. If ``None`` it will use localhost
+    :param manager_port_nr: Port to use when connecting to a manager
+    :param manager_host: Host to use when connecting to a manager. If ``None`` it will use localhost
     """
     global _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
 

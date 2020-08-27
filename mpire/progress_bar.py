@@ -34,14 +34,14 @@ class ProgressBarHandler:
                  exception_caught: Event) -> None:
         """
         :param func_pointer: Function pointer passed on to a WorkerPool map function
-        :param show_progress_bar: Boolean. When ``True`` will display a progress bar
-        :param progress_bar_total: Int. Total number of tasks that will be processed
-        :param progress_bar_position: Int. Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time.
+        :param show_progress_bar: When ``True`` will display a progress bar
+        :param progress_bar_total: Total number of tasks that will be processed
+        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
+            multiple progress bars at the same time
         :param task_completed_queue: Queue related to the progress bar. Child processes can pass on a random value
             whenever they are finished with a job
         :param exception_queue: Queue where the workers can pass on an encountered exception
-        :param exception_caught: whether or not an exception was caught by one of the child processes
+        :param exception_caught: Whether or not an exception was caught by one of the child processes
         """
         self.show_progress_bar = show_progress_bar
         self.progress_bar_total = progress_bar_total
@@ -93,7 +93,7 @@ class ProgressBarHandler:
 
         :param progress_bar_total: Total number of tasks that will be processed
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time.
+            multiple progress bars at the same time
         """
         # In case we're running tqdm in a notebook we need to apply a dirty hack to get progress bars working.
         # Solution adapted from https://github.com/tqdm/tqdm/issues/485#issuecomment-473338308
@@ -167,7 +167,7 @@ class ProgressBarHandler:
         started
 
         :param progress_bar: tqdm progress bar instance
-        :param failed: whether or not the operation failed or not
+        :param failed: Whether or not the operation failed or not
         """
         if self.progress_bar_id is not None:
             self.dashboard_dict.update([(self.progress_bar_id,
@@ -184,11 +184,12 @@ class ProgressBarHandler:
         Obtain update dictionary with all the information needed for displaying on the dashboard
 
         :param progress_bar: tqdm progress bar instance
-        :param failed: whether or not the operation failed or not
-        :return: update dictionary
+        :param failed: Whether or not the operation failed or not
+        :return: Update dictionary
         """
         # Save some variables first so we can use them consistently with the same value
         n = progress_bar.n
+
         total = progress_bar.total
         avg_time = progress_bar.avg_time
         now = datetime.now()

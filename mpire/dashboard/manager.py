@@ -20,21 +20,21 @@ DASHBOARD_MANAGER_PORT = Value('i', lock=True)
 
 def get_dashboard_tqdm_dict() -> Dict:
     """
-    :return: dashboard tqdm dict which should be used in a SyncManager context
+    :return: Dashboard tqdm dict which should be used in a SyncManager context
     """
     return DASHBOARD_TQDM_DICT
 
 
 def get_dashboard_tqdm_details_dict() -> Dict:
     """
-    :return: dashboard tqdm details dict which should be used in a SyncManager context
+    :return: Dashboard tqdm details dict which should be used in a SyncManager context
     """
     return DASHBOARD_TQDM_DETAILS_DICT
 
 
 def get_dashboard_tqdm_lock() -> Lock:
     """
-    :return: dashboard tqdm lock which should be used in a SyncManager context
+    :return: Dashboard tqdm lock which should be used in a SyncManager context
     """
     return DASHBOARD_TQDM_LOCK
 
@@ -78,7 +78,7 @@ def get_manager_client_dicts() -> Tuple[BaseProxy, BaseProxy, BaseProxy]:
     """
     Connect to a SyncManager and obtain the synchronized tqdm dashboard dicts
 
-    :return: synchronized tqdm dict, tqdm details dict, tqdm lock
+    :return: Synchronized tqdm dict, tqdm details dict, tqdm lock
     """
     # Connect to a server
     sm = SyncManager(address=(DASHBOARD_MANAGER_HOST.value.decode(), DASHBOARD_MANAGER_PORT.value),

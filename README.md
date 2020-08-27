@@ -7,7 +7,7 @@ of multiprocessing.Pool with the benefits of using copy-on-write shared objects 
 Features
 --------
 
-- Multiprocessing with map/map_unordered/imap/imap_unordered functions
+- Multiprocessing with ``map``/``map_unordered``/``imap``/``imap_unordered`` functions
 - Easy use of copy-on-write shared objects with a pool of workers
 - Each worker can have its own state (e.g., to load a memory-intensive model only once for each worker without the
   need of sending it through a queue)
@@ -17,17 +17,19 @@ Features
 - Automatic restarting of workers after a specified number of tasks to reduce memory footprint
 - Nested pool of workers are allowed when setting the ``daemon`` option
 - Child processes can be pinned to specific or a range of CPUs on Linux systems
-- Progress bar support using tqdm_
+- Multiple process start methods available, including: ``fork`` (default), ``forkserver``, ``spawn``, and ``threading``
+- Progress bar support using [tqdm](https://tqdm.github.io/)
 - Progress dashboard support
-- (Optional) dill_ support
+- (Optional) [dill](https://pypi.org/project/dill/) support
+
 
 Installation
 ------------
 
-Through pip (localshop):
+Through pip (PyPi):
 
 ```
-pip install mpire -i http://localshop.tgho.nl/repo/tgho --trusted-host localshop.tgho.nl
+pip install mpire
 ```
 
 From source:
@@ -64,4 +66,4 @@ in your current working environment. Then execute:
 make html
 ```
 
-in the ``docs`` folder. For a pre-build version, please refer to [RTFM](https://rtfm.tgho.nl/mpire).
+in the ``docs`` folder.
