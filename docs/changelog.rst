@@ -1,6 +1,13 @@
 Changelog
 =========
 
+1.1.3
+-----
+
+*(2020-09-03)*
+
+* First public release on Github and PyPi
+
 1.1.2
 -----
 
