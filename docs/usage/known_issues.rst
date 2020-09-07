@@ -11,7 +11,7 @@ This section describes the known issues in MPIRE.
 Unit tests
 ----------
 
-When using the ``'spawn'`` or ``'forkserver'`` method you'll probably run in to one or two issues when running
+When using the ``'spawn'`` or ``'forkserver'`` method you'll probably run into one or two issues when running
 unittests in your own package. One problem that might occur is that your unittests will restart whenever the piece of
 code containing such a start method is called, leading to very funky terminal output. To remedy this problem make sure
 your ``setup`` call in ``setup.py`` is surrounded by an ``if __name__ == '__main__':`` clause:
