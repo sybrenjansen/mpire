@@ -21,10 +21,11 @@ if __name__ == '__main__':
         include_package_data=True,
         extras_require={
             'dashboard': ['flask'],
-            'docs': ['sphinx==1.8.5',
-                     'sphinx-rtd-theme==0.4.3',
-                     'sphinx-autodoc-typehints==1.6.0',
-                     'sphinxcontrib-images==0.8.0'],
+            'docs': ['sphinx==3.2.1',
+                     'sphinx-rtd-theme==0.5.0',
+                     'sphinx-autodoc-typehints==1.11.0',
+                     'sphinxcontrib-images==0.9.2',
+                     'sphinx-versions==1.0.1'],
             'dill': ['multiprocess'],
         },
         test_suite='tests'

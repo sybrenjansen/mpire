@@ -1,8 +1,8 @@
 Welcome to the MPIRE documentation!
 ===================================
 
-MPIRE, short for MultiProcessing: Insanely Rapid Execution, combines the convenient map like functions of
-``multiprocessing.Pool`` with the benefits of using copy-on-write shared objects of ``multiprocessing.Process``.
+MPIRE, short for MultiProcessing Is Really Easy, combines the convenient map like functions of ``multiprocessing.Pool``
+with the benefits of using copy-on-write shared objects of ``multiprocessing.Process``.
 
 Features
 --------

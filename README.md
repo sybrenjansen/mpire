@@ -1,10 +1,13 @@
-![Build](https://github.com/Slimmer-AI/mpire/workflows/Python%20package/badge.svg?branch=master)
+![Build](https://github.com/Slimmer-AI/mpire/workflows/Build/badge.svg?branch=master) 
+![Docs](https://github.com/Slimmer-AI/mpire/workflows/Docs/badge.svg?branch=master) 
 
-MPIRE (MultiProcessing: Insanely Rapid Execution)
--------------------------------------------------
+MPIRE (MultiProcessing Is Really Easy)
+--------------------------------------
 
 A Python package for multiprocessing, but faster than multiprocessing. It combines the convenient map like functions
 of multiprocessing.Pool with the benefits of using copy-on-write shared objects of multiprocessing.Process.
+
+Full documentation is available at https://slimmer-ai.github.io/mpire/.
 
 Features
 --------
