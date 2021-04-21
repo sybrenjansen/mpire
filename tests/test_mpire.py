@@ -406,36 +406,39 @@ class CPUPinningTest(unittest.TestCase):
         """
         Test that when parameters are valid, nothing breaks. We don't actually check if CPU pinning is happening
         """
-        for n_jobs, cpu_ids in product([None, 1, 2, 4],
-                                       [None, [0], [1337], [0, 1], [0, 1, 2, 3], [[0, 3]], [[0, 1], [0, 1]]]):
+        for n_jobs, cpu_ids, expected_mask in [(None, [0], [[0]] * cpu_count()),
+                                               (None, [[0, 3]], [[0, 3]] * cpu_count()),
+                                               (1, [0], [[0]]),
+                                               (1, [[0, 3]], [[0, 3]]),
+                                               (2, [0], [[0], [0]]),
+                                               (2, [0, 1], [[0], [1]]),
+                                               (2, [[0, 3]], [[0, 3], [0, 3]]),
+                                               (2, [[0, 1], [0, 1]], [[0, 1], [0, 1]]),
+                                               (4, [0], [[0], [0], [0], [0]]),
+                                               (4, [0, 1, 2, 3], [[0], [1], [2], [3]]),
+                                               (4, [[0, 3]], [[0, 3], [0, 3], [0, 3], [0, 3]])]:
+            # The test has been designed for a system with at least 4 cores. We'll skip those test cases where the CPU
+            # IDs exceed the number of CPUs.
+            if cpu_ids is not None and np.array(cpu_ids).max() >= cpu_count():
+                continue
 
-            # Things should work fine when cpu_ids is None or number of cpu_ids given is one or equals the number of
-            # jobs
-            if cpu_ids is None or len(cpu_ids) == 1 or len(cpu_ids) == (n_jobs or cpu_count()):
+            else:
+                with self.subTest(n_jobs=n_jobs, cpu_ids=cpu_ids), patch('os.sched_setaffinity') as p, \
+                        WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids) as pool:
 
-                # When CPU IDs exceed the number of CPUs it should raise
-                if cpu_ids is not None and np.array(cpu_ids).max() >= cpu_count():
-                    with self.subTest(n_jobs=n_jobs, cpu_ids=cpu_ids), self.assertRaises(ValueError), \
-                            WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids) as pool:
-                        pool.map(square, self.test_data)
+                    # Verify results
+                    results_list = pool.map(square, self.test_data)
+                    self.assertTrue(isinstance(results_list, list))
+                    self.assertEqual(self.test_desired_output, results_list)
 
-                else:
-                    with self.subTest(n_jobs=n_jobs, cpu_ids=cpu_ids), patch('subprocess.call') as p, \
-                            WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids) as pool:
-
-                        # Verify results
-                        results_list = pool.map(square, self.test_data)
-                        self.assertTrue(isinstance(results_list, list))
-                        self.assertEqual(self.test_desired_output, results_list)
-
-                        # Verify that CPU pinning is used, is called as many times as there are jobs and is called for
-                        # each worker process ID
-                        if cpu_ids is None:
-                            self.assertEqual(p.call_args_list, [])
-                        else:
-                            self.assertEqual(p.call_count, pool.n_jobs)
-                            pids = {call[0][0].rsplit(" ", 1)[-1] for call in p.call_args_list}
-                            self.assertEqual(len(pids), pool.n_jobs)
+                    # Verify that when CPU pinning is used, it is called as many times as there are jobs and is
+                    # called for each worker process ID
+                    if cpu_ids is None:
+                        self.assertEqual(p.call_args_list, [])
+                    else:
+                        self.assertEqual(p.call_count, pool.n_jobs)
+                        mask = [call[0][1] for call in p.call_args_list]
+                        self.assertListEqual(mask, expected_mask)
 
     def test_invalid_input(self):
         """

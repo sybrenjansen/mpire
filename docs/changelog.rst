@@ -6,6 +6,7 @@ Dev
 
 *(2021-04-21)*
 
+* Setting CPU affinity is no longer restricted to Linux platforms
 * README updated to use RST format for better compatibility with PyPI.
 * Added classifiers to the setup file
 

@@ -2,7 +2,6 @@ import itertools
 import os
 import queue
 import signal
-import subprocess
 import threading
 import time
 import warnings
@@ -106,7 +105,7 @@ class WorkerPool:
         # Whether or not an exception was caught by one of the child processes
         self.exception_caught = mp.Event()
 
-    def _check_cpu_ids(self, cpu_ids: CPUList) -> List[str]:
+    def _check_cpu_ids(self, cpu_ids: CPUList) -> List[List[int]]:
         """
         Checks the cpu_ids parameter for correctness
 
@@ -132,11 +131,11 @@ class WorkerPool:
             min_cpu_id = 0
             for cpu_id in cpu_ids:
                 if isinstance(cpu_id, list):
-                    converted_cpu_ids.append(','.join(map(str, cpu_id)))
+                    converted_cpu_ids.append(cpu_id)
                     max_cpu_id = max(max_cpu_id, max(cpu for cpu in cpu_id))
                     min_cpu_id = min(min_cpu_id, min(cpu for cpu in cpu_id))
                 elif isinstance(cpu_id, int):
-                    converted_cpu_ids.append(str(cpu_id))
+                    converted_cpu_ids.append([cpu_id])
                     max_cpu_id = max(max_cpu_id, cpu_id)
                     min_cpu_id = min(min_cpu_id, cpu_id)
                 else:
@@ -244,8 +243,7 @@ class WorkerPool:
 
             # Pin CPU if desired
             if self.cpu_ids:
-                subprocess.call('taskset -p -c %s %d' % (self.cpu_ids[worker_id], w.pid), stdout=subprocess.DEVNULL,
-                                shell=True)
+                os.sched_setaffinity(w.pid, self.cpu_ids[worker_id])
 
             return w
 
