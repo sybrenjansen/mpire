@@ -1,11 +1,14 @@
-![Build](https://github.com/Slimmer-AI/mpire/workflows/Build/badge.svg?branch=master) 
-![Docs](https://github.com/Slimmer-AI/mpire/workflows/Docs/badge.svg?branch=master) 
-
 MPIRE (MultiProcessing Is Really Easy)
---------------------------------------
+======================================
 
-A Python package for multiprocessing, but faster than multiprocessing. It combines the convenient map like functions
-of multiprocessing.Pool with the benefits of using copy-on-write shared objects of multiprocessing.Process.
+|Build status| |Docs status|
+
+.. |Build status| image:: https://github.com/Slimmer-AI/mpire/workflows/Build/badge.svg?branch=master
+.. |Docs status| image:: https://github.com/Slimmer-AI/mpire/workflows/Docs/badge.svg?branch=master
+
+``MPIRE`` is a Python package for multiprocessing, but faster and more user-friendly than the default multiprocessing
+package. It combines the convenient map like functions of ``multiprocessing.Pool`` with the benefits of using
+copy-on-write shared objects of ``multiprocessing.Process``.
 
 Full documentation is available at https://slimmer-ai.github.io/mpire/.
 
@@ -23,9 +26,12 @@ Features
 - Nested pool of workers are allowed when setting the ``daemon`` option
 - Child processes can be pinned to specific or a range of CPUs on Linux systems
 - Multiple process start methods available, including: ``fork`` (default), ``forkserver``, ``spawn``, and ``threading``
-- Progress bar support using [tqdm](https://tqdm.github.io/)
+- Progress bar support using tqdm_
 - Progress dashboard support
-- (Optional) [dill](https://pypi.org/project/dill/) support
+- (Optional) dill_ support
+
+.. _tqdm: https://tqdm.github.io/
+.. _dill: https://pypi.org/project/dill/
 
 
 Installation
@@ -33,42 +39,44 @@ Installation
 
 Through pip (PyPi):
 
-```
-pip install mpire
-```
+.. code-block:: bash
+
+    pip install mpire
 
 From source:
 
-```
-python setup.py install
-```
+.. code-block:: bash
+
+    python setup.py install
+
 
 Documentation
 -------------
 
 If you want to build the documentation, please install the documentation dependencies by executing:
 
-```
-pip install mpire[docs]
-```
+.. code-block:: bash
+
+    pip install mpire[docs]
 
 or 
 
-```
-pip install .[docs]
-```
+.. code-block:: bash
+
+    pip install .[docs]
+
 
 Documentation can then be build by executing:
 
-```
-python setup.py build_docs
-```
+.. code-block:: bash
 
-Documentation can also be build from the ``docs`` folder directly. In that case MPIRE should be installed and available
-in your current working environment. Then execute:
+    python setup.py build_docs
 
-```
-make html
-```
+Documentation can also be build from the ``docs`` folder directly. In that case ``MPIRE`` should be installed and
+available in your current working environment. Then execute:
+
+.. code-block:: bash
+
+    make html
 
 in the ``docs`` folder.

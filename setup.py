@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 
 def read_description():
-    with open('README.md') as file:
+    with open('README.rst') as file:
         return file.read()
 
 
@@ -28,5 +28,18 @@ if __name__ == '__main__':
                      'sphinx-versions==1.0.1'],
             'dill': ['multiprocess'],
         },
-        test_suite='tests'
+        test_suite='tests',
+        classifiers=[
+            # Development status
+            'Development Status :: 5 - Production/Stable',
+
+            # Supported Python versions
+            'Programming Language :: Python :: 3',
+
+            # License
+            'License :: OSI Approved :: MIT License',
+
+            # Topic
+            'Topic :: Software Development :: Libraries :: Python Modules'
+        ]
     )

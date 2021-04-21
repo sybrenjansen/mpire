@@ -1,6 +1,14 @@
 Changelog
 =========
 
+Dev
+---
+
+*(2021-04-21)*
+
+* README updated to use RST format for better compatibility with PyPI.
+* Added classifiers to the setup file
+
 1.1.3
 -----
 

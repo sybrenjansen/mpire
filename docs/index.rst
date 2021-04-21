@@ -1,8 +1,9 @@
 Welcome to the MPIRE documentation!
 ===================================
 
-MPIRE, short for MultiProcessing Is Really Easy, combines the convenient map like functions of ``multiprocessing.Pool``
-with the benefits of using copy-on-write shared objects of ``multiprocessing.Process``.
+MPIRE, short for MultiProcessing Is Really Easy, is a Python package for multiprocessing, but faster and more
+user-friendly than the default multiprocessing package. It combines the convenient map like functions of
+``multiprocessing.Pool`` with the benefits of using copy-on-write shared objects of ``multiprocessing.Process``.
 
 Features
 --------
