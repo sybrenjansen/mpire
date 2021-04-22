@@ -317,6 +317,59 @@ import packages within the called function:
         pool.map(working_job, [('folder', '0.p3'), ('folder', '1.p3')])
 
 
+Keep alive
+----------
+
+Workers can be kept alive in between consecutive map calls using the ``keep_alive`` flag. This is useful when your
+workers have a long startup time and you need to call one of the map functions multiple times. When either the function
+to execute or the ``worker_lifespan`` parameter changes MPIRE will ignore the flag as it needs to restart the workers.
+
+Building further on the worker state example:
+
+.. code-block:: python
+
+    import numpy as np
+    import pickle
+
+    def load_big_model():
+        # Load a model which takes up a lot of memory
+        with open('./a_really_big_model.p3', 'rb') as f:
+            return pickle.load(f)
+
+    def model_predict(worker_state, x):
+        # Load model
+        if 'model' not in worker_state:
+            worker_state['model'] = load_big_model()
+
+        # Predict
+        return worker_state['model'].predict(x)
+
+    with WorkerPool(n_jobs=4, use_worker_state=True, keep_alive=True) as pool:
+        # Let the model predict
+        data = np.array([[...]])
+        results = pool.map(model_predict, data)
+
+        # Do something with the results
+        ...
+
+        # Let the model predict some more. In this call the workers are reused,
+        # which means the big model doesn't need to be loaded again
+        data = np.array([[...]])
+        results = pool.map(model_predict, data)
+
+        # Workers are restarted in this case because the function changed
+        pool.map(square_sum, range(100))
+
+Instead of passing the flag to the :obj:`mpire.WorkerPool` constructor you can also make use of
+:meth:`mpire.WorkerPool.set_keep_alive`:
+
+.. code-block:: python
+
+    with WorkerPool(n_jobs=4) as pool:
+        pool.set_keep_alive()
+        pool.map_unordered(square_sum, range(100))
+
+
 .. _documentation: https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
 .. _caveats: https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods
 .. _dill: https://pypi.org/project/dill/

@@ -1,6 +1,16 @@
 Changelog
 =========
 
+1.2.0
+-----
+
+*(2021-04-22)*
+
+* Workers can be kept alive in between consecutive map calls
+* Setting CPU affinity is no longer restricted to Linux platforms
+* README updated to use RST format for better compatibility with PyPI.
+* Added classifiers to the setup file
+
 1.1.3
 -----
 
