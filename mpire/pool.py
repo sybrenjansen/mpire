@@ -28,7 +28,7 @@ class WorkerPool:
 
     def __init__(self, n_jobs: Optional[int] = None, daemon: bool = True, cpu_ids: CPUList = None,
                  shared_objects: Any = None, pass_worker_id: bool = False, use_worker_state: bool = False,
-                 start_method: str = 'fork') -> None:
+                 start_method: str = 'fork', keep_alive: bool = False) -> None:
         """
         :param n_jobs: Number of workers to spawn. If ``None``, will use ``cpu_count()``
         :param daemon: Whether to start the child processes as daemon
@@ -48,6 +48,8 @@ class WorkerPool:
             https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods for more information and
             https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods for some
             caveats when using the 'spawn' or 'forkserver' methods
+        :param keep_alive: When True it will keep workers alive after completing a map call, allowing to reuse workers
+            when map is called with the same function and worker lifespan multiple times in a row
         """
         # Set parameters
         self.n_jobs = n_jobs or mp.cpu_count()
@@ -101,6 +103,9 @@ class WorkerPool:
 
         # Whether to let a worker have a worker state
         self.use_worker_state = use_worker_state
+
+        # Whether to keep workers alive after completing a map call
+        self.keep_alive = keep_alive
 
         # Whether or not an exception was caught by one of the child processes
         self.exception_caught = mp.Event()
@@ -188,6 +193,15 @@ class WorkerPool:
         :param use_worker_state: Whether to let a worker have a worker state or not
         """
         self.use_worker_state = use_worker_state
+
+    def set_keep_alive(self, keep_alive: bool = True) -> None:
+        """
+        Set whether workers should be kept alive in between consecutive map calls.
+
+        :param keep_alive: When True it will keep workers alive after completing a map call, allowing to reuse workers
+            when map is called with the same function and worker lifespan multiple times in a row
+        """
+        self.keep_alive = keep_alive
 
     def start_workers(self, func_pointer: Callable, worker_lifespan: Optional[int]) -> None:
         """
@@ -637,8 +651,12 @@ class WorkerPool:
         if not isinstance(iterable_of_args, np.ndarray):
             iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size, n_splits or self.n_jobs * 4)
 
-        # Start workers
-        self.start_workers(func_pointer, worker_lifespan)
+        # Start workers if there aren't any. If they already exist they must be restarted when either the function to
+        # execute or the worker lifespan changes
+        if self._workers and (func_pointer != self.func_pointer or worker_lifespan != self.worker_lifespan):
+            self.stop_and_join()
+        if not self._workers:
+            self.start_workers(func_pointer, worker_lifespan)
 
         # Create exception and progress bar handlers. The exception handler will receive any exceptions thrown by the
         # workers, terminates everything and re-raise an exceptoin in the main process. The progress bar handler will
@@ -698,9 +716,10 @@ class WorkerPool:
                 # Restart workers if necessary
                 self._restart_workers()
 
-            # Clean up time
+            # Clean up time. When keep_alive is set to True we won't join the workers
             exception_handler.raise_on_exception()
-            self.stop_and_join()
+            if not self.keep_alive:
+                self.stop_and_join()
 
     def _check_map_parameters(self, iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int],
                               max_tasks_active: Optional[int], chunk_size: Optional[int], n_splits: Optional[int],
