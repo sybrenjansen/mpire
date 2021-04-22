@@ -5,7 +5,7 @@ import signal
 import threading
 import time
 import warnings
-from typing import Any, Callable, Generator, Iterable, List, Optional, Tuple, Union
+from typing import Any, Callable, Generator, Iterable, List, Optional, Tuple, Union, Sized
 
 import numpy as np
 from tqdm.auto import tqdm
@@ -444,7 +444,7 @@ class WorkerPool:
         if self._tasks_queue is not None:
             self.terminate()
 
-    def map(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
+    def map(self, func_pointer: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
             iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
             chunk_size: Optional[int] = None, n_splits: Optional[int] = None, worker_lifespan: Optional[int] = None,
             progress_bar: bool = False, progress_bar_position: int = 0,
@@ -501,7 +501,7 @@ class WorkerPool:
                 if sorted_results and concatenate_numpy_output and isinstance(sorted_results[0], np.ndarray) else
                 sorted_results)
 
-    def map_unordered(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
+    def map_unordered(self, func_pointer: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
                       iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                       chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                       worker_lifespan: Optional[int] = None, progress_bar: bool = False,
@@ -534,7 +534,7 @@ class WorkerPool:
         return list(self.imap_unordered(func_pointer, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
                                         n_splits, worker_lifespan, progress_bar, progress_bar_position))
 
-    def imap(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
+    def imap(self, func_pointer: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
              iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
              chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
              worker_lifespan: Optional[int] = None, progress_bar: bool = False,
@@ -606,7 +606,7 @@ class WorkerPool:
         # Notify workers to forget about order
         self._keep_order.clear()
 
-    def imap_unordered(self, func_pointer: Callable, iterable_of_args: Union[Iterable, np.ndarray],
+    def imap_unordered(self, func_pointer: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
                        iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                        chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                        worker_lifespan: Optional[int] = None, progress_bar: bool = False,
@@ -636,6 +636,7 @@ class WorkerPool:
         :return: Generator yielding unordered results
         """
         # If we're dealing with numpy arrays, we have to chunk them here already
+        iterator_of_chunked_args = []
         if isinstance(iterable_of_args, np.ndarray):
             iterator_of_chunked_args, iterable_len, chunk_size, n_splits = apply_numpy_chunking(
                 iterable_of_args, iterable_len, chunk_size, n_splits, self.n_jobs
@@ -721,7 +722,7 @@ class WorkerPool:
             if not self.keep_alive:
                 self.stop_and_join()
 
-    def _check_map_parameters(self, iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int],
+    def _check_map_parameters(self, iterable_of_args: Union[Sized, Iterable, np.ndarray], iterable_len: Optional[int],
                               max_tasks_active: Optional[int], chunk_size: Optional[int], n_splits: Optional[int],
                               worker_lifespan: Optional[int], progress_bar: bool, progress_bar_position: int) \
             -> Tuple[Optional[int], Optional[int], Union[bool, tqdm]]:

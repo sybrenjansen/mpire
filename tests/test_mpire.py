@@ -600,7 +600,7 @@ class KeepAliveTest(unittest.TestCase):
                 self.assertEqual(counter.value, n_jobs)
                 barrier.reset()
 
-                self.assertListEqual(pool.map(self._f1, self.test_data), self.test_desired_output_f1)
+                self.assertListEqual(list(pool.imap(self._f1, self.test_data)), self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs)
                 barrier.reset()
 
@@ -623,7 +623,7 @@ class KeepAliveTest(unittest.TestCase):
                 self.assertEqual(counter.value, n_jobs)
                 barrier.reset()
 
-                self.assertListEqual(pool.map(self._f2, self.test_data), self.test_desired_output_f2)
+                self.assertListEqual(list(pool.imap(self._f2, self.test_data)), self.test_desired_output_f2)
                 self.assertEqual(counter.value, n_jobs * 2)
                 barrier.reset()
 
@@ -651,7 +651,7 @@ class KeepAliveTest(unittest.TestCase):
                 self.assertEqual(counter.value, n_jobs)
                 barrier.reset()
 
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=100),
+                self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_lifespan=100)),
                                      self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs)
                 barrier.reset()

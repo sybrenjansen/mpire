@@ -322,7 +322,8 @@ Keep alive
 
 Workers can be kept alive in between consecutive map calls using the ``keep_alive`` flag. This is useful when your
 workers have a long startup time and you need to call one of the map functions multiple times. When either the function
-to execute or the ``worker_lifespan`` parameter changes MPIRE will ignore the flag as it needs to restart the workers.
+to execute or the ``worker_lifespan`` parameter changes MPIRE will ignore the flag as it needs to restart the workers
+anyway.
 
 Building further on the worker state example:
 

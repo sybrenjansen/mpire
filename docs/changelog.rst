@@ -1,6 +1,14 @@
 Changelog
 =========
 
+1.2.1
+-----
+
+*(2021-04-22)*
+
+* Updated some unittests and fixed some linting issues
+* Minor improvements in documentation
+
 1.2.0
 -----
 

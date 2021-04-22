@@ -20,7 +20,7 @@
 from datetime import datetime
 import re
 
-_version = '1.2.0'
+_version = '1.2.1'
 
 
 def isBoostFunc(what, obj):
@@ -115,7 +115,7 @@ def boostFuncSignature(name, obj):
     if doc1.endswith(':'):
         doc1 = doc1[:-1]
     strippedDoc = doc.split('\n')[2:]
-    strippedDoc = [l.replace("->", "→") for l in strippedDoc]
+    strippedDoc = [line.replace("->", "→") for line in strippedDoc]
 
     # Replace '(Obj)self' with 'self'
     sig = doc1.split('(', 1)[1]
@@ -157,7 +157,7 @@ def boostFuncSignature(name, obj):
             sig = sig[:-4] + cname
         elif sig.endswith("None "):
             sig = sig[:-5] + cname
-        new_strippedDoc = [l.replace("→ None", "→ %s" % cname) for l in new_strippedDoc]
+        new_strippedDoc = [line.replace("→ None", "→ %s" % cname) for line in new_strippedDoc]
 
     return sig, new_strippedDoc
 
@@ -191,6 +191,7 @@ def setup(app):
     app.connect('autodoc-process-signature', fixSignature)
     app.connect('autodoc-skip-member', skipMember)
     app.add_stylesheet('css/custom.css')
+
 
 # -- General configuration ------------------------------------------------
 

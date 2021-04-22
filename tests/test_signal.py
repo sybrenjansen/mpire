@@ -1,7 +1,6 @@
 import multiprocessing as mp
 import os
 import signal
-import time
 import unittest
 
 from mpire.signal import DelayedKeyboardInterrupt, DisableKeyboardInterruptSignal
