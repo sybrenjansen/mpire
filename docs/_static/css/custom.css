@@ -1,3 +1,90 @@
 .strike {
     text-decoration: line-through;
 }
+
+/* From theme.css, but .section has been replaced by section to work around the new change of <div class='section'> to
+<section>, which for some reason happened
+ */
+.rst-content section ul {
+ list-style:disc;
+ line-height:24px;
+ margin-bottom:24px
+}
+.rst-content section ul li {
+ list-style:disc;
+ margin-left:24px
+}
+.rst-content section ul li p:last-child,
+.rst-content section ul li ul {
+ margin-top:0;
+ margin-bottom:0
+}
+.rst-content section ul li li {
+ list-style:circle
+}
+.rst-content section ul li li li {
+ list-style:square
+}
+.rst-content section ul li ol li {
+ list-style:decimal
+}
+.rst-content section ol {
+ list-style:decimal;
+ line-height:24px;
+ margin-bottom:24px
+}
+.rst-content section ol li {
+ list-style:decimal;
+ margin-left:24px
+}
+.rst-content section ol li p:last-child,
+.rst-content section ol li ul {
+ margin-bottom:0
+}
+.rst-content section ol li ul li {
+ list-style:disc
+}
+.rst-content section ol.loweralpha,
+.rst-content section ol.loweralpha>li {
+ list-style:lower-alpha
+}
+.rst-content section ol.upperalpha,
+.rst-content section ol.upperalpha>li {
+ list-style:upper-alpha
+}
+.rst-content section ol li>*,
+.rst-content section ul li>* {
+ margin-top:12px;
+ margin-bottom:12px
+}
+.rst-content section ol li>:first-child,
+.rst-content section ul li>:first-child {
+ margin-top:0
+}
+.rst-content section ol li>p,
+.rst-content section ol li>p:last-child,
+.rst-content section ul li>p,
+.rst-content section ul li>p:last-child {
+ margin-bottom:12px
+}
+.rst-content section ol li>p:only-child,
+.rst-content section ol li>p:only-child:last-child,
+.rst-content section ul li>p:only-child,
+.rst-content section ul li>p:only-child:last-child {
+ margin-bottom:0
+}
+.rst-content section ol li>ol,
+.rst-content section ol li>ul,
+.rst-content section ul li>ol,
+.rst-content section ul li>ul {
+ margin-bottom:12px
+}
+.rst-content section ol.simple li>*,
+.rst-content section ol.simple li ol,
+.rst-content section ol.simple li ul,
+.rst-content section ul.simple li>*,
+.rst-content section ul.simple li ol,
+.rst-content section ul.simple li ul {
+ margin-top:0;
+ margin-bottom:0
+}

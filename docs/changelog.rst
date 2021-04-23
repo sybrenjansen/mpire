@@ -1,6 +1,13 @@
 Changelog
 =========
 
+1.2.2
+-----
+
+*(2021-04-23)*
+
+* Updated documentation CSS which fixes bullet lists not showing properly
+
 1.2.1
 -----
 
@@ -16,7 +23,7 @@ Changelog
 
 * Workers can be kept alive in between consecutive map calls
 * Setting CPU affinity is no longer restricted to Linux platforms
-* README updated to use RST format for better compatibility with PyPI.
+* README updated to use RST format for better compatibility with PyPI
 * Added classifiers to the setup file
 
 1.1.3
@@ -40,7 +47,7 @@ Changelog
 
 *(2020-02-19)*
 
-* Changed ``collections.Iterable`` to ``collections.abc.Iterable`` due to deprecation of the former.
+* Changed ``collections.Iterable`` to ``collections.abc.Iterable`` due to deprecation of the former
 
 1.1.0
 -----
@@ -105,7 +112,7 @@ Changelog
 
 * You can now pass on a dictionary as an argument which will be unpacked accordingly using the ``**``-operator.
 * New function :meth:`mpire.utils.make_single_arguments` added which allows you to create an iterable of single argument
-  tuples out of an iterable of single arguments.
+  tuples out of an iterable of single arguments
 
 0.7.0
 -----
@@ -140,10 +147,10 @@ Changelog
 
 *(2017-11-03)*
 
-* ``restart_workers`` parameter is now deprecated and will be removed from v1.0.0.
-* Progress bar functionality added (using tqdm_).
-* Improved error handling in user provided functions.
-* Fixed randomly occurring ``BrokenPipeErrors`` and deadlocks.
+* ``restart_workers`` parameter is now deprecated and will be removed from v1.0.0
+* Progress bar functionality added (using tqdm_)
+* Improved error handling in user provided functions
+* Fixed randomly occurring ``BrokenPipeErrors`` and deadlocks
 
 
 0.5.1
@@ -152,7 +159,7 @@ Changelog
 *(2017-10-12)*
 
 * Child processes can now also be pinned to a range of CPUs, instead of only a single one. You can also specify a single
-  CPU or range of CPUs that have to be shared between all child processes.
+  CPU or range of CPUs that have to be shared between all child processes
 
 0.5.0
 -----
@@ -161,7 +168,7 @@ Changelog
 
 * Added CPU pinning.
 * Default number of processes to spawn when using ``n_jobs=None`` is now set to the number of CPUs available, instead of
-  ``cpu_count() - 1``.
+  ``cpu_count() - 1``
 
 0.4.0
 -----
@@ -169,7 +176,7 @@ Changelog
 *(2017-10-05)*
 
 * Workers can now be started as normal child processes (non-deamon) such that nested :obj:`mpire.WorkerPool` s are
-  possible.
+  possible
 
 0.3.0
 -----
@@ -177,9 +184,9 @@ Changelog
 *(2017-09-15)*
 
 * The worker ID can now be passed on the function to be executed by using the :meth:`mpire.WorkerPool.pass_on_worker_id`
-  function.
+  function
 * Removed the use of ``has_return_value_with_shared_objects`` when using :meth:`mpire.WorkerPool.set_shared_objects`.
-  MPIRE now handles both cases out of the box.
+  MPIRE now handles both cases out of the box
 
 0.2.0
 -----
