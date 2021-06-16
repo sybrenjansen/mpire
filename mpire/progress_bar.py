@@ -5,6 +5,8 @@ from typing import Any, Callable, Dict
 from tqdm.auto import tqdm
 
 from mpire.signal import DisableKeyboardInterruptSignal
+from mpire.utils import format_seconds
+
 
 # If a user has not installed the dashboard dependencies than the imports below will fail
 try:
@@ -29,11 +31,12 @@ tqdm.set_lock(TQDM_LOCK)
 
 class ProgressBarHandler:
 
-    def __init__(self, func_pointer: Callable, show_progress_bar: bool, progress_bar_total: int,
+    def __init__(self, func_pointer: Callable, n_jobs: int, show_progress_bar: bool, progress_bar_total: int,
                  progress_bar_position: int, task_completed_queue: JoinableQueue, exception_queue: JoinableQueue,
-                 exception_caught: Event) -> None:
+                 exception_caught: Event, insights_func_pointer: Callable) -> None:
         """
         :param func_pointer: Function pointer passed on to a WorkerPool map function
+        :param n_jobs: Number of workers that are used
         :param show_progress_bar: When ``True`` will display a progress bar
         :param progress_bar_total: Total number of tasks that will be processed
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
@@ -42,6 +45,7 @@ class ProgressBarHandler:
             whenever they are finished with a job
         :param exception_queue: Queue where the workers can pass on an encountered exception
         :param exception_caught: Whether or not an exception was caught by one of the child processes
+        :param insights_func_pointer: Function pointer to get worker insights
         """
         self.show_progress_bar = show_progress_bar
         self.progress_bar_total = progress_bar_total
@@ -49,7 +53,12 @@ class ProgressBarHandler:
         self.task_completed_queue = task_completed_queue
         self.exception_queue = exception_queue
         self.exception_caught = exception_caught
-        self.function_details = get_function_details(func_pointer) if show_progress_bar else None
+        self.insights_func_pointer = insights_func_pointer
+        if show_progress_bar:
+            self.function_details = get_function_details(func_pointer)
+            self.function_details['n_jobs'] = n_jobs
+        else:
+            self.function_details = None
 
         self.process = None
         self.progress_bar_id = None
@@ -213,11 +222,11 @@ class ProgressBarHandler:
                 "total": total,
                 "percentage": n / total,
                 "duration": str(now - self.start_t).rsplit('.', 1)[0],
-                "remaining": (str(timedelta(seconds=remaining_time)).rsplit('.', 1)[0]
-                              if remaining_time is not None else ''),
+                "remaining": format_seconds(remaining_time, False),
                 "started_raw": self.start_t,
                 "started": self.start_t.strftime(DATETIME_FORMAT),
                 "finished_raw": now + timedelta(seconds=remaining_time) if remaining_time is not None else None,
                 "finished": ((now + timedelta(seconds=remaining_time)).strftime(DATETIME_FORMAT)
                              if remaining_time is not None else ''),
-                "traceback": traceback_str}
+                "traceback": traceback_str,
+                "insights": self.insights_func_pointer()}

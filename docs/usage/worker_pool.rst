@@ -1,7 +1,7 @@
-Setup
-=====
+WorkerPool
+==========
 
-This section describes the different ways of creating a :obj:`mpire.WorkerPool` object.
+This section describes the different ways of creating and setting up a :obj:`mpire.WorkerPool` instance.
 
 .. contents:: Contents
     :depth: 2
@@ -12,7 +12,7 @@ Starting a WorkerPool
 
 The :obj:`mpire.WorkerPool` class controls a pool of worker processes similarly to a ``multiprocessing.Pool``. It
 contains all the ``map`` like functions (with the addition of :meth:`mpire.WorkerPool.map_unordered`), but currently
-lacks the ``apply`` and ``apply_async`` functions (if you wish to add it, feel free to do so).
+lacks the ``apply`` and ``apply_async`` functions.
 
 An :obj:`mpire.WorkerPool` can be started in two different ways. The first and recommended way to do so is using a
 context manager:
@@ -42,7 +42,7 @@ The other way is to do it manually:
     # Clean up pool (this will block until all processing has completed)
     pool.stop_and_join()
 
-    # In the case you want to kill the processes even though they are still busy
+    # In the case you want to kill the processes, even though they are still busy
     pool.terminate()
 
 When using ``n_jobs=None`` MPIRE will spawn as many processes as there are CPUs on your system. Specifying more jobs
@@ -54,15 +54,15 @@ than you have CPUs is, of course, possible as well.
     to join either way, use :meth:`mpire.WorkerPool.terminate`. For more information, see the warnings in the Python
     docs here_.
 
-.. _here: https://docs.python.org/3.4/library/multiprocessing.html#pipes-and-queues
+.. _here: https://docs.python.org/3/library/multiprocessing.html#pipes-and-queues
 
 
 Nested WorkerPools
 ------------------
 
-Normally, the :obj:`mpire.WorkerPool` class spawns daemon child processes who are not able to create child processes
-themselves, so nested pools are not allowed. However, there's an option to create normal child processes, instead of
-daemon, to allow for nested structures:
+By default, the :obj:`mpire.WorkerPool` class spawns daemon child processes who are not able to create child processes
+themselves, so nested pools are not allowed. There's an option to create non-daemon child processes to allow for nested
+structures:
 
 .. code-block:: python
 
@@ -72,23 +72,24 @@ daemon, to allow for nested structures:
             results = p.map(...)
 
     with WorkerPool(n_jobs=4, daemon=True) as pool:
-        # This will raise an AssertionError telling you daemon processes can't start child processes
+        # This will raise an AssertionError telling you daemon processes
+        # can't start child processes
         pool.map(job, ...)
 
     with WorkerPool(n_jobs=4, daemon=False) as pool:
         # This will work just fine
         pool.map(job, ...)
 
-Do make sure all your non-daemon processes are terminated correctly. If a nested child process is interrupted, for
-example when the user triggers a ``KeyboardInterrupt``, the process will remain active and will have to be terminated
+Do make sure all your non-daemon processes are terminated correctly. If a nested child process is interrupted by, for
+example, a user that triggered a ``KeyboardInterrupt``, the process will remain active and will have to be terminated
 manually.
 
 
 CPU pinning
 -----------
 
-If desired you can pin the child processes of :obj:`mpire.WorkerPool` to specific CPUs by using the ``cpu_ids``
-parameter in the constructor:
+You can pin the child processes of :obj:`mpire.WorkerPool` to specific CPUs by using the ``cpu_ids`` parameter in the
+constructor:
 
 .. code-block:: python
 
@@ -116,6 +117,49 @@ CPU IDs have to be positive integers, not exceeding the number of CPUs available
 ``mpire.cpu_count()``). Use ``None`` to disable CPU pinning (which is the default).
 
 
+.. _workerID:
+
+
+Accessing the worker ID
+-----------------------
+
+Each worker in MPIRE is given an integer ID to distinguish them. Worker #1 will have ID ``0``, #2 will have ID ``1``,
+etc. Sometimes it can be useful to have access to this ID. For example, when you have a shared array of which the size
+equals the number of workers and you want worker #1 only to access the first element, and worker #2 only to access the
+second element, and so on.
+
+By default, the worker ID is not passed on. You can enable/disable this by setting the ``pass_worker_id`` flag:
+
+.. code-block:: python
+
+    def square_sum(worker_id, shared_objects, x):
+        # Even though the shared objects is a single container, we 'unpack' it anyway
+        results_container = shared_objects
+
+        # Square and sum
+        results_container[worker_id] += x * x
+
+    # Use a shared array of size equal to the number of jobs to store the results
+    results_container = Array('f', 4, lock=False)
+
+    with WorkerPool(n_jobs=4, shared_objects=results_container, pass_worker_id=True) as pool:
+        # Square the results and store them in the results container
+        pool.map_unordered(square_sum, range(100))
+
+.. important::
+
+    The worker ID will always be the first argument passed on to the provided function pointer.
+
+Instead of passing the flag to the :obj:`mpire.WorkerPool` constructor you can also make use of
+:meth:`mpire.WorkerPool.pass_on_worker_id`:
+
+.. code-block:: python
+
+    with WorkerPool(n_jobs=4, shared_objects=results_container) as pool:
+        pool.pass_on_worker_id()
+        pool.map_unordered(square_sum, range(100))
+
+
 Shared objects
 --------------
 
@@ -128,19 +172,11 @@ only copied once for each worker, in contrast to copying it for each task which 
 
 By using a ``multiprocessing.Array``, ``multiprocessing.Value``, or another object with ``multiprocessing.Manager`` you
 could even store results in the same object from multiple processes. However, be aware of the possible locking behavior
-that comes with it. However, in some cases you can safely disable locking, as is shown here:
+that comes with it. In some cases you can safely disable locking, as is shown here:
 
 .. code-block:: python
 
     from multiprocessing import Array
-
-    def square_with_index(shared_objects, idx, x):
-        # Even though the shared objects is a single container, we 'unpack' it
-        # (only to be consistent with the function below)
-        results_container = shared_objects
-
-        # Square
-        results_container[idx] = x * x
 
     def square_add_and_modulo_with_index(shared_objects, idx, x):
         # Unpack results containers
@@ -151,40 +187,37 @@ that comes with it. However, in some cases you can safely disable locking, as is
         add_results_container[idx] = x + x
         return x % 2
 
+    def main():
+        # Use a shared array of size 100 and type float to store the results
+        square_results_container = Array('f', 100, lock=False)
+        add_results_container = Array('f', 100, lock=False)
+        shared_objects = square_results_container, add_results_container
+        with WorkerPool(n_jobs=4, shared_objects=shared_objects) as pool:
 
-    # 1. Use a shared array of size 100 and type float to store the results
-    results_container = Array('f', 100, lock=False)
-    with WorkerPool(n_jobs=4, shared_objects=results_container) as pool:
+            # Square, add and modulo the results and store them in the results containers
+            modulo_results = pool.map(square_add_and_modulo_with_index,
+                                      enumerate(range(100)), iterable_len=100)
 
-        # Square the results and store them in the results container
-        pool.map_unordered(square_with_index, enumerate(range(100)),
-                           iterable_len=100)
+Multiple objects can be provided by placing them, for example, in a tuple container as is shown above.
 
-    # 2, Use a shared array of size 100 and type float to store the results
-    square_results_container = Array('f', 100, lock=False)
-    add_results_container = Array('f', 100, lock=False)
-    with WorkerPool(n_jobs=4,
-                    shared_objects=(square_results_container, add_results_container)) as pool:
+.. important::
 
-        # Square, add and modulo the results and store them in the results containers
-        modulo_results = pool.map(square_add_and_modulo_with_index,
-                                  enumerate(range(100)), iterable_len=100)
+    Shared objects are passed on as the second argument, after the worker ID (when enabled), to the provided function
+    pointer.
 
-Multiple objects can be provided by placing them, for example, in a tuple container as is done in example two above.
-When providing shared objects the provided function pointer in the map functions should receive the shared objects as
-its first argument (or the second argument when the worker ID is passed on as well, see :ref:`workerID`).
-
-In the first example (marked ``#1``) we create a results container and disable locking. We can safely disable locking
-here as each task writes to a different index in the array, so no race conditions can occur. Disabling locking is, of
-course, a lot faster than enabling it.
-
-In the second example we create two different results containers, one for squaring and for adding the given value.
-Additionally, we also return a value, even though we use shared objects for storing results.
+In the example above we create two results containers, one for squaring and for adding the given value, and disable
+locking for both. Additionally, we also return a value, even though we use shared objects for storing results. We can
+safely disable locking here as each task writes to a different index in the array, so no race conditions can occur.
+Disabling locking is, of course, a lot faster than enabling it
 
 Instead of passing the shared objects to the :obj:`mpire.WorkerPool` constructor you can also use the
 :meth:`mpire.WorkerPool.set_shared_objects` function:
 
 .. code-block:: python
+
+    def square_with_index(shared_objects, idx, x):
+        results_container = shared_objects
+        results_container[idx] = x * x
 
     results_container = Array('f', 100, lock=False)
 
@@ -222,6 +255,11 @@ If you want to let each worker have its own state you can use the ``use_worker_s
         data = np.array([[...]])
         results = pool.map(model_predict, data)
 
+.. important::
+
+    The worker state is passed on as the third argument, after the worker ID and shared objects (when enabled), to the
+    provided function pointer.
+
 Instead of passing the flag to the :obj:`mpire.WorkerPool` constructor you can also make use of
 :meth:`mpire.WorkerPool.set_use_worker_state`:
 
@@ -230,46 +268,6 @@ Instead of passing the flag to the :obj:`mpire.WorkerPool` constructor you can a
     with WorkerPool(n_jobs=4) as pool:
         pool.set_use_worker_state()
         results = pool.map(model_predict, data)
-
-.. _workerID:
-
-
-Accessing the worker ID
------------------------
-
-Each worker in MPIRE is given an integer ID to distinguish them. Worker #1 will have ID ``0``, #2 will have ID ``1``,
-etc. Sometimes it can be useful to have access to this ID. For example, when you have a shared array of which the size
-equals the number of workers and you want worker #1 only to access the first element, and worker #2 only to access the
-second element, and so on.
-
-By default, the worker ID is not passed on. You can enable/disable this by setting the ``pass_worker_id`` flag:
-
-.. code-block:: python
-
-    def square_sum(worker_id, shared_objects, x):
-        # Even though the shared objects is a single container, we 'unpack' it anyway
-        results_container = shared_objects
-
-        # Square and sum
-        results_container[worker_id] += x * x
-
-    # Use a shared array of size equal to the number of jobs to store the results
-    results_container = Array('f', 4, lock=False)
-
-    with WorkerPool(n_jobs=4, shared_objects=results_container, pass_worker_id=True) as pool:
-        # Square the results and store them in the results container
-        pool.map_unordered(square_sum, range(100))
-
-The worker ID will always be the first passed on argument to the provided function pointer.
-
-Instead of passing the flag to the :obj:`mpire.WorkerPool` constructor you can also make use of
-:meth:`mpire.WorkerPool.pass_on_worker_id`:
-
-.. code-block:: python
-
-    with WorkerPool(n_jobs=4, shared_objects=results_container) as pool:
-        pool.pass_on_worker_id()
-        pool.map_unordered(square_sum, range(100))
 
 
 Process start method

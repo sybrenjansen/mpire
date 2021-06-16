@@ -1,6 +1,15 @@
 Changelog
 =========
 
+1.3.0
+-----
+
+*[TODO: insert date]*
+
+* Worker insights added providing users insight in multiprocessing efficiency
+* Dashboard ports can now be configured
+* Fixed a bug with the `threading` backend not terminating correctly
+
 1.2.2
 -----
 

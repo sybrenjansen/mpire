@@ -1,21 +1,27 @@
+import ctypes
 import itertools
+import logging
 import os
 import queue
 import signal
 import threading
 import time
 import warnings
-from typing import Any, Callable, Generator, Iterable, List, Optional, Tuple, Union, Sized
+from datetime import datetime
+from functools import partial
+from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Sized, Tuple, Union
 
 import numpy as np
 from tqdm.auto import tqdm
 
 from mpire.exception import ExceptionHandler
 from mpire.progress_bar import ProgressBarHandler
-from mpire.signal import DelayedKeyboardInterrupt, DisableKeyboardInterruptSignal
-from mpire.utils import apply_numpy_chunking, chunk_tasks
-from mpire.worker import MP_CONTEXTS, worker_factory, mp
+from mpire.signal import DelayedKeyboardInterrupt, DisableKeyboardInterruptSignal, ignore_keyboard_interrupt
+from mpire.utils import apply_numpy_chunking, chunk_tasks, format_seconds
+from mpire.worker import MP_CONTEXTS, mp, worker_factory
 
+
+logger = logging.getLogger(__name__)
 
 # Typedefs
 CPUList = Optional[List[Union[int, List[int]]]]
@@ -57,6 +63,7 @@ class WorkerPool:
         self.cpu_ids = self._check_cpu_ids(cpu_ids)
 
         # Multiprocessing context
+        self.start_method = start_method
         self.ctx = MP_CONTEXTS[start_method]
 
         # Worker factory
@@ -109,6 +116,15 @@ class WorkerPool:
 
         # Whether or not an exception was caught by one of the child processes
         self.exception_caught = mp.Event()
+
+        # Containers for profiling
+        self.insights_manager = None
+        self.worker_start_up_time = None
+        self.worker_n_completed_tasks = None
+        self.worker_waiting_time = None
+        self.worker_working_time = None
+        self.max_task_duration = None
+        self.max_task_args = None
 
     def _check_cpu_ids(self, cpu_ids: CPUList) -> List[List[int]]:
         """
@@ -250,7 +266,9 @@ class WorkerPool:
             # Create worker
             w = self.Worker(worker_id, self._tasks_queue, self._results_queue, self._worker_done_array,
                             self._task_completed_queue, self._exception_queue, self._exception_lock,
-                            self._exception_thrown, self.func_pointer, self._keep_order.is_set(), self.shared_objects,
+                            self._exception_thrown, self.func_pointer, self._keep_order.is_set(), datetime.now(),
+                            self.worker_start_up_time, self.worker_n_completed_tasks, self.worker_waiting_time,
+                            self.worker_working_time, self.max_task_duration, self.max_task_args, self.shared_objects,
                             self.worker_lifespan, self.pass_worker_id, self.use_worker_state)
             w.daemon = self.daemon
             w.start()
@@ -452,7 +470,7 @@ class WorkerPool:
             iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
             chunk_size: Optional[int] = None, n_splits: Optional[int] = None, worker_lifespan: Optional[int] = None,
             progress_bar: bool = False, progress_bar_position: int = 0,
-            concatenate_numpy_output: bool = True) -> Union[List[Any], np.ndarray]:
+            concatenate_numpy_output: bool = True, enable_insights: bool = False) -> Union[List[Any], np.ndarray]:
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
@@ -476,6 +494,8 @@ class WorkerPool:
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
             multiple progress bars at the same time
         :param concatenate_numpy_output: When ``True`` it will concatenate numpy output to a single numpy array
+        :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
+            neglible)
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
@@ -492,7 +512,7 @@ class WorkerPool:
             iterable_len = len(iterable_of_args)
         results = self.map_unordered(func_pointer, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)),
                                      iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan,
-                                     progress_bar, progress_bar_position)
+                                     progress_bar, progress_bar_position, enable_insights)
 
         # Notify workers to forget about order
         self._keep_order.clear()
@@ -509,7 +529,7 @@ class WorkerPool:
                       iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                       chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                       worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                      progress_bar_position: int = 0) -> List[Any]:
+                      progress_bar_position: int = 0, enable_insights: bool = False) -> List[Any]:
         """
         Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
@@ -532,17 +552,20 @@ class WorkerPool:
         :param progress_bar: When ``True`` it will display a progress bar
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
             multiple progress bars at the same time
+        :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
+            neglible)
         :return: List with unordered results
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
         return list(self.imap_unordered(func_pointer, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
-                                        n_splits, worker_lifespan, progress_bar, progress_bar_position))
+                                        n_splits, worker_lifespan, progress_bar, progress_bar_position,
+                                        enable_insights))
 
     def imap(self, func_pointer: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
              iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
              chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
              worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-             progress_bar_position: int = 0) -> Generator[Any, None, None]:
+             progress_bar_position: int = 0, enable_insights: bool = False) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``, but ordered. Also allows a user to set the maximum number of
         tasks available in the queue.
@@ -565,6 +588,8 @@ class WorkerPool:
         :param progress_bar: When ``True`` it will display a progress bar
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
             multiple progress bars at the same time
+        :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
+            neglible)
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
@@ -584,7 +609,7 @@ class WorkerPool:
         for result_idx, result in self.imap_unordered(func_pointer, ((args_idx, args) for args_idx, args
                                                       in enumerate(iterable_of_args)), iterable_len, max_tasks_active,
                                                       chunk_size, n_splits, worker_lifespan, progress_bar,
-                                                      progress_bar_position):
+                                                      progress_bar_position, enable_insights):
 
             # Check if the next one(s) to return is/are temporarily stored. We use a while-true block with dict.pop() to
             # keep the temporary store as small as possible
@@ -614,7 +639,7 @@ class WorkerPool:
                        iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                        chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                        worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                       progress_bar_position: int = 0) -> Generator[Any, None, None]:
+                       progress_bar_position: int = 0, enable_insights: bool = False) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``. Also allows a user to set the maximum number of tasks available in
         the queue.
@@ -637,6 +662,8 @@ class WorkerPool:
         :param progress_bar: When ``True`` it will display a progress bar
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
             multiple progress bars at the same time
+        :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
+            neglible)
         :return: Generator yielding unordered results
         """
         # If we're dealing with numpy arrays, we have to chunk them here already
@@ -656,6 +683,9 @@ class WorkerPool:
         if not isinstance(iterable_of_args, np.ndarray):
             iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size, n_splits or self.n_jobs * 4)
 
+        # Reset profiling stats
+        self._reset_insights(enable_insights)
+
         # Start workers if there aren't any. If they already exist they must be restarted when either the function to
         # execute or the worker lifespan changes
         if self._workers and (func_pointer != self.func_pointer or worker_lifespan != self.worker_lifespan):
@@ -668,8 +698,9 @@ class WorkerPool:
         # receive updates from the workers and updates the progress bar accordingly
         with ExceptionHandler(self.terminate, self._exception_queue, self.exception_caught, self._keep_order,
                               progress_bar is not None) as exception_handler, \
-             ProgressBarHandler(func_pointer, progress_bar, n_tasks, progress_bar_position, self._task_completed_queue,
-                                self._exception_queue, self.exception_caught):
+             ProgressBarHandler(func_pointer, self.n_jobs, progress_bar, n_tasks, progress_bar_position,
+                                self._task_completed_queue, self._exception_queue, self.exception_caught,
+                                self.get_insights):
 
             # Process all args in the iterable. If maximum number of active tasks is None, we avoid all the if and
             # try-except clauses to speed up the process.
@@ -725,6 +756,10 @@ class WorkerPool:
             exception_handler.raise_on_exception()
             if not self.keep_alive:
                 self.stop_and_join()
+
+        # Log insights
+        if enable_insights:
+            logger.debug(self._get_insights_string())
 
     def _check_map_parameters(self, iterable_of_args: Union[Sized, Iterable, np.ndarray], iterable_len: Optional[int],
                               max_tasks_active: Optional[int], chunk_size: Optional[int], n_splits: Optional[int],
@@ -803,3 +838,131 @@ class WorkerPool:
         self._task_completed_queue = self.ctx.JoinableQueue() if progress_bar else None
 
         return n_tasks, chunk_size, progress_bar
+
+    def _reset_insights(self, enable_insights: bool) -> None:
+        """
+        Resets the insights containers
+
+        :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
+            neglible)
+        """
+        if enable_insights:
+            # We need to ignore the KeyboardInterrupt signal for the manager to avoid BrokenPipeErrors
+            self.insights_manager = mp.managers.SyncManager(ctx=self.ctx)
+            self.insights_manager.start(ignore_keyboard_interrupt)
+            self.worker_start_up_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
+            self.worker_n_completed_tasks = self.ctx.Array(ctypes.c_int, self.n_jobs, lock=False)
+            self.worker_waiting_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
+            self.worker_working_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
+            self.max_task_duration = self.ctx.Array(ctypes.c_double, self.n_jobs * 5, lock=False)
+            self.max_task_args = self.insights_manager.list([''] * self.n_jobs * 5)
+        else:
+            self.insights_manager = None
+            self.worker_start_up_time = None
+            self.worker_n_completed_tasks = None
+            self.worker_waiting_time = None
+            self.worker_working_time = None
+            self.max_task_duration = None
+            self.max_task_args = None
+
+    def print_insights(self) -> None:
+        """
+        Prints insights per worker
+        """
+        print(self._get_insights_string())
+
+    def _get_insights_string(self) -> str:
+        """
+        Formats the worker insights_str and returns a string
+
+        :return: worker insights_str string
+        """
+        insights = self.get_insights()
+
+        if not insights:
+            return "No profiling stats available. Try to run a function first with insights enabled ..."
+
+        insights_str = ["WorkerPool insights",
+                        "-------------------",
+                        f"Total number of tasks completed: {sum(insights['n_completed_tasks'])}"]
+
+        # Format string for parts of the worker lifespan
+        for part in ('start_up', 'waiting', 'working'):
+            insights_str.append(f"Total {part.replace('_', ' ')} time: {insights[f'total_{part}_time']}s ("
+                                f"mean: {insights[f'{part}_time_mean']}, std: {insights[f'{part}_time_std']}, "
+                                f"ratio: {insights[f'{part}_ratio'] * 100.:.2f}%)")
+
+        # Add warning when working ratio is below 80%
+        if insights['working_ratio'] < 0.8:
+            insights_str.extend(["",
+                                 "Efficiency warning: working ratio is < 80%!"])
+
+        # Add stats per worker
+        insights_str.extend(["",
+                             "Stats per worker",
+                             "----------------"])
+        for worker_id in range(self.n_jobs):
+            worker_str = [f"Worker {worker_id}",
+                          f"Tasks completed: {insights['n_completed_tasks'][worker_id]}"]
+            for part in ('start_up', 'waiting', 'working'):
+                worker_str.append(f"{part.replace('_', ' ')}: {insights[f'{part}_time'][worker_id]}s")
+            insights_str.append(' - '.join(worker_str))
+
+        # Add task stats
+        insights_str.extend(["",
+                             "Top 5 longest tasks",
+                             "-------------------"])
+        for task_idx, (duration, args) in enumerate(zip(insights['top_5_max_task_durations'],
+                                                        insights['top_5_max_task_args']), start=1):
+            insights_str.append(f"{task_idx}. Time: {duration} - {args}")
+
+        return "\n".join(insights_str)
+
+    def get_insights(self) -> Dict:
+        """
+        Creates insights from the raw insight data
+
+        :return: dictionary containing worker insights
+        """
+        if self.worker_waiting_time is None:
+            return {}
+
+        format_seconds_func = partial(format_seconds, with_milliseconds=True)
+
+        # Determine max 5 tasks based on duration, exclude zero values and args that haven't been synced yet (empty str)
+        sorted_idx = np.argsort(self.max_task_duration)[-5:][::-1]
+        top_5_max_task_durations, top_5_max_task_args = [], []
+        for idx in sorted_idx:
+            if self.max_task_duration[idx] == 0:
+                break
+            if self.max_task_args[idx] == '':
+                continue
+            top_5_max_task_durations.append(format_seconds_func(self.max_task_duration[idx]))
+            top_5_max_task_args.append(self.max_task_args[idx])
+
+        # Populate
+        total_start_up_time = sum(self.worker_start_up_time)
+        total_waiting_time = sum(self.worker_waiting_time)
+        total_working_time = sum(self.worker_working_time)
+        total_time = total_start_up_time + total_waiting_time + total_working_time
+        insights = dict(n_completed_tasks=list(self.worker_n_completed_tasks),
+                        start_up_time=list(map(format_seconds_func, self.worker_start_up_time)),
+                        waiting_time=list(map(format_seconds_func, self.worker_waiting_time)),
+                        working_time=list(map(format_seconds_func, self.worker_working_time)),
+                        total_start_up_time=format_seconds_func(total_start_up_time),
+                        total_waiting_time=format_seconds_func(total_waiting_time),
+                        total_working_time=format_seconds_func(total_working_time),
+                        top_5_max_task_durations=top_5_max_task_durations,
+                        top_5_max_task_args=top_5_max_task_args)
+
+        insights['total_time'] = format_seconds_func(total_time)
+
+        # Calculate ratio, mean and standard deviation of different parts of the worker lifespan
+        for part, total in (('start_up', total_start_up_time),
+                            ('waiting', total_waiting_time),
+                            ('working', total_working_time)):
+            insights[f'{part}_ratio'] = total / (total_time + 1e-8)
+            insights[f'{part}_time_mean'] = format_seconds_func(np.mean(getattr(self, f'worker_{part}_time')))
+            insights[f'{part}_time_std'] = format_seconds_func(np.std(getattr(self, f'worker_{part}_time')))
+
+        return insights

@@ -1,7 +1,8 @@
+import ctypes
 import types
 import unittest
 from itertools import product, repeat
-from multiprocessing import Barrier, Value
+from multiprocessing import Barrier, managers, Value
 from unittest.mock import patch
 
 import numpy as np
@@ -678,7 +679,8 @@ class KeepAliveTest(unittest.TestCase):
         """
         barrier, counter = shared
         if 'already_counted' not in worker_state:
-            counter.value += 1
+            with counter.get_lock():
+                counter.value += 1
             worker_state['already_counted'] = True
             barrier.wait()
         return x * 2
@@ -691,7 +693,8 @@ class KeepAliveTest(unittest.TestCase):
         """
         barrier, counter = shared
         if 'already_counted' not in worker_state:
-            counter.value += 1
+            with counter.get_lock():
+                counter.value += 1
             worker_state['already_counted'] = True
             barrier.wait()
         return x * 3
@@ -756,3 +759,162 @@ class ExceptionTest(unittest.TestCase):
             raise ValueError(x)
         else:
             return idx, x * x
+
+
+class InsightsTest(unittest.TestCase):
+
+    def setUp(self):
+        # Create some test data. Note that the regular map reads the inputs as a list of single tuples (one argument),
+        # whereas parallel.map sees it as a list of argument lists. Therefore we give the regular map a lambda function
+        # which mimics the parallel.map behavior.
+        self.test_data = list(enumerate([1, 2, 3, 5, 6, 9, 37, 42, 1337, 0, 3, 5, 0]))
+        self.test_desired_output = list(map(lambda _args: square(*_args), self.test_data))
+        self.test_data_len = len(self.test_data)
+        self.test_data_args = {' | '.join(f"Arg {idx}: {repr(arg)}" for idx, arg in enumerate(args))
+                               for args in self.test_data}
+
+    def test_reset_insights(self):
+        """
+        Test if resetting the insights is done properly
+        """
+        for n_jobs in [1, 2, 4]:
+            with WorkerPool(n_jobs=n_jobs) as pool:
+
+                with self.subTest('initialized', n_jobs=n_jobs):
+                    self.assertIsNone(pool.insights_manager)
+                    self.assertIsNone(pool.worker_start_up_time)
+                    self.assertIsNone(pool.worker_n_completed_tasks)
+                    self.assertIsNone(pool.worker_waiting_time)
+                    self.assertIsNone(pool.worker_working_time)
+                    self.assertIsNone(pool.max_task_duration)
+                    self.assertIsNone(pool.max_task_args)
+
+                # Containers should be properly initialized
+                with self.subTest('without initial values', n_jobs=n_jobs, enable_insights=True):
+                    pool._reset_insights(enable_insights=True)
+                    self.assertIsInstance(pool.insights_manager, managers.SyncManager)
+                    self.assertIsInstance(pool.worker_start_up_time, ctypes.Array)
+                    self.assertIsInstance(pool.worker_n_completed_tasks, ctypes.Array)
+                    self.assertIsInstance(pool.worker_waiting_time, ctypes.Array)
+                    self.assertIsInstance(pool.worker_working_time, ctypes.Array)
+                    self.assertIsInstance(pool.max_task_duration, ctypes.Array)
+                    self.assertIsInstance(pool.max_task_args, managers.ListProxy)
+
+                    # Basic sanity checks for the values
+                    self.assertEqual(sum(pool.worker_start_up_time), 0)
+                    self.assertEqual(sum(pool.worker_n_completed_tasks), 0)
+                    self.assertEqual(sum(pool.worker_waiting_time), 0)
+                    self.assertEqual(sum(pool.worker_working_time), 0)
+                    self.assertEqual(sum(pool.max_task_duration), 0)
+                    self.assertListEqual(list(pool.max_task_args), [''] * n_jobs * 5)
+
+                # Execute something so we can test if the containers will be properly resetted
+                pool.map(square, self.test_data)
+
+                # Containers should be properly initialized
+                with self.subTest('with initial values', n_jobs=n_jobs, enable_insights=True):
+                    pool._reset_insights(enable_insights=True)
+                    # Basic sanity checks for the values
+                    self.assertEqual(sum(pool.worker_start_up_time), 0)
+                    self.assertEqual(sum(pool.worker_n_completed_tasks), 0)
+                    self.assertEqual(sum(pool.worker_waiting_time), 0)
+                    self.assertEqual(sum(pool.worker_working_time), 0)
+                    self.assertEqual(sum(pool.max_task_duration), 0)
+                    self.assertListEqual(list(pool.max_task_args), [''] * n_jobs * 5)
+
+                # Disabling should set things to None again
+                with self.subTest(n_jobs=n_jobs, enable_insights=False):
+                    pool._reset_insights(enable_insights=False)
+                    self.assertIsNone(pool.insights_manager)
+                    self.assertIsNone(pool.worker_start_up_time)
+                    self.assertIsNone(pool.worker_n_completed_tasks)
+                    self.assertIsNone(pool.worker_waiting_time)
+                    self.assertIsNone(pool.worker_working_time)
+                    self.assertIsNone(pool.max_task_duration)
+                    self.assertIsNone(pool.max_task_args)
+
+    def test_enable_insights(self):
+        """
+        Insight containers are initially set to None values. When enabled they should be changed to appropriate
+        containers. When a second task is started it should reset them. If disabled, they should remain None
+        """
+        with WorkerPool(n_jobs=2) as pool:
+
+            # We run this a few times to see if it resets properly. We only verify this by checking the
+            # n_completed_tasks
+            for idx in range(3):
+                with self.subTest('enabled', idx=idx):
+
+                    self.assertListEqual(pool.map(square, self.test_data, enable_insights=True),
+                                         self.test_desired_output)
+
+                    # Basic sanity checks for the values. Some max task args can be empty, in that case the duration
+                    # should be 0 (= no data)
+                    self.assertGreater(sum(pool.worker_start_up_time), 0)
+                    self.assertEqual(sum(pool.worker_n_completed_tasks), self.test_data_len)
+                    self.assertGreater(sum(pool.worker_waiting_time), 0)
+                    self.assertGreater(sum(pool.worker_working_time), 0)
+                    self.assertGreater(max(pool.max_task_duration), 0)
+                    for duration, args in zip(pool.max_task_duration, pool.max_task_args):
+                        if duration == 0:
+                            self.assertEqual(args, '')
+                        else:
+                            self.assertIn(args, self.test_data_args)
+
+            # Disabling should set things to None again
+            with self.subTest('disable'):
+                self.assertListEqual(pool.map(square, self.test_data, enable_insights=False), self.test_desired_output)
+                self.assertIsNone(pool.insights_manager)
+                self.assertIsNone(pool.worker_start_up_time)
+                self.assertIsNone(pool.worker_n_completed_tasks)
+                self.assertIsNone(pool.worker_waiting_time)
+                self.assertIsNone(pool.worker_working_time)
+                self.assertIsNone(pool.max_task_duration)
+                self.assertIsNone(pool.max_task_args)
+
+    def test_get_insights(self):
+        """
+        Test if the insights are properly processed
+        """
+        with WorkerPool(n_jobs=2) as pool:
+
+            with self.subTest(enable_insights=False):
+                pool._reset_insights(enable_insights=False)
+                self.assertDictEqual(pool.get_insights(), {})
+
+            with self.subTest(enable_insights=True):
+                pool._reset_insights(enable_insights=True)
+                pool.worker_start_up_time[:] = [0.1, 0.2]
+                pool.worker_n_completed_tasks[:] = [2, 3]
+                pool.worker_waiting_time[:] = [0.4, 0.3]
+                pool.worker_working_time[:] = [42.0, 37.0]
+
+                # Durations that are zero or args that are empty are skipped
+                pool.max_task_duration[:] = [0.0, 0.0, 1.0, 2.0, 0.0, 6.0, 0.8, 0.0, 0.1, 0.0]
+                pool.max_task_args[:] = ['', '', '1', '2', '', '3', '4', '', '5', '']
+                insights = pool.get_insights()
+
+                # Test ratios separately because of rounding errors
+                self.assertAlmostEqual(insights['start_up_ratio'], 0.3 / (0.3 + 0.7 + 79.0))
+                self.assertAlmostEqual(insights['waiting_ratio'], 0.7 / (0.3 + 0.7 + 79.0))
+                self.assertAlmostEqual(insights['working_ratio'], 79.0 / (0.3 + 0.7 + 79.0))
+                del insights['start_up_ratio'], insights['waiting_ratio'], insights['working_ratio']
+
+                self.assertDictEqual(insights, {
+                    'n_completed_tasks': [2, 3],
+                    'start_up_time': ['0:00:00.100', '0:00:00.200'],
+                    'waiting_time': ['0:00:00.400', '0:00:00.300'],
+                    'working_time': ['0:00:42', '0:00:37'],
+                    'total_start_up_time': '0:00:00.300',
+                    'total_waiting_time': '0:00:00.700',
+                    'total_working_time': '0:01:19',
+                    'top_5_max_task_durations': ['0:00:06', '0:00:02', '0:00:01', '0:00:00.800', '0:00:00.100'],
+                    'top_5_max_task_args': ['3', '2', '1', '4', '5'],
+                    'total_time': '0:01:20',
+                    'start_up_time_mean': '0:00:00.150',
+                    'start_up_time_std': '0:00:00.050',
+                    'waiting_time_mean': '0:00:00.350',
+                    'waiting_time_std': '0:00:00.050',
+                    'working_time_mean': '0:00:39.500',
+                    'working_time_std': '0:00:02.500'
+                })

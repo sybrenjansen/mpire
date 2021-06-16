@@ -68,15 +68,31 @@ def progress_bar_new() -> str:
 
     :return: JSON string containing new progress bar HTML
     """
+    pb_id = int(request.args['pb_id'])
+    has_insights = request.args['has_insights'] == 'true'
+
     # Obtain progress bar details. Only show the user@host part if it doesn't equal the user@host of this process
     # (in case someone connected to this dashboard from another machine or user)
-    progress_bar_details = _DASHBOARD_TQDM_DETAILS_DICT.get(int(request.args['pb_id']))
+    progress_bar_details = _DASHBOARD_TQDM_DETAILS_DICT.get(pb_id)
     if progress_bar_details['user'] == '{}@{}'.format(getpass.getuser(), socket.gethostname()):
         progress_bar_details['user'] = ''
     else:
         progress_bar_details['user'] = '{}:'.format(progress_bar_details['user'])
 
-    return jsonify(result=_progress_bar_html.format(id=request.args['pb_id'],
+    # Create table for worker insights
+    insights_workers = []
+    if has_insights:
+        for worker_id in range(progress_bar_details['n_jobs']):
+            insights_workers.append(f"<tr><td>{worker_id}</td>"
+                                    f"<td id='pb_{pb_id}_insights_worker_{worker_id}_tasks_completed'></td>"
+                                    f"<td id='pb_{pb_id}_insights_worker_{worker_id}_start_up_time'></td>"
+                                    f"<td id='pb_{pb_id}_insights_worker_{worker_id}_waiting_time'></td>"
+                                    f"<td id='pb_{pb_id}_insights_worker_{worker_id}_working_time'></td>"
+                                    f"</tr>")
+    insights_workers = "\n".join(insights_workers)
+
+    return jsonify(result=_progress_bar_html.format(id=pb_id, insights_workers=insights_workers,
+                                                    has_insights='block' if has_insights else 'none',
                                                     **{k: escape(v) for k, v in progress_bar_details.items()}))
 
 

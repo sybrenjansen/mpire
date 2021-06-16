@@ -34,8 +34,12 @@ class DisableKeyboardInterruptSignal:
     def __enter__(self) -> None:
         # Prevent signal from propagating to child process
         self._handler = getsignal(SIGINT)
-        signal_(SIGINT, SIG_IGN)
+        ignore_keyboard_interrupt()
 
     def __exit__(self, exc_type: Type, exc_val: Exception, exc_tb: Traceback) -> None:
         # Restore signal
         signal_(SIGINT, self._handler)
+
+
+def ignore_keyboard_interrupt():
+    signal_(SIGINT, SIG_IGN)

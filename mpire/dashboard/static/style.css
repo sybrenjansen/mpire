@@ -60,6 +60,18 @@ h1 .username_at {
     text-align: center;
 }
 
+.pb_details_left_filler {
+    float: left;
+    width: 3%;
+    height: 1em;
+}
+
+.pb_details_right {
+    overflow: hidden;
+    margin-top: 6px;
+    padding-right: 2em;
+}
+
 .clickable {
     cursor: pointer;
 }
@@ -71,23 +83,131 @@ td.pb_details {
 
 td.pb_details > div {
     display: none;
-    padding: 12px;
+    padding: 12px 12px 24px 12px;
+}
+
+.separator {
+    display: flex;
+    align-items: center;
+    text-align: center;
+    font-size: 1.05em;
+    margin-top: 10px;
+    margin-bottom: 20px;
+}
+
+.separator::before,
+.separator::after {
+    content: '';
+    border-bottom: 1px solid rgba(255, 255, 255, .2);
+}
+
+.separator::before {
+    flex: 0.025;
+}
+
+.separator::after {
+    flex: 0.975;
+}
+
+.separator:not(:empty)::before {
+    margin-right: 1em;
+}
+
+.separator:not(:empty)::after {
+    margin-left: 1em;
+}
+
+.separator.clickable:hover {
+    color: rgb(255, 235, 156);
+}
+
+.separator.clickable:hover::before,
+.separator.clickable:hover::after {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+.insights {
+    display: none;
+}
+
+.insights p.info {
+    color: #ccc;
+    margin: 1em 0;
+}
+
+.insights span.info {
+    color: rgb(0, 255, 255);
+}
+
+.insights span.clickable {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    word-break: normal;
+    color: rgb(255, 255, 255);
+}
+
+.insights span.clickable:hover {
+    color: rgb(255, 235, 156);
+}
+
+.insights-left {
+    float: left;
+    width: 48%;
+}
+
+.insights-middle {
+    float: left;
+    width: 4%;
+    height: 1em;
+}
+
+.insights-right {
+    float: left;
+    width: 48%;
+}
+
+.insights table {
+    margin-bottom: 20px;
+}
+
+.insights th,
+.insights td {
+    padding: 0.5em 1.0em;
+}
+
+.insights td {
+    text-align: right;
+}
+
+.insights_table {
+    width: 100%;
+    table-layout: fixed;
+}
+
+.insights_table tr th:first-child,
+.insights_table tr td:first-child {
+    width: 20px;
+}
+
+.insights_table tr th:nth-child(2),
+.insights_table tr td:nth-child(2) {
+    width: 100px;
+    text-align: right;
+}
+
+.insights_table tr th:nth-child(3),
+.insights_table tr td:nth-child(3) {
+    text-align: left;
+    word-break: break-all;
+}
+
+.insights_table .code {
+    font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    word-break: break-all;
+    color: rgb(0, 255, 255);
 }
 
 .glyphicon {
     display: none;
-}
-
-.pb_details_left_filler {
-    float: left;
-    width: 3%;
-    height: 1em;
-}
-
-.pb_details_right {
-    overflow: hidden;
-    margin-top: 6px;
-    padding-right: 2em;
 }
 
 code {
@@ -106,4 +226,10 @@ p {
     border-top: 1px dashed;
     margin-top: 20px;
     padding-top: 20px;
+    word-break: break-all;
+    white-space: pre-wrap;
+}
+
+.hidden {
+    display: none;
 }

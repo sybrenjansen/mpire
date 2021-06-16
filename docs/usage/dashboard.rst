@@ -1,8 +1,11 @@
+.. _Dashboard:
+
 Dashboard
 =========
 
 The dashboard allows you to see progress information from a browser. This is convenient when running scripts in a
-notebook or screen, or want to share the progress information with others.
+notebook or screen, if you want to share the progress information with others, or if you want to get real-time worker
+insight information.
 
 The dashboard dependencies are not installed by default. See :ref:`dashboarddep` for more information.
 
@@ -91,15 +94,21 @@ You can connect to an existing dashboard on the same, but also on a remote machi
 Using the dashboard
 -------------------
 
-When you have connected to a dashboard you don't need to change anything to your code. When you have enabled the use of
+Once connected to a dashboard you don't need to change anything to your code. When you have enabled the use of
 a progress bar in your ``map`` call the progress bar will automatically register itself to the dashboard server and show
 up, like here:
 
 .. code-block:: python
 
+    from mpire import WorkerPool
     from mpire.dashboard import connect_to_dashboard
 
     connect_to_dashboard(8099)
+
+    def square(x):
+        import time
+        time.sleep(0.01)  # To be able to show progress
+        return x * x
 
     with WorkerPool(4) as pool:
         pool.map(square, range(10000), progress_bar=True)
@@ -121,5 +130,12 @@ or show the traceback information in case of an exception:
 
 .. thumbnail:: mpire_dashboard_error.png
     :title: MPIRE dashboard - Error traceback
+
+In case you have enabled :ref:`worker insights` these insights will be shown real-time in the dashboard:
+
+.. thumbnail:: mpire_dashboard_insights.png
+    :title: MPIRE dashboard - Worker insights
+
+Click on the ``Insights (click to expand/collapse)`` to either expand or collapse the insight details.
 
 The dashboard will update automatically every 0.5 seconds.

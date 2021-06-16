@@ -19,6 +19,9 @@ Features
 - Easy use of copy-on-write shared objects with a pool of workers
 - Each worker can have its own state (e.g., to load a memory-intensive model only once for each worker without the
   need of sending it through a queue)
+- Progress bar support using tqdm_
+- Progress dashboard support
+- Worker insights gives you insight in your multiprocessing efficiency
 - Automatic task chunking for all available map functions to speed up processing of small task queues (including numpy
   arrays)
 - Adjustable maximum number of active tasks to avoid memory problems
@@ -26,8 +29,6 @@ Features
 - Nested pool of workers are allowed when setting the ``daemon`` option
 - Child processes can be pinned to specific or a range of CPUs
 - Multiple process start methods available, including: ``fork`` (default), ``forkserver``, ``spawn``, and ``threading``
-- Progress bar support using tqdm_
-- Progress dashboard support
 - (Optional) dill_ support
 
 .. _tqdm: https://tqdm.github.io/
