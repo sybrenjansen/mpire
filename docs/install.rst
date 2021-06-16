@@ -13,12 +13,12 @@ MPIRE can be installed through pip:
 
 .. note::
 
-    MPIRE is only available for Python 3.x.
+    MPIRE is only available for Python >= 3.6.
 
 Dependencies
 ------------
 
-- Python 3.x
+- Python >= 3.6
 
 Python packages (installed automatically when installing MPIRE):
 

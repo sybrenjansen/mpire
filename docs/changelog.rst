@@ -9,6 +9,7 @@ Changelog
 * Worker insights added providing users insight in multiprocessing efficiency
 * Dashboard ports can now be configured
 * Fixed a bug with the `threading` backend not terminating correctly
+* Removed Python 3.5 support
 
 1.2.2
 -----
