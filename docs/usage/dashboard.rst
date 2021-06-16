@@ -34,7 +34,12 @@ which will print:
 
 This will start a dashboard on your local machine on port 8080. When the port is already in use MPIRE will try the next,
 until it finds an unused one. In the rare case that no ports are available up to port 8099 the function will raise an
-``OSError``.
+``OSError``. By default, MPIRE tries ports 8080-8100. You can override this range by passing on a custom range object:
+
+
+.. code-block:: python
+
+    dashboard_details = start_dashboard(range(9000, 9100))
 
 The returned dictionary contains the port number that is ultimately chosen. It also contains information on how to
 connect to this dashboard remotely.
@@ -56,7 +61,11 @@ This will start a dashboard with the connection details printed on screen. It wi
     --------------------------------------------------
 
 The server part corresponds to the ``manager_host`` and ``manager_port_nr`` from the dictionary returned by
-:meth:`mpire.dashboard.start_dashboard`.
+:meth:`mpire.dashboard.start_dashboard`. Similarly to earlier, a custom port range can be provided:
+
+.. code-block:: bash
+
+    $ mpire-dashboard --port-range 9000-9100
 
 The benefit of starting a dashboard this way is that your dashboard keeps running in case of errors in your script. You
 will be able to see what the error was, when it occurred and where it occurred in your code.

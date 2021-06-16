@@ -2,7 +2,7 @@ import socket
 from ctypes import c_char
 from multiprocessing import Array, Lock, Value
 from multiprocessing.managers import BaseProxy, SyncManager
-from typing import Dict, Tuple
+from typing import Dict, Sequence, Tuple
 
 # Dict for tqdm progress bar updates
 DASHBOARD_TQDM_DICT = {}
@@ -39,13 +39,14 @@ def get_dashboard_tqdm_lock() -> Lock:
     return DASHBOARD_TQDM_LOCK
 
 
-def start_manager_server() -> SyncManager:
+def start_manager_server(port_range: Sequence = range(8080, 8100)) -> SyncManager:
     """
     Start a SyncManager
 
+    :param port_range: Port range to try. Reverses the list and will then pick the first one available
     :return: SyncManager
     """
-    for port_nr in reversed(range(8080, 8100)):
+    for port_nr in reversed(port_range):
         try:
             # If a port is already occupied the SyncManager process will spit out EOFError and OSError messages. The
             # former can be catched, but the latter will still show up. So we first check if a port is available
@@ -71,7 +72,7 @@ def start_manager_server() -> SyncManager:
             # Port is occupied, ignore it and try another
             pass
 
-    raise OSError("All ports (8080-8099) are in use")
+    raise OSError(f"Dashboard Manager Server: All ports are in use: {port_range}")
 
 
 def get_manager_client_dicts() -> Tuple[BaseProxy, BaseProxy, BaseProxy]:

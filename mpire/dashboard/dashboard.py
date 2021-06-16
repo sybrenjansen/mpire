@@ -6,7 +6,7 @@ import socket
 from datetime import datetime
 from multiprocessing import Event, Process, Value
 from pkg_resources import resource_string
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, Sequence
 
 from flask import escape, Flask, jsonify, render_template, request
 from werkzeug.serving import make_server
@@ -80,10 +80,11 @@ def progress_bar_new() -> str:
                                                     **{k: escape(v) for k, v in progress_bar_details.items()}))
 
 
-def start_dashboard() -> Dict[str, Union[int, str]]:
+def start_dashboard(port_range: Sequence = range(8080, 8100)) -> Dict[str, Union[int, str]]:
     """
     Starts a new MPIRE dashboard
 
+    :param port_range: Port range to try.
     :return: A dictionary containing the dashboard port number and manager host and port_nr being used
     """
     global _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
@@ -94,12 +95,12 @@ def start_dashboard() -> Dict[str, Union[int, str]]:
         with DisableKeyboardInterruptSignal():
 
             # Set up manager server
-            _DASHBOARD_MANAGER = start_manager_server()
+            _DASHBOARD_MANAGER = start_manager_server(port_range)
 
             # Start flask server
             logging.getLogger('werkzeug').setLevel(logging.WARN)
             dashboard_port_nr = Value('i', 0, lock=False)
-            Process(target=_run, args=(DASHBOARD_STARTED_EVENT, dashboard_port_nr),
+            Process(target=_run, args=(DASHBOARD_STARTED_EVENT, dashboard_port_nr, port_range),
                     daemon=True, name='dashboard-process').start()
             DASHBOARD_STARTED_EVENT.wait()
 
@@ -130,19 +131,20 @@ def connect_to_dashboard(manager_port_nr: int, manager_host: Optional[str] = Non
         raise RuntimeError("You're already connected to a running dashboard")
 
 
-def _run(started: Event, dashboard_port_nr: Value) -> None:
+def _run(started: Event, dashboard_port_nr: Value, port_range: Sequence) -> None:
     """
     Starts a dashboard server
 
     :param started: Event that signals the dashboard server has started
     :param dashboard_port_nr: Value object for storing the dashboad port number that is used
+    :param port_range: Port range to try.
     """
     # Connect to manager from this process
     global _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _server
     _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _ = get_manager_client_dicts()
 
     # Try different ports, until a free one is found
-    for port in range(8080, 8100):
+    for port in port_range:
         try:
             _server = make_server('0.0.0.0', port, app)
             dashboard_port_nr.value = port
@@ -155,7 +157,7 @@ def _run(started: Event, dashboard_port_nr: Value) -> None:
                 raise exc
 
     if not _server:
-        raise OSError("All ports (8080-8099) are in use")
+        raise OSError(f"Dashboard server: All ports are in use: {port_range}")
 
 
 @atexit.register
