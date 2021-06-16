@@ -15,9 +15,11 @@ class ThreadingContext:
     Lock = threading.Lock
     Thread = threading.Thread
 
-    # threading doesn't have Array and JoinableQueue, so we take it from multiprocessing. Both are thread-safe
+    # threading doesn't have Array and JoinableQueue, so we take it from multiprocessing. Both are thread-safe. We need
+    # the Process class for the MPIRE insights SyncManager instance.
     Array = mp.Array
     JoinableQueue = mp.JoinableQueue
+    Process = mp.Process
 
 
 MP_CONTEXTS = {'fork': mp.get_context('fork'),

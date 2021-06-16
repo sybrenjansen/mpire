@@ -353,12 +353,16 @@ class WorkerPool:
         # Set exception thrown so workers know to stop fetching new tasks
         self._exception_thrown.set()
 
-        # Create cleanup threads such that processes can get killed simultaneously, which can save quite some time
-        threads = []
-        for w in self._workers:
-            t = threading.Thread(target=self._terminate_worker, args=(w,))
-            t.start()
-            threads.append(t)
+        # When we're working with threads we have to wait for them to join. We can't kill threads in Python
+        if self.start_method == 'threading':
+            threads = self._workers
+        else:
+            # Create cleanup threads such that processes can get killed simultaneously, which can save quite some time
+            threads = []
+            for w in self._workers:
+                t = threading.Thread(target=self._terminate_worker, args=(w,))
+                t.start()
+                threads.append(t)
 
         # Wait until cleanup threads are done
         for t in threads:
