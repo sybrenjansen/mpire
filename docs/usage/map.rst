@@ -435,6 +435,12 @@ function does, given they're enabled.
     number of elements in the list that's returned from :meth:`mpire.WorkerPool.get_exit_results` does not always equal
     ``n_jobs``.
 
+.. important::
+
+    When ``keep_alive`` is enabled the workers won't be terminated after a ``map`` call. This means the exit function
+    won't be called until it's time for cleaning up the entire pool. You will have to explicitly call
+    :meth:`mpire.WorkerPool.stop_and_join` to receive the exit results.
+
 One usecase for these functions is to load a big dataset or model that is needed for every task only once per worker
 (see :ref:`worker_state` for this example). Another usecase would be to set up and close a database connection on init
 and exit.

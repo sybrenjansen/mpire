@@ -77,7 +77,7 @@ class WorkerPool:
 
         # Queue where the child processes can store exit results in
         self._exit_results = None
-        self._exit_results_queues = None
+        self._exit_results_queues = []
 
         # Array where the child processes can request a restart
         self._worker_done_array = None
@@ -249,7 +249,7 @@ class WorkerPool:
         self._tasks_queue = self.ctx.JoinableQueue()
         self._results_queue = self.ctx.JoinableQueue()
         self._exit_results = []
-        self._exit_results_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)] if self.worker_exit else None
+        self._exit_results_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)] if self.worker_exit else []
         self._worker_done_array = self.ctx.Array('b', self.n_jobs, lock=False)
         self._exception_queue = self.ctx.JoinableQueue()
         self._exception_thrown.clear()
@@ -267,7 +267,7 @@ class WorkerPool:
             if restart_worker:
                 # Obtain results from exit results queue (should be done before joining the worker)
                 if self._exit_results_queues:
-                    with DisableKeyboardInterruptSignal():
+                    with DelayedKeyboardInterrupt():
                         self._exit_results.append(self._exit_results_queues[worker_id].get(block=True))
                         self._exit_results_queues[worker_id].task_done()
 
@@ -285,6 +285,7 @@ class WorkerPool:
         :param worker_id: ID of the worker
         :return: Worker instance
         """
+        # Disable the interrupt signal. We let the process die gracefully if it needs to
         with DisableKeyboardInterruptSignal():
             # Create worker
             w = self.Worker(worker_id, self._tasks_queue, self._results_queue,
@@ -383,7 +384,7 @@ class WorkerPool:
 
             # Obtain results from the exit results queues (should be done before joining the workers). When an error
             # occurred inside the exit function we need to catch it here.
-            for wid, q in enumerate(self._exit_results_queues or []):
+            for wid, q in enumerate(self._exit_results_queues):
                 while not self._exception_thrown.is_set():
                     try:
                         self._exit_results.append(q.get(block=True, timeout=0.1))
@@ -397,7 +398,7 @@ class WorkerPool:
             # Join queues
             self._tasks_queue.join()
             self._results_queue.join()
-            [q.join() for q in self._exit_results_queues or []]
+            [q.join() for q in self._exit_results_queues]
 
             # Join workers
             self.join()
@@ -436,7 +437,7 @@ class WorkerPool:
         # Drain and join the queues
         self._drain_and_join_queue(self._tasks_queue)
         self._drain_and_join_queue(self._results_queue)
-        for q in self._exit_results_queues or []:
+        for q in self._exit_results_queues:
             self._drain_and_join_queue(q)
 
         # Reset variables

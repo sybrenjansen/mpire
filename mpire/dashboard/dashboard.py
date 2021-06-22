@@ -6,7 +6,7 @@ import socket
 from datetime import datetime
 from multiprocessing import Event, Process, Value
 from pkg_resources import resource_string
-from typing import Dict, Optional, Union, Sequence
+from typing import Dict, Optional, Sequence, Union
 
 from flask import escape, Flask, jsonify, render_template, request
 from werkzeug.serving import make_server
