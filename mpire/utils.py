@@ -16,7 +16,7 @@ def chunk_tasks(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Opt
     speed up processing drastically.
 
     :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-        passes it to the function pointer
+        passes it to the function
     :param iterable_len: Number of tasks available in ``iterable_of_args``. Only needed when ``iterable_of_args`` is a
         generator
     :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None``, will use ``n_splits`` to determine
@@ -75,7 +75,7 @@ def apply_numpy_chunking(iterable_of_args: Union[Iterable, np.ndarray], iterable
     If we're dealing with numpy arrays, chunk them using numpy slicing and return changed map parameters
 
     :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-        passes it to the function pointer
+        passes it to the function
     :param iterable_len: When chunk_size is set to ``None`` it needs to know the number of tasks. This can either be
         provided by implementing the ``__len__`` function on the iterable object, or by specifying the number of tasks
     :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None``, will generate ``n_jobs * 4``
@@ -101,7 +101,7 @@ def get_n_chunks(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Op
     Get number of chunks
 
     :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-        passes it to the function pointer
+        passes it to the function
     :param iterable_len: Number of tasks available in ``iterable_of_args``. Only needed when ``iterable_of_args`` is a
         generator
     :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None``, will use ``n_splits`` to determine
@@ -132,7 +132,7 @@ def make_single_arguments(iterable_of_args: Union[Iterable, np.ndarray], generat
     Converts an iterable of single arguments to an iterable of single argument tuples
 
     :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-        passes it to the function pointer
+        passes it to the function
     :param generator: Whether or not to return a generator, otherwise a materialized list will be returned
     :return: Iterable of single argument tuples
     """

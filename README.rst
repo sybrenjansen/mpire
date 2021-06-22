@@ -17,8 +17,9 @@ Features
 
 - Multiprocessing with ``map``/``map_unordered``/``imap``/``imap_unordered`` functions
 - Easy use of copy-on-write shared objects with a pool of workers
-- Each worker can have its own state (e.g., to load a memory-intensive model only once for each worker without the
-  need of sending it through a queue)
+- Each worker can have its own state and with convenient worker init and exit functionality this state can be easily
+  manipulated (e.g., to load a memory-intensive model only once for each worker without the need of sending it through a
+  queue)
 - Progress bar support using tqdm_
 - Progress dashboard support
 - Worker insights gives you insight in your multiprocessing efficiency

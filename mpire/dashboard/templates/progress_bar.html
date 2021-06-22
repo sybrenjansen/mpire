@@ -34,8 +34,10 @@
                         ">Insights (click to&nbsp;<span id="pb_{id}_insights_expand">expand</span>)</h1>
                         <div id="pb_{id}_insights" class="insights">
                             <p class="info"><span class="info">&#9432;</span> Start up time denotes the time to spin up
-                                a worker. Waiting time is the time a worker needs to wait for new tasks to come in.
-                                Working time is the time a worker spends on the task at hand.</p>
+                                a worker. Init time is the time a worker spends on the initialization function, when
+                                provided. Waiting time is the time a worker needs to wait for new tasks to come in.
+                                Working time is the time a worker spends on the task at hand. Exit time is the time a
+                                worker spends on the exit function, when provided.</p>
                             <div class="insights-left">
                                 <h1 class="separator">Global stats</h1>
                                 <table>
@@ -53,6 +55,13 @@
                                         <td id="pb_{id}_insights_start_up_ratio"></td>
                                     </tr>
                                     <tr>
+                                        <th>Init time</th>
+                                        <td id="pb_{id}_insights_total_init_time"></td>
+                                        <td id="pb_{id}_insights_init_time_mean"></td>
+                                        <td id="pb_{id}_insights_init_time_std"></td>
+                                        <td id="pb_{id}_insights_init_ratio"></td>
+                                    </tr>
+                                    <tr>
                                         <th>Waiting time</th>
                                         <td id="pb_{id}_insights_total_waiting_time"></td>
                                         <td id="pb_{id}_insights_waiting_time_mean"></td>
@@ -65,6 +74,13 @@
                                         <td id="pb_{id}_insights_working_time_mean"></td>
                                         <td id="pb_{id}_insights_working_time_std"></td>
                                         <td id="pb_{id}_insights_working_ratio"></td>
+                                    </tr>
+                                    <tr>
+                                        <th>Exit time</th>
+                                        <td id="pb_{id}_insights_total_exit_time"></td>
+                                        <td id="pb_{id}_insights_exit_time_mean"></td>
+                                        <td id="pb_{id}_insights_exit_time_std"></td>
+                                        <td id="pb_{id}_insights_exit_ratio"></td>
                                     </tr>
                                 </table>
 
@@ -112,8 +128,12 @@
                                 <table id="pb_{id}_insights_workers">
                                     <thead>
                                     <tr>
-                                        <th>Worker</th><th>Tasks completed</th><th>Total start up time</th>
-                                        <th>Total waiting time</th><th>Total working time</th>
+                                        <th>Worker</th><th>Tasks completed</th>
+                                        <th title="Total start up time">T. start up time</th>
+                                        <th title="Total initialization time">T. init time</th>
+                                        <th title="Total waiting time">T. waiting time</th>
+                                        <th title="Total working time">T. working time</th>
+                                        <th title="Total exit time">T. exit time</th>
                                     </tr>
                                     </thead>
                                     {insights_workers}

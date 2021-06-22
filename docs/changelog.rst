@@ -6,8 +6,10 @@ Changelog
 
 *[TODO: insert date]*
 
-* Worker insights added providing users insight in multiprocessing efficiency
+* Worker insights added, providing users insight in multiprocessing efficiency
+* ``worker_init`` and ``worker_exit`` parameters added to each ``map`` function
 * Dashboard ports can now be configured
+* Renamed ``func_pointer`` to ``func`` in each ``map`` function
 * Fixed a bug with the `threading` backend not terminating correctly
 * Removed Python 3.5 support
 

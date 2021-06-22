@@ -392,6 +392,54 @@ the main WorkerPool (which is the default).
     progress bar won't update as you would expect. Note that you can always use the MPIRE dashboard.
 
 
+.. _worker_init_exit:
+
+Worker init and exit
+--------------------
+
+When you want to initialize a worker you can make use of the ``worker_init`` parameter of any ``map`` function. This
+will call the initialization function only once per worker. Similarly, if you need to clean up the worker at the end of
+its lifecycle you can use the ``worker_exit`` parameter. Additionally, the exit function can return anything you like,
+which can be collected using :meth:`mpire.WorkerPool.get_exit_results` after the workers are done.
+
+For example:
+
+.. code-block:: python
+
+    def init_func(worker_state):
+        # Initialize a counter for each worker
+        worker_state['count_even'] = 0
+
+    def square_and_count_even(worker_state, x):
+        # Count number of even numbers and return the square
+        if x % 2 == 0:
+            worker_state['count_even'] += 1
+        return x**x
+
+    def exit_func(worker_state):
+        # Return the counter
+        return worker_state['count_even']
+
+    with WorkerPool(n_jobs=4, use_worker_state=True) as pool:
+        pool.map(square_and_count_even, range(100), worker_init=init_func, worker_exit=exit_func)
+        print(pool.get_exit_results())  # Output, e.g.: [13, 13, 12, 12]
+        print(sum(pool.get_exit_results()))  # Output: 50
+
+Both init and exit functions receive the worker ID, shared objects, and worker state in the same way as the task
+function does, given they're enabled.
+
+.. important::
+
+    When the ``worker_lifespan`` option is used to restart workers during execution, the exit function will be called
+    for the worker that's shutting down and the init function will be called again for the new worker. Therefore, the
+    number of elements in the list that's returned from :meth:`mpire.WorkerPool.get_exit_results` does not always equal
+    ``n_jobs``.
+
+One usecase for these functions is to load a big dataset or model that is needed for every task only once per worker
+(see :ref:`worker_state` for this example). Another usecase would be to set up and close a database connection on init
+and exit.
+
+
 .. _worker insights:
 
 Worker insights
@@ -420,20 +468,26 @@ the insights to console:
         return x * x
 
     with WorkerPool(n_jobs=4) as pool:
-        pool.map(square, range(100), enable_insights=True)
+        pool.map(sleep_and_square, range(100), enable_insights=True)
         insights = pool.get_insights()
         print(insights)
 
     # Output:
     {'n_completed_tasks': [28, 24, 24, 24],
      'total_start_up_time': '0:00:00.038',
+     'total_init_time': '0:00:00',
      'total_waiting_time': '0:00:00.798',
      'total_working_time': '0:00:04.980',
+     'total_exit_time': '0:00:00',
      'total_time': '0:00:05.816',
      'start_up_time': ['0:00:00.010', '0:00:00.008', '0:00:00.008', '0:00:00.011'],
      'start_up_time_mean': '0:00:00.009',
      'start_up_time_std': '0:00:00.001',
      'start_up_ratio': 0.006610452621805033,
+     'init_time': ['0:00:00', '0:00:00', '0:00:00', '0:00:00'],
+     'init_time_mean': '0:00:00',
+     'init_time_std': '0:00:00',
+     'init_ratio': 0.0,
      'waiting_time': ['0:00:00.309', '0:00:00.311', '0:00:00.165', '0:00:00.012'],
      'waiting_time_mean': '0:00:00.199',
      'waiting_time_std': '0:00:00.123',
@@ -442,16 +496,21 @@ the insights to console:
      'working_time_mean': '0:00:01.245',
      'working_time_std': '0:00:00.117',
      'working_ratio': 0.8561601182661567,
+     'exit_time': ['0:00:00', '0:00:00', '0:00:00', '0:00:00']
+     'exit_time_mean': '0:00:00',
+     'exit_time_std': '0:00:00',
+     'exit_ratio': 0.0,
      'top_5_max_task_durations': ['0:00:00.099', '0:00:00.098', '0:00:00.097', '0:00:00.096',
                                   '0:00:00.095'],
      'top_5_max_task_args': ['Arg 0: 99', 'Arg 0: 98', 'Arg 0: 97', 'Arg 0: 96', 'Arg 0: 95']}
 
-We specified 4 workers, so there are 4 entries in the ``n_completed_tasks``, ``start_up_time``, ``waiting_time``, and
-``working_time`` containers. They show per worker the number of completed tasks, the total start up time, the total
-waiting time (waiting for new tasks), and total working time, respectively. The insights also contain mean, standard
-deviation, and ratio of the tracked time. The ratio is the time for that part divided by the total time. In general, the
-higher the working ratio the more efficient your multiprocessing setup is. Of course, your setup might still not be
-optimal because the task itself is inefficient, but timing that is beyond the scope of MPIRE.
+We specified 4 workers, so there are 4 entries in the ``n_completed_tasks``, ``start_up_time``, ``init_time``,
+``waiting_time``, ``working_time``, and ``exit_time`` containers. They show per worker the number of completed tasks,
+the total start up time, the total time spend on the ``worker_init`` function, the total time waiting for new tasks,
+total time spend on main function, and the total time spend on the ``worker_exit`` function, respectively. The insights
+also contain mean, standard deviation, and ratio of the tracked time. The ratio is the time for that part divided by the
+total time. In general, the higher the working ratio the more efficient your multiprocessing setup is. Of course, your
+setup might still not be optimal because the task itself is inefficient, but timing that is beyond the scope of MPIRE.
 
 Additionally, the insights keep track of the top 5 tasks that took the longest to run. The data is split up in two
 containers: one for the duration and one for the arguments that were passed on to the task function. Both are sorted

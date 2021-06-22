@@ -6,7 +6,7 @@ import socket
 from typing import Callable, Dict, List, Union
 
 
-def get_function_details(func_pointer: Callable) -> Dict[str, Union[str, int]]:
+def get_function_details(func: Callable) -> Dict[str, Union[str, int]]:
     """
     Obtain function details, including:
 
@@ -17,10 +17,10 @@ def get_function_details(func_pointer: Callable) -> Dict[str, Union[str, int]]:
     - invoked from line number
     - invoked code context
 
-    :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
-        worker ID the function should receive the worker ID as its first argument. If shared objects are provided
-        the function should receive those as the next argument. If the worker state has been enabled it should
-        receive a state variable as the next argument
+    :param func: Function to call each time new task arguments become available. When passing on the worker ID the
+        function should receive the worker ID as its first argument. If shared objects are provided the function should
+        receive those as the next argument. If the worker state has been enabled it should receive a state variable as
+        the next argument
     :return: Function details dictionary
     """
     # Get the frame in which the pool.map(...) was called. We obtain the current stack and skip all those which
@@ -43,15 +43,15 @@ def get_function_details(func_pointer: Callable) -> Dict[str, Union[str, int]]:
     code_context = ' '.join(line.strip() for line in code_context)
 
     # If we're dealing with a partial, obtain the function within
-    if isinstance(func_pointer, partial):
-        func_pointer = func_pointer.func
+    if isinstance(func, partial):
+        func = func.func
 
     # We use a try/except block as some constructs don't allow this. E.g., in the case the function is a MagicMock
     # (i.e., in unit tests) these inspections will fail
     try:
-        function_filename = inspect.getabsfile(func_pointer)
-        function_line_no = func_pointer.__code__.co_firstlineno
-        function_name = func_pointer.__name__
+        function_filename = inspect.getabsfile(func)
+        function_line_no = func.__code__.co_firstlineno
+        function_name = func.__name__
     except:
         function_filename = 'n/a'
         function_line_no = 'n/a'

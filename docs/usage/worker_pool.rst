@@ -227,38 +227,40 @@ Instead of passing the shared objects to the :obj:`mpire.WorkerPool` constructor
                            iterable_len=100)
 
 
+.. _worker_state:
+
 Worker state
 ------------
 
-If you want to let each worker have its own state you can use the ``use_worker_state`` flag:
+If you want to let each worker have its own state you can use the ``use_worker_state`` flag. The worker state can be
+combined with the ``worker_init`` and ``worker_exit`` parameters of each ``map`` function, leading to some really useful
+capabilities:
 
 .. code-block:: python
 
     import numpy as np
     import pickle
 
-    def load_big_model():
+    def load_big_model(worker_state):
         # Load a model which takes up a lot of memory
         with open('./a_really_big_model.p3', 'rb') as f:
-            return pickle.load(f)
+            worker_state['model'] = pickle.load(f)
 
     def model_predict(worker_state, x):
-        # Load model
-        if 'model' not in worker_state:
-            worker_state['model'] = load_big_model()
-
         # Predict
         return worker_state['model'].predict(x)
 
     with WorkerPool(n_jobs=4, use_worker_state=True) as pool:
         # Let the model predict
         data = np.array([[...]])
-        results = pool.map(model_predict, data)
+        results = pool.map(model_predict, data, worker_init=load_big_model)
 
 .. important::
 
     The worker state is passed on as the third argument, after the worker ID and shared objects (when enabled), to the
     provided function pointer.
+
+More information about the ``worker_init`` and ``worker_exit`` parameters can be found at :ref:`worker_init_exit`.
 
 Instead of passing the flag to the :obj:`mpire.WorkerPool` constructor you can also make use of
 :meth:`mpire.WorkerPool.set_use_worker_state`:
@@ -267,7 +269,7 @@ Instead of passing the flag to the :obj:`mpire.WorkerPool` constructor you can a
 
     with WorkerPool(n_jobs=4) as pool:
         pool.set_use_worker_state()
-        results = pool.map(model_predict, data)
+        results = pool.map(model_predict, data, worker_init=load_big_model)
 
 
 Process start method

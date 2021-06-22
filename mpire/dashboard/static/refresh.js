@@ -4,6 +4,13 @@ $.ajaxSetup({
     async: false
 });
 
+
+// Enable tooltips (uses jQuery)
+$(function() {
+    $(document).tooltip();
+});
+
+
 var progress_bar_animation_duration = 450;
 var refresh_interval = 500;
 var completed_pb_ids = new Set();
@@ -90,7 +97,7 @@ function numberToColorHsl(i)
 function AddReadMore(tag_id, char_limit, text)
 {
     // Only update when the text changes. We strip the ' ... Read more'/' ... Read less' parts (14 characters)
-    original_text = $("#" + tag_id).text();
+    var original_text = $("#" + tag_id).text();
     if (original_text.substring(0, original_text.length - 14) == text)
         return;
 
@@ -159,6 +166,11 @@ function refresh()
                 $('#pb_' + pb.id + '_insights_start_up_time_std').text(pb.insights['start_up_time_std']);
                 $('#pb_' + pb.id + '_insights_start_up_ratio').text((pb.insights['start_up_ratio'] * 100.).toFixed(2))
                     .css('color', numberToColorHsl(1.0 - pb.insights['start_up_ratio']));
+                $('#pb_' + pb.id + '_insights_total_init_time').text(pb.insights['total_init_time']);
+                $('#pb_' + pb.id + '_insights_init_time_mean').text(pb.insights['init_time_mean']);
+                $('#pb_' + pb.id + '_insights_init_time_std').text(pb.insights['init_time_std']);
+                $('#pb_' + pb.id + '_insights_init_ratio').text((pb.insights['init_ratio'] * 100.).toFixed(2))
+                    .css('color', numberToColorHsl(1.0 - pb.insights['waiting_ratio']));
                 $('#pb_' + pb.id + '_insights_total_waiting_time').text(pb.insights['total_waiting_time']);
                 $('#pb_' + pb.id + '_insights_waiting_time_mean').text(pb.insights['waiting_time_mean']);
                 $('#pb_' + pb.id + '_insights_waiting_time_std').text(pb.insights['waiting_time_std']);
@@ -169,13 +181,20 @@ function refresh()
                 $('#pb_' + pb.id + '_insights_working_time_std').text(pb.insights['working_time_std']);
                 $('#pb_' + pb.id + '_insights_working_ratio').text((pb.insights['working_ratio'] * 100.).toFixed(2))
                     .css('color', numberToColorHsl(pb.insights['working_ratio']));
+                $('#pb_' + pb.id + '_insights_total_exit_time').text(pb.insights['total_exit_time']);
+                $('#pb_' + pb.id + '_insights_exit_time_mean').text(pb.insights['exit_time_mean']);
+                $('#pb_' + pb.id + '_insights_exit_time_std').text(pb.insights['exit_time_std']);
+                $('#pb_' + pb.id + '_insights_exit_ratio').text((pb.insights['exit_ratio'] * 100.).toFixed(2))
+                    .css('color', numberToColorHsl(1.0 - pb.insights['waiting_ratio']));
                 for (worker_id = 0; worker_id < pb.insights['n_completed_tasks'].length; worker_id++)
                 {
                     worker_prefix = '#pb_' + pb.id + '_insights_worker_' + worker_id;
                     $(worker_prefix + '_tasks_completed').text(pb.insights['n_completed_tasks'][worker_id]);
                     $(worker_prefix + '_start_up_time').text(pb.insights['start_up_time'][worker_id]);
+                    $(worker_prefix + '_init_time').text(pb.insights['init_time'][worker_id]);
                     $(worker_prefix + '_waiting_time').text(pb.insights['waiting_time'][worker_id]);
                     $(worker_prefix + '_working_time').text(pb.insights['working_time'][worker_id]);
+                    $(worker_prefix + '_exit_time').text(pb.insights['exit_time'][worker_id]);
                 }
                 for (task_idx = 0; task_idx < pb.insights['top_5_max_task_durations'].length; task_idx++)
                 {
@@ -208,8 +227,7 @@ function refresh()
                 $('#pb_' + pb.id).addClass('bg-danger');
 
                 // Add traceback info
-                $('#pb_' + pb.id + '_traceback').show();
-                $('#pb_' + pb.id + '_traceback').text(pb.traceback);
+                $('#pb_' + pb.id + '_traceback').show().text(pb.traceback);
 
                 // Add a flashing flash
                 $('#pb_' + pb.id + '_flash').fadeIn(200).fadeOut(200).fadeIn(200).fadeOut(200).fadeIn(200);

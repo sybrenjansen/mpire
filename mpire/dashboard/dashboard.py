@@ -86,8 +86,10 @@ def progress_bar_new() -> str:
             insights_workers.append(f"<tr><td>{worker_id}</td>"
                                     f"<td id='pb_{pb_id}_insights_worker_{worker_id}_tasks_completed'></td>"
                                     f"<td id='pb_{pb_id}_insights_worker_{worker_id}_start_up_time'></td>"
+                                    f"<td id='pb_{pb_id}_insights_worker_{worker_id}_init_time'></td>"
                                     f"<td id='pb_{pb_id}_insights_worker_{worker_id}_waiting_time'></td>"
                                     f"<td id='pb_{pb_id}_insights_worker_{worker_id}_working_time'></td>"
+                                    f"<td id='pb_{pb_id}_insights_worker_{worker_id}_exit_time'></td>"
                                     f"</tr>")
     insights_workers = "\n".join(insights_workers)
 

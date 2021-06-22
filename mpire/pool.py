@@ -75,6 +75,10 @@ class WorkerPool:
         # Queue where the child processes can pass on results
         self._results_queue = None
 
+        # Queue where the child processes can store exit results in
+        self._exit_results = None
+        self._exit_results_queues = None
+
         # Array where the child processes can request a restart
         self._worker_done_array = None
 
@@ -99,8 +103,10 @@ class WorkerPool:
         # User provided shared objects to pass on to the user provided function
         self.shared_objects = shared_objects
 
-        # User provided function to call
-        self.func_pointer = None
+        # User provided functions to call
+        self.func = None
+        self.worker_init = None
+        self.worker_exit = None
 
         # Number of (chunks of) jobs a child process can process before requesting a restart
         self.worker_lifespan = None
@@ -120,9 +126,11 @@ class WorkerPool:
         # Containers for profiling
         self.insights_manager = None
         self.worker_start_up_time = None
+        self.worker_init_time = None
         self.worker_n_completed_tasks = None
         self.worker_waiting_time = None
         self.worker_working_time = None
+        self.worker_exit_time = None
         self.max_task_duration = None
         self.max_task_args = None
 
@@ -192,9 +200,9 @@ class WorkerPool:
         Set shared objects to pass to the workers.
 
         Shared objects will be copy-on-write. Process-aware shared objects (e.g., ``multiprocessing.Array``) can be used
-        to write to the same object from multiple processes. When providing shared objects the provided function pointer
-        in the ``map`` function should receive the shared objects as its first argument if the worker ID is not passed
-        on. If the worker ID is passed on the shared objects will be the second argument.
+        to write to the same object from multiple processes. When providing shared objects the provided function in the
+        ``map`` function should receive the shared objects as its first argument if the worker ID is not passed on. If
+        the worker ID is passed on the shared objects will be the second argument.
 
         :param shared_objects: ``None`` or any other type of object (multiple objects can be wrapped in a single tuple).
             Shared objects is only passed on to the user function when it's not ``None``
@@ -219,21 +227,29 @@ class WorkerPool:
         """
         self.keep_alive = keep_alive
 
-    def start_workers(self, func_pointer: Callable, worker_lifespan: Optional[int]) -> None:
+    def start_workers(self, func: Callable, worker_init: Optional[Callable], worker_exit: Optional[Callable],
+                      worker_lifespan: Optional[int]) -> None:
         """
         Spawns the workers and starts them so they're ready to start reading from the tasks queue.
 
-        :param func_pointer: Function pointer to call each time new task arguments become available
+        :param func: Function to call each time new task arguments become available
+        :param worker_init: Function to call each time a new worker starts
+        :param worker_exit: Function to call each time a worker exits. Return values will be fetched and made available
+            through `WorkerPool.get_exit_results`.
         :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         """
         # Save params for later reference (for example, when restarting workers)
-        self.func_pointer = func_pointer
+        self.func = func
+        self.worker_init = worker_init
+        self.worker_exit = worker_exit
         self.worker_lifespan = worker_lifespan
 
         # Start new workers
         self._tasks_queue = self.ctx.JoinableQueue()
         self._results_queue = self.ctx.JoinableQueue()
+        self._exit_results = []
+        self._exit_results_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)] if self.worker_exit else None
         self._worker_done_array = self.ctx.Array('b', self.n_jobs, lock=False)
         self._exception_queue = self.ctx.JoinableQueue()
         self._exception_thrown.clear()
@@ -249,10 +265,17 @@ class WorkerPool:
 
             # Check if it needs restarting
             if restart_worker:
+                # Obtain results from exit results queue (should be done before joining the worker)
+                if self._exit_results_queues:
+                    with DisableKeyboardInterruptSignal():
+                        self._exit_results.append(self._exit_results_queues[worker_id].get(block=True))
+                        self._exit_results_queues[worker_id].task_done()
+
+                # Join worker
                 self._worker_done_array[worker_id] = False
                 self._workers[worker_id].join()
 
-                # Start worker
+                # Start new worker
                 self._workers[worker_id] = self._start_worker(worker_id)
 
     def _start_worker(self, worker_id: int) -> mp.Process:
@@ -264,11 +287,13 @@ class WorkerPool:
         """
         with DisableKeyboardInterruptSignal():
             # Create worker
-            w = self.Worker(worker_id, self._tasks_queue, self._results_queue, self._worker_done_array,
-                            self._task_completed_queue, self._exception_queue, self._exception_lock,
-                            self._exception_thrown, self.func_pointer, self._keep_order.is_set(), datetime.now(),
-                            self.worker_start_up_time, self.worker_n_completed_tasks, self.worker_waiting_time,
-                            self.worker_working_time, self.max_task_duration, self.max_task_args, self.shared_objects,
+            w = self.Worker(worker_id, self._tasks_queue, self._results_queue,
+                            self._exit_results_queues[worker_id] if self.worker_exit else None,
+                            self._worker_done_array, self._task_completed_queue, self._exception_queue,
+                            self._exception_lock, self._exception_thrown, self.func, self.worker_init, self.worker_exit,
+                            self._keep_order.is_set(), datetime.now(), self.worker_start_up_time, self.worker_init_time,
+                            self.worker_n_completed_tasks, self.worker_waiting_time, self.worker_working_time,
+                            self.worker_exit_time, self.max_task_duration, self.max_task_args, self.shared_objects,
                             self.worker_lifespan, self.pass_worker_id, self.use_worker_state)
             w.daemon = self.daemon
             w.start()
@@ -294,12 +319,20 @@ class WorkerPool:
 
         :param block: Whether to block (wait for results) or not
         :param timeout: How long to wait for results in case ``block==True``
-        :return: The next result from the queue, which is the result of calling the function pointer
+        :return: The next result from the queue, which is the result of calling the function
         """
         with DelayedKeyboardInterrupt():
             results = self._results_queue.get(block=block, timeout=timeout)
             self._results_queue.task_done()
         return results
+
+    def get_exit_results(self) -> List:
+        """
+        Obtain a list of exit results when an exit function is defined.
+
+        :return: Exit results list
+        """
+        return self._exit_results
 
     def insert_poison_pill(self) -> None:
         """
@@ -323,7 +356,7 @@ class WorkerPool:
 
     def stop_and_join(self) -> None:
         """
-        Inserts a poison pill and waits until all workers are finished.
+        Inserts a poison pill, grabs the exit results, and waits until all workers are finished.
 
         Note that the results queue should be drained first before joining the workers, otherwise we can get a deadlock.
         For more information, see the warnings at:
@@ -348,14 +381,28 @@ class WorkerPool:
                     break
                 self._restart_workers()
 
-            # Join workers
-            self.join()
+            # Obtain results from the exit results queues (should be done before joining the workers). When an error
+            # occurred inside the exit function we need to catch it here.
+            for wid, q in enumerate(self._exit_results_queues or []):
+                while not self._exception_thrown.is_set():
+                    try:
+                        self._exit_results.append(q.get(block=True, timeout=0.1))
+                        q.task_done()
+                        break
+                    except queue.Empty:
+                        pass
+                if self._exception_thrown.is_set():
+                    return
 
             # Join queues
             self._tasks_queue.join()
             self._results_queue.join()
+            [q.join() for q in self._exit_results_queues or []]
 
-            # Reset variables
+            # Join workers
+            self.join()
+
+            # Reset workers
             self._workers = []
 
     def _handle_tasks_done(self) -> None:
@@ -389,6 +436,8 @@ class WorkerPool:
         # Drain and join the queues
         self._drain_and_join_queue(self._tasks_queue)
         self._drain_and_join_queue(self._results_queue)
+        for q in self._exit_results_queues or []:
+            self._drain_and_join_queue(q)
 
         # Reset variables
         self._workers = []
@@ -466,21 +515,23 @@ class WorkerPool:
         if self._tasks_queue is not None:
             self.terminate()
 
-    def map(self, func_pointer: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
+    def map(self, func: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
             iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
             chunk_size: Optional[int] = None, n_splits: Optional[int] = None, worker_lifespan: Optional[int] = None,
             progress_bar: bool = False, progress_bar_position: int = 0,
-            concatenate_numpy_output: bool = True, enable_insights: bool = False) -> Union[List[Any], np.ndarray]:
+            concatenate_numpy_output: bool = True, enable_insights: bool = False,
+            worker_init: Optional[Callable] = None,
+            worker_exit: Optional[Callable] = None) -> Union[List[Any], np.ndarray]:
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
 
-        :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
-            worker ID the function should receive the worker ID as its first argument. If shared objects are provided
-            the function should receive those as the next argument. If the worker state has been enabled it should
-            receive a state variable as the next argument
+        :param func: Function to call each time new task arguments become available. When passing on the worker ID the
+            function should receive the worker ID as its first argument. If shared objects are provided the function
+            should receive those as the next argument. If the worker state has been enabled it should receive a state
+            variable as the next argument
         :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-            passes it to the function pointer
+            passes it to the function `func`
         :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
             to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
             iterable object, or by specifying the number of tasks
@@ -496,6 +547,14 @@ class WorkerPool:
         :param concatenate_numpy_output: When ``True`` it will concatenate numpy output to a single numpy array
         :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
             neglible)
+        :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
+            should receive the worker ID as its first argument. If shared objects are provided the function should
+            receive those as the next argument. If the worker state has been enabled it should receive a state variable
+            as the next argument
+        :param worker_exit: Function to call each time a worker exits. Return values will be fetched and made available
+            through `WorkerPool.get_exit_results`. When passing on the worker ID the function should receive the worker
+            ID as its first argument. If shared objects are provided the function should receive those as the next
+            argument. If the worker state has been enabled it should receive a state variable as the next argument
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
@@ -510,9 +569,9 @@ class WorkerPool:
         # Process all args
         if iterable_len is None and hasattr(iterable_of_args, '__len__'):
             iterable_len = len(iterable_of_args)
-        results = self.map_unordered(func_pointer, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)),
+        results = self.map_unordered(func, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)),
                                      iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan,
-                                     progress_bar, progress_bar_position, enable_insights)
+                                     progress_bar, progress_bar_position, enable_insights, worker_init, worker_exit)
 
         # Notify workers to forget about order
         self._keep_order.clear()
@@ -525,21 +584,22 @@ class WorkerPool:
                 if sorted_results and concatenate_numpy_output and isinstance(sorted_results[0], np.ndarray) else
                 sorted_results)
 
-    def map_unordered(self, func_pointer: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
+    def map_unordered(self, func: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
                       iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                       chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                       worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                      progress_bar_position: int = 0, enable_insights: bool = False) -> List[Any]:
+                      progress_bar_position: int = 0, enable_insights: bool = False,
+                      worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None) -> List[Any]:
         """
         Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
 
-        :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
-            worker ID the function should receive the worker ID as its first argument. If shared objects are provided
-            the function should receive those as the next argument. If the worker state has been enabled it should
-            receive a state variable as the next argument
+        :param func: Function to call each time new task arguments become available. When passing on the worker ID the
+            function should receive the worker ID as its first argument. If shared objects are provided the function
+            should receive those as the next argument. If the worker state has been enabled it should receive a state
+            variable as the next argument
         :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-            passes it to the function pointer
+            passes it to the function `func`
         :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
             to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
             iterable object, or by specifying the number of tasks
@@ -554,28 +614,37 @@ class WorkerPool:
             multiple progress bars at the same time
         :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
             neglible)
+        :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
+            should receive the worker ID as its first argument. If shared objects are provided the function should
+            receive those as the next argument. If the worker state has been enabled it should receive a state variable
+            as the next argument
+        :param worker_exit: Function to call each time a worker exits. Return values will be fetched and made available
+            through `WorkerPool.get_exit_results`. When passing on the worker ID the function should receive the worker
+            ID as its first argument. If shared objects are provided the function should receive those as the next
+            argument. If the worker state has been enabled it should receive a state variable as the next argument
         :return: List with unordered results
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
-        return list(self.imap_unordered(func_pointer, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
+        return list(self.imap_unordered(func, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
                                         n_splits, worker_lifespan, progress_bar, progress_bar_position,
-                                        enable_insights))
+                                        enable_insights, worker_init, worker_exit))
 
-    def imap(self, func_pointer: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
+    def imap(self, func: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
              iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
              chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
              worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-             progress_bar_position: int = 0, enable_insights: bool = False) -> Generator[Any, None, None]:
+             progress_bar_position: int = 0, enable_insights: bool = False, worker_init: Optional[Callable] = None,
+             worker_exit: Optional[Callable] = None) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``, but ordered. Also allows a user to set the maximum number of
         tasks available in the queue.
 
-        :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
-            worker ID the function should receive the worker ID as its first argument. If shared objects are provided
-            the function should receive those as the next argument. If the worker state has been enabled it should
-            receive a state variable as the next argument
+        :param func: Function to call each time new task arguments become available. When passing on the worker ID the
+            function should receive the worker ID as its first argument. If shared objects are provided the function
+            should receive those as the next argument. If the worker state has been enabled it should receive a state
+            variable as the next argument
         :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-            passes it to the function pointer
+            passes it to the function `func`
         :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
             to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
             iterable object, or by specifying the number of tasks
@@ -590,6 +659,14 @@ class WorkerPool:
             multiple progress bars at the same time
         :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
             neglible)
+        :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
+            should receive the worker ID as its first argument. If shared objects are provided the function should
+            receive those as the next argument. If the worker state has been enabled it should receive a state variable
+            as the next argument
+        :param worker_exit: Function to call each time a worker exits. Return values will be fetched and made available
+            through `WorkerPool.get_exit_results`. When passing on the worker ID the function should receive the worker
+            ID as its first argument. If shared objects are provided the function should receive those as the next
+            argument. If the worker state has been enabled it should receive a state variable as the next argument
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
@@ -606,10 +683,11 @@ class WorkerPool:
         tmp_results = {}
         if iterable_len is None and hasattr(iterable_of_args, '__len__'):
             iterable_len = len(iterable_of_args)
-        for result_idx, result in self.imap_unordered(func_pointer, ((args_idx, args) for args_idx, args
-                                                      in enumerate(iterable_of_args)), iterable_len, max_tasks_active,
-                                                      chunk_size, n_splits, worker_lifespan, progress_bar,
-                                                      progress_bar_position, enable_insights):
+        for result_idx, result in self.imap_unordered(func, ((args_idx, args) for args_idx, args
+                                                             in enumerate(iterable_of_args)), iterable_len,
+                                                      max_tasks_active, chunk_size, n_splits, worker_lifespan,
+                                                      progress_bar, progress_bar_position, enable_insights, worker_init,
+                                                      worker_exit):
 
             # Check if the next one(s) to return is/are temporarily stored. We use a while-true block with dict.pop() to
             # keep the temporary store as small as possible
@@ -635,21 +713,23 @@ class WorkerPool:
         # Notify workers to forget about order
         self._keep_order.clear()
 
-    def imap_unordered(self, func_pointer: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
+    def imap_unordered(self, func: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
                        iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                        chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                        worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                       progress_bar_position: int = 0, enable_insights: bool = False) -> Generator[Any, None, None]:
+                       progress_bar_position: int = 0, enable_insights: bool = False,
+                       worker_init: Optional[Callable] = None,
+                       worker_exit: Optional[Callable] = None) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``. Also allows a user to set the maximum number of tasks available in
         the queue.
 
-        :param func_pointer: Function pointer to call each time new task arguments become available. When passing on the
-            worker ID the function should receive the worker ID as its first argument. If shared objects are provided
-            the function should receive those as the next argument. If the worker state has been enabled it should
-            receive a state variable as the next argument
+        :param func: Function to call each time new task arguments become available. When passing on the worker ID the
+            function should receive the worker ID as its first argument. If shared objects are provided the function
+            should receive those as the next argument. If the worker state has been enabled it should receive a state
+            variable as the next argument
         :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-            passes it to the function pointer
+            passes it to the function `func`
         :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
             to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
             iterable object, or by specifying the number of tasks
@@ -664,6 +744,14 @@ class WorkerPool:
             multiple progress bars at the same time
         :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
             neglible)
+        :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
+            should receive the worker ID as its first argument. If shared objects are provided the function should
+            receive those as the next argument. If the worker state has been enabled it should receive a state variable
+            as the next argument
+        :param worker_exit: Function to call each time a worker exits. Return values will be fetched and made available
+            through `WorkerPool.get_exit_results`. When passing on the worker ID the function should receive the worker
+            ID as its first argument. If shared objects are provided the function should receive those as the next
+            argument. If the worker state has been enabled it should receive a state variable as the next argument
         :return: Generator yielding unordered results
         """
         # If we're dealing with numpy arrays, we have to chunk them here already
@@ -688,17 +776,19 @@ class WorkerPool:
 
         # Start workers if there aren't any. If they already exist they must be restarted when either the function to
         # execute or the worker lifespan changes
-        if self._workers and (func_pointer != self.func_pointer or worker_lifespan != self.worker_lifespan):
+        if self._workers and (func != self.func or worker_lifespan != self.worker_lifespan or
+                              worker_init != self.worker_init or worker_exit != self.worker_exit):
             self.stop_and_join()
         if not self._workers:
-            self.start_workers(func_pointer, worker_lifespan)
+            self.start_workers(func, worker_init, worker_exit, worker_lifespan)
 
-        # Create exception and progress bar handlers. The exception handler will receive any exceptions thrown by the
-        # workers, terminates everything and re-raise an exceptoin in the main process. The progress bar handler will
-        # receive updates from the workers and updates the progress bar accordingly
+        # Create exception, exit results, and progress bar handlers. The exception handler receives any exceptions
+        # thrown by the workers, terminates everything and re-raise an exception in the main process. The exit results
+        # handler fetches results from the exit function, if provided. The progress bar handler receives progress
+        # updates from the workers and updates the progress bar accordingly
         with ExceptionHandler(self.terminate, self._exception_queue, self.exception_caught, self._keep_order,
                               progress_bar is not None) as exception_handler, \
-             ProgressBarHandler(func_pointer, self.n_jobs, progress_bar, n_tasks, progress_bar_position,
+             ProgressBarHandler(func, self.n_jobs, progress_bar, n_tasks, progress_bar_position,
                                 self._task_completed_queue, self._exception_queue, self.exception_caught,
                                 self.get_insights):
 
@@ -752,10 +842,13 @@ class WorkerPool:
                 # Restart workers if necessary
                 self._restart_workers()
 
-            # Clean up time. When keep_alive is set to True we won't join the workers
+            # Clean up time. When keep_alive is set to True we won't join the workers. During the stop_and_join call
+            # an error can occur as well, so we have to check once again whether an exception occurred and raise if it
+            # did
             exception_handler.raise_on_exception()
             if not self.keep_alive:
                 self.stop_and_join()
+                exception_handler.raise_on_exception()
 
         # Log insights
         if enable_insights:
@@ -770,7 +863,7 @@ class WorkerPool:
         ``chunk_size`` and ``progress_bar`` parameters.
 
         :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-            passes it to the function pointer
+            passes it to the function
         :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
             to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
             iterable object, or by specifying the number of tasks
@@ -851,17 +944,21 @@ class WorkerPool:
             self.insights_manager = mp.managers.SyncManager(ctx=self.ctx)
             self.insights_manager.start(ignore_keyboard_interrupt)
             self.worker_start_up_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
+            self.worker_init_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
             self.worker_n_completed_tasks = self.ctx.Array(ctypes.c_int, self.n_jobs, lock=False)
             self.worker_waiting_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
             self.worker_working_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
+            self.worker_exit_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
             self.max_task_duration = self.ctx.Array(ctypes.c_double, self.n_jobs * 5, lock=False)
             self.max_task_args = self.insights_manager.list([''] * self.n_jobs * 5)
         else:
             self.insights_manager = None
             self.worker_start_up_time = None
+            self.worker_init_time = None
             self.worker_n_completed_tasks = None
             self.worker_waiting_time = None
             self.worker_working_time = None
+            self.worker_exit_time = None
             self.max_task_duration = None
             self.max_task_args = None
 
@@ -887,7 +984,7 @@ class WorkerPool:
                         f"Total number of tasks completed: {sum(insights['n_completed_tasks'])}"]
 
         # Format string for parts of the worker lifespan
-        for part in ('start_up', 'waiting', 'working'):
+        for part in ('start_up', 'init', 'waiting', 'working', 'exit'):
             insights_str.append(f"Total {part.replace('_', ' ')} time: {insights[f'total_{part}_time']}s ("
                                 f"mean: {insights[f'{part}_time_mean']}, std: {insights[f'{part}_time_std']}, "
                                 f"ratio: {insights[f'{part}_ratio'] * 100.:.2f}%)")
@@ -904,7 +1001,7 @@ class WorkerPool:
         for worker_id in range(self.n_jobs):
             worker_str = [f"Worker {worker_id}",
                           f"Tasks completed: {insights['n_completed_tasks'][worker_id]}"]
-            for part in ('start_up', 'waiting', 'working'):
+            for part in ('start_up', 'init', 'waiting', 'working', 'exit'):
                 worker_str.append(f"{part.replace('_', ' ')}: {insights[f'{part}_time'][worker_id]}s")
             insights_str.append(' - '.join(worker_str))
 
@@ -942,16 +1039,22 @@ class WorkerPool:
 
         # Populate
         total_start_up_time = sum(self.worker_start_up_time)
+        total_init_time = sum(self.worker_init_time)
         total_waiting_time = sum(self.worker_waiting_time)
         total_working_time = sum(self.worker_working_time)
-        total_time = total_start_up_time + total_waiting_time + total_working_time
+        total_exit_time = sum(self.worker_exit_time)
+        total_time = total_start_up_time + total_init_time + total_waiting_time + total_working_time + total_exit_time
         insights = dict(n_completed_tasks=list(self.worker_n_completed_tasks),
                         start_up_time=list(map(format_seconds_func, self.worker_start_up_time)),
+                        init_time=list(map(format_seconds_func, self.worker_init_time)),
                         waiting_time=list(map(format_seconds_func, self.worker_waiting_time)),
                         working_time=list(map(format_seconds_func, self.worker_working_time)),
+                        exit_time=list(map(format_seconds_func, self.worker_exit_time)),
                         total_start_up_time=format_seconds_func(total_start_up_time),
+                        total_init_time=format_seconds_func(total_init_time),
                         total_waiting_time=format_seconds_func(total_waiting_time),
                         total_working_time=format_seconds_func(total_working_time),
+                        total_exit_time=format_seconds_func(total_exit_time),
                         top_5_max_task_durations=top_5_max_task_durations,
                         top_5_max_task_args=top_5_max_task_args)
 
@@ -959,8 +1062,10 @@ class WorkerPool:
 
         # Calculate ratio, mean and standard deviation of different parts of the worker lifespan
         for part, total in (('start_up', total_start_up_time),
+                            ('init', total_init_time),
                             ('waiting', total_waiting_time),
-                            ('working', total_working_time)):
+                            ('working', total_working_time),
+                            ('exit', total_exit_time)):
             insights[f'{part}_ratio'] = total / (total_time + 1e-8)
             insights[f'{part}_time_mean'] = format_seconds_func(np.mean(getattr(self, f'worker_{part}_time')))
             insights[f'{part}_time_std'] = format_seconds_func(np.std(getattr(self, f'worker_{part}_time')))

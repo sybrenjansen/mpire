@@ -360,6 +360,188 @@ class WorkerStateTest(unittest.TestCase):
         pass
 
 
+class InitFuncTest(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.test_data = range(10)
+        self.test_desired_output = [42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
+
+    def test_no_init_func(self):
+        """
+        If the init func is not provided, then `worker_state['test']` should fail
+        """
+        with self.assertRaises(KeyError), WorkerPool(n_jobs=4, shared_objects=(None,), use_worker_state=True) as pool:
+            pool.map(self._f, range(10), worker_init=None)
+
+    def test_init_func(self):
+        """
+        Test if init func is called. If it is, then `worker_state['test']` should be available. Due to the barrier we
+        know for sure that the init func should be called as many times as there are workers
+        """
+        for n_jobs in [1, 2, 4]:
+            shared_objects = Barrier(n_jobs), Value('i', 0)
+            with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects,
+                                                         use_worker_state=True) as pool:
+                results = pool.map(self._f, self.test_data, worker_init=self._init, chunk_size=1)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertEqual(shared_objects[1].value, n_jobs)
+
+    def test_worker_lifespan(self):
+        """
+        When workers have a limited lifespan they are spawned multiple times. Each time a worker starts it should call
+        the init function. Due to the chunk size we know for sure that the init func should be called at least once for
+        each task. However, when all tasks have been processed the workers are terminated and we don't know exactly how
+        many workers restarted. We only know for sure that the init func should be called between 10 and 10 + n_jobs
+        times
+        """
+        for n_jobs in [1, 2, 4]:
+            shared_objects = Barrier(n_jobs), Value('i', 0)
+            with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects,
+                                                         use_worker_state=True) as pool:
+                results = pool.map(self._f, self.test_data, worker_init=self._init, chunk_size=1, worker_lifespan=1)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertGreaterEqual(shared_objects[1].value, 10)
+                self.assertLessEqual(shared_objects[1].value, 10 + n_jobs)
+
+    def test_error(self):
+        """
+        When an exception occurs in the init function it should properly shut down
+        """
+        with self.assertRaises(ValueError), WorkerPool(n_jobs=4, shared_objects=(None,), use_worker_state=True) as pool:
+            pool.map(self._f, self.test_data, worker_init=self._init_error)
+
+    @staticmethod
+    def _init(shared_objects, worker_state):
+        barrier, call_count = shared_objects
+
+        # Only wait for the other workers the first time around (it will hang when worker_lifespan=1, otherwise)
+        if call_count.value == 0:
+            barrier.wait()
+
+        with call_count.get_lock():
+            call_count.value += 1
+        worker_state['test'] = 42
+
+    @staticmethod
+    def _init_error(*_):
+        raise ValueError(":(")
+
+    @staticmethod
+    def _f(_, worker_state, x):
+        return worker_state['test'] + x
+
+
+class ExitFuncTest(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.test_data = range(10)
+        self.test_desired_output = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+    def test_no_exit_func(self):
+        """
+        If the exit func is not provided, then exit results shouldn't be available
+        """
+        shared_objects = Barrier(4), Value('i', 0)
+        with WorkerPool(n_jobs=4, shared_objects=shared_objects, use_worker_state=True) as pool:
+            results = pool.map(self._f1, range(10), worker_init=self._init, worker_exit=None)
+            self.assertListEqual(results, self.test_desired_output)
+            self.assertListEqual(pool.get_exit_results(), [])
+
+    def test_exit_func(self):
+        """
+        Test if exit func is called. If it is, then exit results should be available. It should have as many elements
+        as the number of jobs and should have the right content.
+        """
+        for n_jobs in [1, 2, 4]:
+            shared_objects = Barrier(n_jobs), Value('i', 0)
+            with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects,
+                                                         use_worker_state=True) as pool:
+                results = pool.map(self._f1, self.test_data, worker_init=self._init, worker_exit=self._exit)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertEqual(shared_objects[1].value, n_jobs)
+                self.assertEqual(len(pool.get_exit_results()), n_jobs)
+                self.assertEqual(sum(pool.get_exit_results()), sum(range(10)))
+
+    def test_worker_lifespan(self):
+        """
+        When workers have a limited lifespan they are spawned multiple times. Each time a worker exits it should call
+        the exit function. Due to the chunk size we know for sure that the exit func should be called at least once for
+        each task. However, when all tasks have been processed the workers are terminated and we don't know exactly how
+        many workers restarted. We only know for sure that the exit func should be called between 10 and 10 + n_jobs
+        times
+        """
+        for n_jobs in [1, 2, 4]:
+            shared_objects = Barrier(n_jobs), Value('i', 0)
+            with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects,
+                                                         use_worker_state=True) as pool:
+                results = pool.map(self._f1, self.test_data, worker_init=self._init, worker_exit=self._exit, chunk_size=1,
+                                   worker_lifespan=1)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertGreaterEqual(shared_objects[1].value, 10)
+                self.assertLessEqual(shared_objects[1].value, 10 + n_jobs)
+                self.assertEqual(len(pool.get_exit_results()), shared_objects[1].value)
+                self.assertEqual(sum(pool.get_exit_results()), sum(range(10)))
+
+    def test_exit_func_big_payload(self):
+        """
+        Multiprocessing Pipes have a maximum buffer size (depending on the system it can be anywhere between 16-1024kb).
+        Results from the pipe need to be received from the other end, before the workers are joined. Otherwise the
+        process can hang indefinitely. Because exit results are fetched in a different way as regular results, we test
+        that here. We send a payload of 10_000kb.
+        """
+        for n_jobs, worker_lifespan in product([1, 2, 4], [None, 2]):
+            with self.subTest(n_jobs=n_jobs, worker_lifespan=worker_lifespan), WorkerPool(n_jobs=n_jobs) as pool:
+                results = pool.map(self._f2, self.test_data, worker_exit=self._exit_big_payloud, chunk_size=1,
+                                   worker_lifespan=worker_lifespan)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertTrue(bool(pool.get_exit_results()))
+                for exit_result in pool.get_exit_results():
+                    self.assertEqual(len(exit_result), 10_000 * 1024)
+
+    def test_error(self):
+        """
+        When an exception occurs in the exit function it should properly shut down
+        """
+        for worker_lifespan in [None, 2]:
+            with self.subTest(worker_lifespan=worker_lifespan), self.assertRaises(ValueError), \
+                    WorkerPool(n_jobs=4) as pool:
+                pool.map(self._f2, range(10), worker_lifespan=worker_lifespan, worker_exit=self._exit_error)
+
+    @staticmethod
+    def _init(shared_objects, worker_state):
+        barrier, call_count = shared_objects
+
+        # Only wait for the other workers the first time around (it will hang when worker_lifespan=1, otherwise)
+        if call_count.value == 0:
+            barrier.wait()
+
+        worker_state['count'] = 0
+
+    @staticmethod
+    def _f1(_, worker_state, x):
+        worker_state['count'] += x
+        return x
+
+    @staticmethod
+    def _f2(x):
+        return x
+
+    @staticmethod
+    def _exit(shared_objects, worker_state):
+        _, call_count = shared_objects
+        with call_count.get_lock():
+            call_count.value += 1
+        return worker_state['count']
+
+    @staticmethod
+    def _exit_big_payloud():
+        return np.random.bytes(10_000 * 1024)
+
+    @staticmethod
+    def _exit_error():
+        raise ValueError(":'(")
+
+
 class DaemonTest(unittest.TestCase):
 
     def setUp(self):
@@ -783,9 +965,11 @@ class InsightsTest(unittest.TestCase):
                 with self.subTest('initialized', n_jobs=n_jobs):
                     self.assertIsNone(pool.insights_manager)
                     self.assertIsNone(pool.worker_start_up_time)
+                    self.assertIsNone(pool.worker_init_time)
                     self.assertIsNone(pool.worker_n_completed_tasks)
                     self.assertIsNone(pool.worker_waiting_time)
                     self.assertIsNone(pool.worker_working_time)
+                    self.assertIsNone(pool.worker_exit_time)
                     self.assertIsNone(pool.max_task_duration)
                     self.assertIsNone(pool.max_task_args)
 
@@ -794,17 +978,21 @@ class InsightsTest(unittest.TestCase):
                     pool._reset_insights(enable_insights=True)
                     self.assertIsInstance(pool.insights_manager, managers.SyncManager)
                     self.assertIsInstance(pool.worker_start_up_time, ctypes.Array)
+                    self.assertIsInstance(pool.worker_init_time, ctypes.Array)
                     self.assertIsInstance(pool.worker_n_completed_tasks, ctypes.Array)
                     self.assertIsInstance(pool.worker_waiting_time, ctypes.Array)
                     self.assertIsInstance(pool.worker_working_time, ctypes.Array)
+                    self.assertIsInstance(pool.worker_exit_time, ctypes.Array)
                     self.assertIsInstance(pool.max_task_duration, ctypes.Array)
                     self.assertIsInstance(pool.max_task_args, managers.ListProxy)
 
                     # Basic sanity checks for the values
                     self.assertEqual(sum(pool.worker_start_up_time), 0)
+                    self.assertEqual(sum(pool.worker_init_time), 0)
                     self.assertEqual(sum(pool.worker_n_completed_tasks), 0)
                     self.assertEqual(sum(pool.worker_waiting_time), 0)
                     self.assertEqual(sum(pool.worker_working_time), 0)
+                    self.assertEqual(sum(pool.worker_exit_time), 0)
                     self.assertEqual(sum(pool.max_task_duration), 0)
                     self.assertListEqual(list(pool.max_task_args), [''] * n_jobs * 5)
 
@@ -816,9 +1004,11 @@ class InsightsTest(unittest.TestCase):
                     pool._reset_insights(enable_insights=True)
                     # Basic sanity checks for the values
                     self.assertEqual(sum(pool.worker_start_up_time), 0)
+                    self.assertEqual(sum(pool.worker_init_time), 0)
                     self.assertEqual(sum(pool.worker_n_completed_tasks), 0)
                     self.assertEqual(sum(pool.worker_waiting_time), 0)
                     self.assertEqual(sum(pool.worker_working_time), 0)
+                    self.assertEqual(sum(pool.worker_exit_time), 0)
                     self.assertEqual(sum(pool.max_task_duration), 0)
                     self.assertListEqual(list(pool.max_task_args), [''] * n_jobs * 5)
 
@@ -827,9 +1017,11 @@ class InsightsTest(unittest.TestCase):
                     pool._reset_insights(enable_insights=False)
                     self.assertIsNone(pool.insights_manager)
                     self.assertIsNone(pool.worker_start_up_time)
+                    self.assertIsNone(pool.worker_init_time)
                     self.assertIsNone(pool.worker_n_completed_tasks)
                     self.assertIsNone(pool.worker_waiting_time)
                     self.assertIsNone(pool.worker_working_time)
+                    self.assertIsNone(pool.worker_exit_time)
                     self.assertIsNone(pool.max_task_duration)
                     self.assertIsNone(pool.max_task_args)
 
@@ -845,15 +1037,18 @@ class InsightsTest(unittest.TestCase):
             for idx in range(3):
                 with self.subTest('enabled', idx=idx):
 
-                    self.assertListEqual(pool.map(square, self.test_data, enable_insights=True),
+                    self.assertListEqual(pool.map(square, self.test_data, enable_insights=True, worker_init=self._init,
+                                                  worker_exit=self._exit),
                                          self.test_desired_output)
 
                     # Basic sanity checks for the values. Some max task args can be empty, in that case the duration
                     # should be 0 (= no data)
                     self.assertGreater(sum(pool.worker_start_up_time), 0)
+                    self.assertGreater(sum(pool.worker_init_time), 0)
                     self.assertEqual(sum(pool.worker_n_completed_tasks), self.test_data_len)
                     self.assertGreater(sum(pool.worker_waiting_time), 0)
                     self.assertGreater(sum(pool.worker_working_time), 0)
+                    self.assertGreater(sum(pool.worker_exit_time), 0)
                     self.assertGreater(max(pool.max_task_duration), 0)
                     for duration, args in zip(pool.max_task_duration, pool.max_task_args):
                         if duration == 0:
@@ -866,9 +1061,11 @@ class InsightsTest(unittest.TestCase):
                 self.assertListEqual(pool.map(square, self.test_data, enable_insights=False), self.test_desired_output)
                 self.assertIsNone(pool.insights_manager)
                 self.assertIsNone(pool.worker_start_up_time)
+                self.assertIsNone(pool.worker_init_time)
                 self.assertIsNone(pool.worker_n_completed_tasks)
                 self.assertIsNone(pool.worker_waiting_time)
                 self.assertIsNone(pool.worker_working_time)
+                self.assertIsNone(pool.worker_exit_time)
                 self.assertIsNone(pool.max_task_duration)
                 self.assertIsNone(pool.max_task_args)
 
@@ -885,9 +1082,11 @@ class InsightsTest(unittest.TestCase):
             with self.subTest(enable_insights=True):
                 pool._reset_insights(enable_insights=True)
                 pool.worker_start_up_time[:] = [0.1, 0.2]
+                pool.worker_init_time[:] = [0.11, 0.22]
                 pool.worker_n_completed_tasks[:] = [2, 3]
                 pool.worker_waiting_time[:] = [0.4, 0.3]
                 pool.worker_working_time[:] = [42.0, 37.0]
+                pool.worker_exit_time[:] = [0.33, 0.44]
 
                 # Durations that are zero or args that are empty are skipped
                 pool.max_task_duration[:] = [0.0, 0.0, 1.0, 2.0, 0.0, 6.0, 0.8, 0.0, 0.1, 0.0]
@@ -895,26 +1094,43 @@ class InsightsTest(unittest.TestCase):
                 insights = pool.get_insights()
 
                 # Test ratios separately because of rounding errors
-                self.assertAlmostEqual(insights['start_up_ratio'], 0.3 / (0.3 + 0.7 + 79.0))
-                self.assertAlmostEqual(insights['waiting_ratio'], 0.7 / (0.3 + 0.7 + 79.0))
-                self.assertAlmostEqual(insights['working_ratio'], 79.0 / (0.3 + 0.7 + 79.0))
-                del insights['start_up_ratio'], insights['waiting_ratio'], insights['working_ratio']
+                total_time = 0.3 + 0.33 + 0.7 + 79.0 + 0.77
+                self.assertAlmostEqual(insights['start_up_ratio'], 0.3 / total_time)
+                self.assertAlmostEqual(insights['init_ratio'], 0.33 / total_time)
+                self.assertAlmostEqual(insights['waiting_ratio'], 0.7 / total_time)
+                self.assertAlmostEqual(insights['working_ratio'], 79.0 / total_time)
+                self.assertAlmostEqual(insights['exit_ratio'], 0.77 / total_time)
+                del (insights['start_up_ratio'], insights['init_ratio'], insights['waiting_ratio'],
+                     insights['working_ratio'], insights['exit_ratio'])
 
                 self.assertDictEqual(insights, {
                     'n_completed_tasks': [2, 3],
                     'start_up_time': ['0:00:00.100', '0:00:00.200'],
+                    'init_time': ['0:00:00.110', '0:00:00.220'],
                     'waiting_time': ['0:00:00.400', '0:00:00.300'],
                     'working_time': ['0:00:42', '0:00:37'],
+                    'exit_time': ['0:00:00.330', '0:00:00.440'],
                     'total_start_up_time': '0:00:00.300',
+                    'total_init_time': '0:00:00.330',
                     'total_waiting_time': '0:00:00.700',
                     'total_working_time': '0:01:19',
+                    'total_exit_time': '0:00:00.770',
                     'top_5_max_task_durations': ['0:00:06', '0:00:02', '0:00:01', '0:00:00.800', '0:00:00.100'],
                     'top_5_max_task_args': ['3', '2', '1', '4', '5'],
-                    'total_time': '0:01:20',
-                    'start_up_time_mean': '0:00:00.150',
-                    'start_up_time_std': '0:00:00.050',
-                    'waiting_time_mean': '0:00:00.350',
-                    'waiting_time_std': '0:00:00.050',
-                    'working_time_mean': '0:00:39.500',
-                    'working_time_std': '0:00:02.500'
+                    'total_time': '0:01:21.100',
+                    'start_up_time_mean': '0:00:00.150', 'start_up_time_std': '0:00:00.050',
+                    'init_time_mean': '0:00:00.165', 'init_time_std': '0:00:00.055',
+                    'waiting_time_mean': '0:00:00.350', 'waiting_time_std': '0:00:00.050',
+                    'working_time_mean': '0:00:39.500', 'working_time_std': '0:00:02.500',
+                    'exit_time_mean': '0:00:00.385', 'exit_time_std': '0:00:00.055'
                 })
+
+    @staticmethod
+    def _init():
+        # It's just here so we have something to time
+        _ = [x**x for x in range(1000)]
+
+    @staticmethod
+    def _exit():
+        # It's just here so we have something to time
+        return [x ** x for x in range(1000)]
