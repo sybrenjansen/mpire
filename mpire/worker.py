@@ -272,6 +272,7 @@ class AbstractWorker:
         :param additional_args: Additional args to pass to the function (worker ID, shared objects, worker state)
         :return: True when the worker needs to shut down, False otherwise
         """
+        print("_run_exit_func started")
         def _exit_func():
             with TimeIt(self.worker_exit_time, self.worker_id):
                 return self.worker_exit(*additional_args)
@@ -279,8 +280,10 @@ class AbstractWorker:
         results, should_return = self._run_safely(_exit_func, no_args=True)
 
         if should_return:
+            print("_run_exit_func error, should return")
             return True
         else:
+            print("_run_exit_func all fine")
             self.exit_results_queue.put(results)
             return False
 
@@ -311,6 +314,7 @@ class AbstractWorker:
                 raise
 
             except Exception as err:
+                print("_run_safely got error:", type(err))
                 # An exception occurred inside the provided function. Let the signal handler know it shouldn't raise any
                 # StopWorker exceptions from the parent process anymore, we got this.
                 with self.is_running_lock:

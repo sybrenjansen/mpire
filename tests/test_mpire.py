@@ -503,6 +503,7 @@ class ExitFuncTest(unittest.TestCase):
         When an exception occurs in the exit function it should properly shut down
         """
         for worker_lifespan in [None, 2]:
+            print("worker_lifespan=", worker_lifespan)
             with self.subTest(worker_lifespan=worker_lifespan), self.assertRaises(ValueError), \
                     WorkerPool(n_jobs=4) as pool:
                 pool.map(self._f2, range(10), worker_lifespan=worker_lifespan, worker_exit=self._exit_error)
