@@ -17,17 +17,20 @@ class CannotPickleExceptionError(Exception):
 
 class ExceptionHandler:
 
-    def __init__(self, terminate: Callable, exception_queue: JoinableQueue, exception_caught: Event, keep_order: Event,
-                 has_progress_bar: bool) -> None:
+    def __init__(self, terminate: Callable, exception_queue: JoinableQueue, exception_thrown: Event,
+                 exception_caught: Event, keep_order: Event, has_progress_bar: bool) -> None:
         """
         :param terminate: terminate function of the WorkerPool
         :param exception_queue: Queue where the workers can pass on an encountered exception
-        :param exception_caught: Event indicating whether or not an exception was caught by one of the workers
+        :param exception_thrown: Event object that signals an exception has been thrown by a worker
+        :param exception_caught: Event indicating whether or not an exception was caught by the main process, thrown by
+            one of the workers
         :param keep_order: Event that we need to clear in case of an exception
         :param has_progress_bar: Whether or not a progress bar is active
         """
         self.terminate = terminate
         self.exception_queue = exception_queue
+        self.exception_thrown = exception_thrown
         self.exception_caught = exception_caught
         self.keep_order = keep_order
         self.has_progress_bar = has_progress_bar
@@ -93,6 +96,13 @@ class ExceptionHandler:
         Raise error when we have caught one
         """
         print("raise_on_exception, checking")
+
+        # If we know an exception will come true from a worker process, wait for the exception to be obtained in the
+        # main process
+        if self.exception_thrown.is_set():
+            print("raise_on_exception, exception thrown is set, waiting for the catch")
+            self.exception_caught.wait()
+
         if self.exception_caught.is_set():
             print("raise_on_exception, got exception")
 
@@ -106,3 +116,5 @@ class ExceptionHandler:
             print("raise_on_exception, raising:", err)
 
             raise err(traceback_str)
+
+        print("raise_on_exception, nothing to do")

@@ -786,8 +786,8 @@ class WorkerPool:
         # thrown by the workers, terminates everything and re-raise an exception in the main process. The exit results
         # handler fetches results from the exit function, if provided. The progress bar handler receives progress
         # updates from the workers and updates the progress bar accordingly
-        with ExceptionHandler(self.terminate, self._exception_queue, self.exception_caught, self._keep_order,
-                              progress_bar is not None) as exception_handler, \
+        with ExceptionHandler(self.terminate, self._exception_queue, self._exception_thrown, self.exception_caught,
+                              self._keep_order, progress_bar is not None) as exception_handler, \
              ProgressBarHandler(func, self.n_jobs, progress_bar, n_tasks, progress_bar_position,
                                 self._task_completed_queue, self._exception_queue, self.exception_caught,
                                 self.get_insights):

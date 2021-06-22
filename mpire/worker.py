@@ -49,6 +49,7 @@ class AbstractWorker:
         :param exception_queue: Queue object for sending Exception objects to whenever an Exception was raised inside a
             user function
         :param exception_lock: Lock object such that child processes can only throw one at a time
+        :param exception_thrown: Event object that signals an exception has been thrown by a worker
         :param func: Function to call each time new task arguments become available
         :param keep_order: Boolean flag which signals if the task arguments contain an order index which should be
             preserved and not fed to the function `func` (e.g., used in ``map``)
