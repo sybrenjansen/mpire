@@ -67,11 +67,17 @@ class ExceptionHandler:
         # If we received None, we should just quit quietly
         if err is not None:
 
+            print("exception handler, got exception")
+
             # Let main process know we can stop working
             self.exception_caught.set()
 
+            print("exception handler, terminating")
+
             # Kill processes
             self.terminate()
+
+            print("exception handler, passing on exception")
 
             # Pass error to main process so it can be raised there (exceptions raised from threads or child processes
             # cannot be caught directly). Pass another error in case we have a progress bar
@@ -80,12 +86,15 @@ class ExceptionHandler:
                 self.exception_queue.put((err, traceback_str), block=True)
 
         self.exception_queue.task_done()
+        print("exception handler, done")
 
     def raise_on_exception(self) -> None:
         """
         Raise error when we have caught one
         """
+        print("raise_on_exception, checking")
         if self.exception_caught.is_set():
+            print("raise_on_exception, got exception")
 
             # Clear keep order event so we can safely reuse the WorkerPool and use (i)map_unordered after an (i)map call
             self.keep_order.clear()
@@ -93,5 +102,7 @@ class ExceptionHandler:
             with DelayedKeyboardInterrupt():
                 err, traceback_str = self.exception_queue.get(block=True)
                 self.exception_queue.task_done()
+
+            print("raise_on_exception, raising:", err)
 
             raise err(traceback_str)

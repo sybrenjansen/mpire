@@ -845,10 +845,14 @@ class WorkerPool:
             # Clean up time. When keep_alive is set to True we won't join the workers. During the stop_and_join call
             # an error can occur as well, so we have to check once again whether an exception occurred and raise if it
             # did
+            print("imap, raise_on_exception")
             exception_handler.raise_on_exception()
             if not self.keep_alive:
                 self.stop_and_join()
+                print("imap, raise_on_exception #2")
                 exception_handler.raise_on_exception()
+
+        print("imap, done")
 
         # Log insights
         if enable_insights:

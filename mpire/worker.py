@@ -183,6 +183,7 @@ class AbstractWorker:
                     # Run exit function when a poison pill was received
                     if self.worker_exit:
                         self._run_exit_func(additional_args)
+                print("run returning due to poison pill or exit has error")
                 return
 
             # Execute jobs in this chunk
@@ -212,6 +213,7 @@ class AbstractWorker:
 
         # Run exit function and store results
         if self.worker_exit and self._run_exit_func(additional_args):
+            print("run returning due to error in exit")
             return
 
         # Notify WorkerPool to start a new worker if max lifespan is reached
