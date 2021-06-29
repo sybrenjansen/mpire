@@ -9,7 +9,7 @@ import numpy as np
 
 
 def chunk_tasks(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int] = None,
-                chunk_size: Optional[int] = None, n_splits: Optional[int] = None) \
+                chunk_size: Optional[Union[int, float]] = None, n_splits: Optional[int] = None) \
         -> Generator[Union[Tuple, np.ndarray], None, None]:
     """
     Chunks tasks such that individual workers will receive chunks of tasks rather than individual ones, which can

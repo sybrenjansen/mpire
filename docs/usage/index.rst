@@ -7,4 +7,3 @@ Usage
     worker_pool
     map
     dashboard
-    known_issues

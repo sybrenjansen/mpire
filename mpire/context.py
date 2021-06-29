@@ -1,11 +1,5 @@
+import multiprocess as mp
 import threading
-
-# If multiprocess is installed we want to use that as it has more capabilities than regular multiprocessing (e.g.,
-# pickling lambdas en functions located in __main__)
-try:
-    import multiprocess as mp
-except ImportError:
-    import multiprocessing as mp
 
 
 # Threading context so we can use threading as backend as well

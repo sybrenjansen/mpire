@@ -291,6 +291,8 @@ This will return individual arrays:
      array([[5.11783283, 5.12585031, 5.39864368]])]
 
 
+.. _max_active_tasks:
+
 Maximum number of active tasks
 ------------------------------
 

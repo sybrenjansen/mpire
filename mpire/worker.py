@@ -1,26 +1,19 @@
 import collections
-import queue
+import dill
 import signal
 import traceback
 from datetime import datetime
 from functools import partial
-from multiprocessing.managers import ListProxy
-from typing import Any, Callable, Optional, Tuple, List
+from typing import Any, Callable, List, Optional, Tuple
 
 import numpy as np
 
+from mpire.comms import WorkerComms, POISON_PILL
 from mpire.context import MP_CONTEXTS
 from mpire.exception import CannotPickleExceptionError, StopWorker
+from mpire.insights import WorkerInsights
+from mpire.params import WorkerPoolParams
 from mpire.utils import TimeIt
-
-# If multiprocess is installed we want to use that as it has more capabilities than regular multiprocessing (e.g.,
-# pickling lambdas en functions located in __main__)
-try:
-    import multiprocess as mp
-    import dill as pickle
-except ImportError:
-    import multiprocessing as mp
-    import pickle
 
 
 class AbstractWorker:
@@ -28,92 +21,33 @@ class AbstractWorker:
     A multiprocessing helper class which continuously asks the queue for new jobs, until a poison pill is inserted
     """
 
-    def __init__(self, start_method: str, worker_id: int, tasks_queue: mp.JoinableQueue,
-                 results_queue: mp.JoinableQueue, exit_results_queue: Optional[mp.JoinableQueue],
-                 worker_done_array: mp.Array, task_completed_queue: mp.JoinableQueue, exception_queue: mp.JoinableQueue,
-                 exception_lock: mp.Lock, exception_thrown: mp.Event, func: Callable, worker_init: Optional[Callable],
-                 worker_exit: Optional[Callable], keep_order: bool, start_time: datetime,
-                 worker_start_up_time: mp.Array, worker_init_time: mp.Array, worker_n_completed_tasks: mp.Array,
-                 worker_waiting_time: mp.Array, worker_working_time: mp.Array, worker_exit_time: mp.Array,
-                 max_task_duration: mp.Array, max_task_args: ListProxy, shared_objects: Any = None,
-                 worker_lifespan: Optional[int] = None, pass_worker_id: bool = False,
-                 use_worker_state: bool = False) -> None:
+    def __init__(self, worker_id: int, params: WorkerPoolParams, worker_comms: WorkerComms,
+                 worker_insights: WorkerInsights, start_time: datetime) -> None:
         """
-        :param start_method: What Process start method to use
         :param worker_id: Worker ID
-        :param tasks_queue: Queue object for retrieving new task arguments
-        :param results_queue: Queue object for storing the results
-        :param worker_done_array: Array object for notifying the ``WorkerPool`` to restart a worker
-        :param task_completed_queue: Queue object for notifying the main process we're done with a single task. ``None``
-            when notifying is not necessary
-        :param exception_queue: Queue object for sending Exception objects to whenever an Exception was raised inside a
-            user function
-        :param exception_lock: Lock object such that child processes can only throw one at a time
-        :param func: Function to call each time new task arguments become available
-        :param keep_order: Boolean flag which signals if the task arguments contain an order index which should be
-            preserved and not fed to the function `func` (e.g., used in ``map``)
+        :param params: WorkerPool parameters
+        :param worker_comms: Worker communication objects (queues, locks, events, ...)
+        :param worker_insights: WorkerInsights object which stores the worker insights
         :param start_time: `datetime` object indicating at what time the Worker instance was created and started
-        :param worker_start_up_time: Array object which holds the total number of seconds the workers take to start up
-        :param worker_init_time: Array object which holds the total number of seconds the workers take to run the init
-            function
-        :param worker_n_completed_tasks: Array object which holds the total number of completed tasks per worker
-        :param worker_waiting_time: Array object which holds the total number of seconds the workers have been idle
-        :param worker_working_time: Array object which holds the total number of seconds the workers are executing the
-            task function
-        :param worker_exit_time: Array object which holds the total number of seconds the workers take to run the exit
-            function
-        :param max_task_duration: Array object which holds the top 5 max task durations in seconds per worker
-        :param max_task_args: Array object which holds the top 5 task arguments (string) for the longest task per worker
-        :param shared_objects: ``None`` or an iterable of process-aware shared objects (e.g., ``multiprocessing.Array``)
-            to pass to the function as the first argument
-        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
-            stay alive the entire time. Use this when workers use up too much memory over the course of time
-        :param pass_worker_id: Whether or not to pass the worker ID to the function
-        :param use_worker_state: Whether to let a worker have a worker state or not
         """
         super().__init__()
 
         # Parameters
-        self.start_method = start_method
         self.worker_id = worker_id
-        self.tasks_queue = tasks_queue
-        self.results_queue = results_queue
-        self.exit_results_queue = exit_results_queue
-        self.worker_done_array = worker_done_array
-        self.task_completed_queue = task_completed_queue
-        self.exception_queue = exception_queue
-        self.exception_lock = exception_lock
-        self.exception_thrown = exception_thrown
-        self.func = func
-        self.worker_init = worker_init
-        self.worker_exit = worker_exit
-        self.keep_order = keep_order
+        self.params = params
+        self.worker_comms = worker_comms
+        self.worker_insights = worker_insights
         self.start_time = start_time
-        self.worker_start_up_time = worker_start_up_time
-        self.worker_init_time = worker_init_time
-        self.worker_n_completed_tasks = worker_n_completed_tasks
-        self.worker_waiting_time = worker_waiting_time
-        self.worker_working_time = worker_working_time
-        self.worker_exit_time = worker_exit_time
-        self.max_task_duration = max_task_duration
-        self.max_task_args = max_task_args
-        self.shared_objects = shared_objects
-        self.worker_lifespan = worker_lifespan
-        self.pass_worker_id = pass_worker_id
-        self.use_worker_state = use_worker_state
 
         # Worker state
         self.worker_state = {}
 
-        # Additional worker insights container that holds (task duration, task args) tuples, sorted for heapq. We use a
-        # local container as to not put too big of a burden on interprocess communication
-        self.max_task_duration_list = (list(zip(self.max_task_duration[self.worker_id * 5:(self.worker_id + 1) * 5],
-                                                self.max_task_args[self.worker_id * 5:(self.worker_id + 1) * 5]))
-                                       if self.max_task_duration is not None else None)
-        self.max_task_duration_last_updated = datetime(1970, 1, 1)
+        # Initialize worker comms and insights for this worker
+        self.worker_comms.init_worker(self.worker_id)
+        self.worker_insights.init_worker(self.worker_id)
 
         # Exception handling variables
-        ctx = MP_CONTEXTS[self.start_method]
+        ctx = MP_CONTEXTS[self.params.start_method]
         self.is_running = False
         self.is_running_lock = ctx.Lock()
 
@@ -145,43 +79,42 @@ class AbstractWorker:
         life span is not yet reached it will execute the new task and put the results in the results queue.
         """
         # Store how long it took to start up
-        if self.worker_start_up_time is not None:
-            self.worker_start_up_time[self.worker_id] = (datetime.now() - self.start_time).total_seconds()
+        self.worker_insights.update_start_up_time(self.start_time)
 
         # Obtain additional args to pass to the function
         additional_args = []
-        if self.pass_worker_id:
+        if self.params.pass_worker_id:
             additional_args.append(self.worker_id)
-        if self.shared_objects is not None:
-            additional_args.append(self.shared_objects)
-        if self.use_worker_state:
+        if self.params.shared_objects is not None:
+            additional_args.append(self.params.shared_objects)
+        if self.params.use_worker_state:
             additional_args.append(self.worker_state)
 
         # Run initialization function. If it returns True it means an exception occurred and we should exit
-        if self.worker_init and self._run_init_func(additional_args):
+        if self.params.worker_init and self._run_init_func(additional_args):
             return
 
         # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
         # with idx support which deals with the provided idx variable.
-        func = partial(self._helper_func_with_idx if self.keep_order else self._helper_func,
-                       partial(self.func, *additional_args))
+        func = partial(self._helper_func_with_idx if self.worker_comms.keep_order() else self._helper_func,
+                       partial(self.params.func, *additional_args))
 
         n_chunks_executed = 0
-        while self.worker_lifespan is None or n_chunks_executed < self.worker_lifespan:
+        while self.params.worker_lifespan is None or n_chunks_executed < self.params.worker_lifespan:
 
             # Obtain new chunk of jobs
-            with TimeIt(self.worker_waiting_time, self.worker_id):
-                next_chunked_args = self._retrieve_task()
+            with TimeIt(self.worker_insights.worker_waiting_time, self.worker_id):
+                next_chunked_args = self.worker_comms.get_task()
 
             # If we obtained a poison pill, we stop. When the _retrieve_task function returns None this means we stop
             # because of an exception in the main process
-            if next_chunked_args == '\0' or next_chunked_args is None:
-                self._update_task_insights()
-                if next_chunked_args == '\0':
-                    self.tasks_queue.task_done()
+            if next_chunked_args == POISON_PILL or next_chunked_args is None:
+                self.worker_insights.update_task_insights()
+                if next_chunked_args == POISON_PILL:
+                    self.worker_comms.task_done()
 
                     # Run exit function when a poison pill was received
-                    if self.worker_exit:
+                    if self.params.worker_exit:
                         self._run_exit_func(additional_args)
                 return
 
@@ -192,46 +125,30 @@ class AbstractWorker:
                 # Try to run this function and save results
                 results_part, should_return = self._run_func(func, args)
                 if should_return:
-                    self.tasks_queue.task_done()
+                    self.worker_comms.task_done()
                     return
                 results.append(results_part)
 
                 # Notify that we've completed a task (only when using a progress bar)
-                if self.task_completed_queue is not None:
-                    self.task_completed_queue.put(1)
+                if self.worker_comms.has_progress_bar():
+                    self.worker_comms.task_completed_progress_bar()
 
             # Send results back to main process
-            self.results_queue.put(results)
-            self.tasks_queue.task_done()
+            self.worker_comms.add_results(results)
+            self.worker_comms.task_done()
             n_chunks_executed += 1
 
             # Update task insights every once in a while (every 2 seconds)
-            if (self.max_task_duration is not None and
-                    (datetime.now() - self.max_task_duration_last_updated).total_seconds() > 2):
-                self._update_task_insights()
+            self.worker_insights.update_task_insights_once_in_a_while()
 
         # Run exit function and store results
-        if self.worker_exit and self._run_exit_func(additional_args):
+        if self.params.worker_exit and self._run_exit_func(additional_args):
             return
 
         # Notify WorkerPool to start a new worker if max lifespan is reached
-        self._update_task_insights()
-        if self.worker_lifespan is not None and n_chunks_executed == self.worker_lifespan:
-            self.worker_done_array[self.worker_id] = True
-
-    def _retrieve_task(self) -> Any:
-        """
-        Obtain new chunk of jobs and occasionally poll the stop event
-
-        :return: Chunked args
-        """
-        while not self.exception_thrown.is_set():
-            try:
-                return self.tasks_queue.get(block=True, timeout=0.1)
-            except queue.Empty:
-                pass
-
-        return None
+        self.worker_insights.update_task_insights()
+        if self.params.worker_lifespan is not None and n_chunks_executed == self.params.worker_lifespan:
+            self.worker_comms.signal_worker_restart()
 
     def _run_init_func(self, additional_args: List) -> bool:
         """
@@ -241,8 +158,8 @@ class AbstractWorker:
         :return: True when the worker needs to shut down, False otherwise
         """
         def _init_func():
-            with TimeIt(self.worker_init_time, self.worker_id):
-                self.worker_init(*additional_args)
+            with TimeIt(self.worker_insights.worker_init_time, self.worker_id):
+                self.params.worker_init(*additional_args)
 
         return self._run_safely(_init_func, no_args=True)[1]
 
@@ -256,11 +173,10 @@ class AbstractWorker:
             shut down
         """
         def _func():
-            with TimeIt(self.worker_working_time, self.worker_id, self.max_task_duration_list,
-                        lambda: self._format_args(args, separator=' | ')):
+            with TimeIt(self.worker_insights.worker_working_time, self.worker_id,
+                        self.worker_insights.max_task_duration_list, lambda: self._format_args(args, separator=' | ')):
                 results = func(args)
-            if self.worker_n_completed_tasks is not None:
-                self.worker_n_completed_tasks[self.worker_id] += 1
+            self.worker_insights.update_n_completed_tasks()
             return results
 
         return self._run_safely(_func, args)
@@ -273,15 +189,15 @@ class AbstractWorker:
         :return: True when the worker needs to shut down, False otherwise
         """
         def _exit_func():
-            with TimeIt(self.worker_exit_time, self.worker_id):
-                return self.worker_exit(*additional_args)
+            with TimeIt(self.worker_insights.worker_exit_time, self.worker_id):
+                return self.params.worker_exit(*additional_args)
 
         results, should_return = self._run_safely(_exit_func, no_args=True)
 
         if should_return:
             return True
         else:
-            self.exit_results_queue.put(results)
+            self.worker_comms.add_exit_results(results)
             return False
 
     def _run_safely(self, func: Callable, exception_args: Optional[Any] = None,
@@ -336,13 +252,13 @@ class AbstractWorker:
         :param err: Exception that should be passed on to parent process
         """
         # Only one process can throw at a time
-        with self.exception_lock:
+        with self.worker_comms.exception_lock:
 
             # Only raise an exception when this process is the first one to raise. We do this because when the first
             # exception is caught by the main process the workers are joined which can cause a deadlock on draining the
             # exception queue. By only allowing one process to throw we know for sure that the exception queue will be
             # empty when the first one arrives.
-            if not self.exception_thrown.is_set():
+            if not self.worker_comms.exception_thrown():
 
                 # Create traceback string
                 traceback_str = "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % (
@@ -354,13 +270,12 @@ class AbstractWorker:
                 # The call to `queue.put` creates a thread in which it pickles and when that raises an exception we
                 # cannot catch it.
                 try:
-                    pickle.dumps(type(err))
-                except pickle.PicklingError:
+                    dill.dumps(type(err))
+                except dill.PicklingError:
                     err = CannotPickleExceptionError()
 
-                # Add exception to queue
-                self.exception_queue.put((type(err), traceback_str))
-                self.exception_thrown.set()
+                # Add exception
+                self.worker_comms.add_exception(type(err), traceback_str)
 
     def _format_args(self, args: Any, no_args: bool = False, separator: str = '\n') -> str:
         """
@@ -372,7 +287,7 @@ class AbstractWorker:
         :return: String containing the task arguments
         """
         # Determine function arguments
-        func_args = args[1] if args and self.keep_order else args
+        func_args = args[1] if args and self.worker_comms.keep_order() else args
         if no_args:
             return "N/A"
         elif isinstance(func_args, dict):
@@ -419,16 +334,6 @@ class AbstractWorker:
         else:
             return func(args)
 
-    def _update_task_insights(self) -> None:
-        """
-        Update synced containers with new top 5 max task duration + args
-        """
-        if self.max_task_duration is not None:
-            task_durations, task_args = zip(*self.max_task_duration_list)
-            self.max_task_duration[self.worker_id * 5:(self.worker_id + 1) * 5] = task_durations
-            self.max_task_args[self.worker_id * 5:(self.worker_id + 1) * 5] = task_args
-            self.max_task_duration_last_updated = datetime.now()
-
 
 class ForkWorker(AbstractWorker, MP_CONTEXTS['fork'].Process):
     pass
@@ -451,15 +356,15 @@ def worker_factory(start_method):
     Returns the appropriate worker class given the start method
 
     :param start_method: What Process/Threading start method to use, see the WorkerPool constructor
-    :return: Worker class where the start_method is already filled in
+    :return: Worker class
     """
     if start_method == 'fork':
-        return partial(ForkWorker, start_method)
+        return ForkWorker
     elif start_method == 'forkserver':
-        return partial(ForkServerWorker, start_method)
+        return ForkServerWorker
     elif start_method == 'spawn':
-        return partial(SpawnWorker, start_method)
+        return SpawnWorker
     elif start_method == 'threading':
-        return partial(ThreadingWorker, start_method)
+        return ThreadingWorker
     else:
         raise ValueError("Unknown start method: '{}'".format(start_method))

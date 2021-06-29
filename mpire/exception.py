@@ -1,8 +1,10 @@
-from multiprocessing import JoinableQueue
-from threading import Event, Thread
+import logging
+from threading import Thread
 from typing import Any, Callable
 
-from mpire.signal import DelayedKeyboardInterrupt
+from mpire.comms import POISON_PILL, WorkerComms
+
+logger = logging.getLogger(__name__)
 
 
 class StopWorker(Exception):
@@ -17,22 +19,14 @@ class CannotPickleExceptionError(Exception):
 
 class ExceptionHandler:
 
-    def __init__(self, terminate: Callable, exception_queue: JoinableQueue, exception_thrown: Event,
-                 exception_caught: Event, keep_order: Event, has_progress_bar: bool) -> None:
+    def __init__(self, terminate: Callable, worker_comms: WorkerComms, has_progress_bar: bool) -> None:
         """
         :param terminate: terminate function of the WorkerPool
-        :param exception_queue: Queue where the workers can pass on an encountered exception
-        :param exception_thrown: Event object that signals an exception has been thrown by a worker
-        :param exception_caught: Event indicating whether or not an exception was caught by the main process, thrown by
-            one of the workers
-        :param keep_order: Event that we need to clear in case of an exception
+        :param worker_comms: Worker communication objects (queues, locks, events, ...)
         :param has_progress_bar: Whether or not a progress bar is active
         """
         self.terminate = terminate
-        self.exception_queue = exception_queue
-        self.exception_thrown = exception_thrown
-        self.exception_caught = exception_caught
-        self.keep_order = keep_order
+        self.worker_comms = worker_comms
         self.has_progress_bar = has_progress_bar
         self.thread = None
 
@@ -55,34 +49,36 @@ class ExceptionHandler:
         """
         # Shutdown the exception handling thread. Insert a poison pill when no exception was raised by the workers.
         # If there was an exception, the exception handling thread would already be joinable.
-        if not self.exception_caught.is_set():
-            with DelayedKeyboardInterrupt():
-                self.exception_queue.put((None, None), block=True)
+        if not self.worker_comms.exception_caught():
+            self.worker_comms.add_exception_poison_pill()
         self.thread.join()
 
     def _exception_handler(self) -> None:
         """
         Keeps an eye on any exceptions being passed on by workers
         """
+        logger.info("Exception handler started")
+
         # Wait for an exception to occur
-        err, traceback_str = self.exception_queue.get(block=True)
+        err, traceback_str = self.worker_comms.get_exception(in_thread=True)
 
-        # If we received None, we should just quit quietly
-        if err is not None:
-
+        # If we received a poison pill, we should just quit quietly
+        if err is not POISON_PILL:
             # Let main process know we can stop working
-            self.exception_caught.set()
+            logger.debug(f"Exception caught: {err}")
+            self.worker_comms.set_exception_caught()
 
             # Kill processes
             self.terminate()
 
             # Pass error to main process so it can be raised there (exceptions raised from threads or child processes
             # cannot be caught directly). Pass another error in case we have a progress bar
-            self.exception_queue.put((err, traceback_str), block=True)
+            self.worker_comms.add_exception(err, traceback_str)
             if self.has_progress_bar:
-                self.exception_queue.put((err, traceback_str), block=True)
+                self.worker_comms.add_exception(err, traceback_str)
 
-        self.exception_queue.task_done()
+        self.worker_comms.task_done_exception()
+        logger.info("Terminating exception handler")
 
     def raise_on_exception(self) -> None:
         """
@@ -90,15 +86,15 @@ class ExceptionHandler:
         """
         # If we know an exception will come through from a worker process, wait for the exception to be obtained in the
         # main process
-        if self.exception_thrown.is_set():
-            self.exception_caught.wait()
+        if self.worker_comms.exception_thrown():
+            self.worker_comms.wait_until_exception_is_caught()
 
-        if self.exception_caught.is_set():
+        if self.worker_comms.exception_caught():
             # Clear keep order event so we can safely reuse the WorkerPool and use (i)map_unordered after an (i)map call
-            self.keep_order.clear()
+            self.worker_comms.clear_keep_order()
 
-            with DelayedKeyboardInterrupt():
-                err, traceback_str = self.exception_queue.get(block=True)
-                self.exception_queue.task_done()
-
+            # Get exception and raise here
+            err, traceback_str = self.worker_comms.get_exception()
+            self.worker_comms.task_done_exception()
+            logger.info("Raising caught exception")
             raise err(traceback_str)

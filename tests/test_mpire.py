@@ -1,8 +1,7 @@
-import ctypes
 import types
 import unittest
 from itertools import product, repeat
-from multiprocessing import Barrier, managers, Value
+from multiprocessing import Barrier, Value
 from unittest.mock import patch
 
 import numpy as np
@@ -37,7 +36,6 @@ class MapTest(unittest.TestCase):
         """
         Tests the map related functions
         """
-
         def get_generator(iterable):
             yield from iterable
 
@@ -162,45 +160,6 @@ class MapTest(unittest.TestCase):
             # Should throw
             with self.subTest("unknown parameter 'z'"), self.assertRaises(TypeError):
                 pool.map(subtract, [{'x': 5, 'y': 2, 'z': 2}])
-
-    def test_faulty_parameters(self):
-        """
-        Should raise when wrong parameter values are used
-        """
-        with WorkerPool(n_jobs=4) as pool:
-
-            # Zero (or a negative number of) active tasks/lifespan should result in a value error
-            for n, map_function in product([-3, -1, 0, 3.14],
-                                           [pool.map, pool.map_unordered, pool.imap, pool.imap_unordered]):
-                # max_tasks_active
-                with self.subTest(max_tasks_active=n, map_function=map_function), \
-                     self.assertRaises(ValueError if isinstance(n, int) else TypeError):
-                    list(map_function(square, self.test_data, max_tasks_active=n))
-
-                # worker_lifespan
-                with self.subTest(worker_lifespan=n, map_function=map_function), \
-                     self.assertRaises(ValueError if isinstance(n, int) else TypeError):
-                    list(map_function(square, self.test_data, worker_lifespan=n))
-
-            # chunk_size should be an integer or None
-            with self.subTest(chunk_size='3'), self.assertRaises(TypeError):
-                for _ in pool.imap(square, self.test_data, chunk_size='3'):
-                    pass
-
-            # chunk_size should be a positive integer
-            with self.subTest(chunk_size=-5), self.assertRaises(ValueError):
-                for _ in pool.imap(square, self.test_data, chunk_size=-5):
-                    pass
-
-            # n_splits should be an integer or None
-            with self.subTest(n_splits='3'), self.assertRaises(TypeError):
-                for _ in pool.imap(square, self.test_data, n_splits='3'):
-                    pass
-
-            # n_splits should be a positive integer
-            with self.subTest(n_splits=-5), self.assertRaises(ValueError):
-                for _ in pool.imap(square, self.test_data, n_splits=-5):
-                    pass
 
 
 class WorkerIDTest(unittest.TestCase):
@@ -474,8 +433,8 @@ class ExitFuncTest(unittest.TestCase):
             shared_objects = Barrier(n_jobs), Value('i', 0)
             with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects,
                                                          use_worker_state=True) as pool:
-                results = pool.map(self._f1, self.test_data, worker_init=self._init, worker_exit=self._exit, chunk_size=1,
-                                   worker_lifespan=1)
+                results = pool.map(self._f1, self.test_data, worker_init=self._init, worker_exit=self._exit,
+                                   chunk_size=1, worker_lifespan=1)
                 self.assertListEqual(results, self.test_desired_output)
                 self.assertGreaterEqual(shared_objects[1].value, 10)
                 self.assertLessEqual(shared_objects[1].value, 10 + n_jobs)
@@ -586,9 +545,9 @@ class CPUPinningTest(unittest.TestCase):
         self.test_data = list(enumerate([1, 2, 3, 5, 6, 9, 37, 42, 1337, 0, 3, 5, 0]))
         self.test_desired_output = list(map(lambda _args: square(*_args), self.test_data))
 
-    def test_valid_input(self):
+    def test_cpu_pinning(self):
         """
-        Test that when parameters are valid, nothing breaks. We don't actually check if CPU pinning is happening
+        Test that when parameters are valid, nothing breaks and the pinning is actually happening
         """
         for n_jobs, cpu_ids, expected_mask in [(None, [0], [[0]] * cpu_count()),
                                                (None, [[0, 3]], [[0, 3]] * cpu_count()),
@@ -606,38 +565,22 @@ class CPUPinningTest(unittest.TestCase):
             if cpu_ids is not None and np.array(cpu_ids).max() >= cpu_count():
                 continue
 
-            else:
-                with self.subTest(n_jobs=n_jobs, cpu_ids=cpu_ids), patch('os.sched_setaffinity') as p, \
-                        WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids) as pool:
+            with self.subTest(n_jobs=n_jobs, cpu_ids=cpu_ids), patch('os.sched_setaffinity') as p, \
+                    WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids) as pool:
 
-                    # Verify results
-                    results_list = pool.map(square, self.test_data)
-                    self.assertTrue(isinstance(results_list, list))
-                    self.assertEqual(self.test_desired_output, results_list)
+                # Verify results
+                results_list = pool.map(square, self.test_data)
+                self.assertTrue(isinstance(results_list, list))
+                self.assertEqual(self.test_desired_output, results_list)
 
-                    # Verify that when CPU pinning is used, it is called as many times as there are jobs and is
-                    # called for each worker process ID
-                    if cpu_ids is None:
-                        self.assertEqual(p.call_args_list, [])
-                    else:
-                        self.assertEqual(p.call_count, pool.n_jobs)
-                        mask = [call[0][1] for call in p.call_args_list]
-                        self.assertListEqual(mask, expected_mask)
-
-    def test_invalid_input(self):
-        """
-        Test that when parameters are invalid, an error is raised
-        """
-        for n_jobs, cpu_ids in product([None, 1, 2, 4], [[0, 1], [0, 1, 2, 3], [[0, 1], [0, 1]]]):
-            if len(cpu_ids) != (n_jobs or cpu_count()):
-                with self.subTest(n_jobs=n_jobs, cpu_ids=cpu_ids), self.assertRaises(ValueError):
-                    WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids)
-
-        # Should raise when CPU IDs are out of scope
-        with self.assertRaises(ValueError):
-            WorkerPool(n_jobs=1, cpu_ids=[-1])
-        with self.assertRaises(ValueError):
-            WorkerPool(n_jobs=1, cpu_ids=[cpu_count()])
+                # Verify that when CPU pinning is used, it is called as many times as there are jobs and is called for
+                # each worker process ID
+                if cpu_ids is None:
+                    self.assertEqual(p.call_args_list, [])
+                else:
+                    self.assertEqual(p.call_count, pool.params.n_jobs)
+                    mask = [call[0][1] for call in p.call_args_list]
+                    self.assertListEqual(mask, expected_mask)
 
 
 class ProgressBarTest(unittest.TestCase):
@@ -752,19 +695,23 @@ class KeepAliveTest(unittest.TestCase):
             with self.subTest(n_jobs=n_jobs), \
                     WorkerPool(n_jobs=n_jobs, shared_objects=shared, use_worker_state=True, keep_alive=False) as pool:
 
-                self.assertListEqual(pool.map(self._f1, self.test_data), self.test_desired_output_f1)
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                                     self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs)
                 barrier.reset()
 
-                self.assertListEqual(pool.map(self._f1, self.test_data), self.test_desired_output_f1)
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                                     self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs * 2)
                 barrier.reset()
 
-                self.assertListEqual(pool.map(self._f1, self.test_data), self.test_desired_output_f1)
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                                     self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs * 3)
                 barrier.reset()
 
-                self.assertListEqual(pool.map(self._f1, self.test_data), self.test_desired_output_f1)
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                                     self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs * 4)
 
     def test_keep_alive(self):
@@ -779,15 +726,18 @@ class KeepAliveTest(unittest.TestCase):
             with self.subTest(n_jobs=n_jobs), \
                     WorkerPool(n_jobs=n_jobs, shared_objects=shared, use_worker_state=True, keep_alive=True) as pool:
 
-                self.assertListEqual(pool.map(self._f1, self.test_data), self.test_desired_output_f1)
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                                     self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs)
                 barrier.reset()
 
-                self.assertListEqual(list(pool.imap(self._f1, self.test_data)), self.test_desired_output_f1)
+                self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_init=self._init1)),
+                                     self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs)
                 barrier.reset()
 
-                self.assertListEqual(pool.map(self._f1, self.test_data), self.test_desired_output_f1)
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                                     self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs)
 
     def test_keep_alive_func_changes(self):
@@ -802,19 +752,23 @@ class KeepAliveTest(unittest.TestCase):
             with self.subTest(n_jobs=n_jobs), \
                     WorkerPool(n_jobs=n_jobs, shared_objects=shared, use_worker_state=True, keep_alive=True) as pool:
 
-                self.assertListEqual(pool.map(self._f1, self.test_data), self.test_desired_output_f1)
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                                     self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs)
                 barrier.reset()
 
-                self.assertListEqual(list(pool.imap(self._f2, self.test_data)), self.test_desired_output_f2)
+                self.assertListEqual(list(pool.imap(self._f2, self.test_data, worker_init=self._init1)),
+                                     self.test_desired_output_f2)
                 self.assertEqual(counter.value, n_jobs * 2)
                 barrier.reset()
 
-                self.assertListEqual(pool.map(self._f2, self.test_data), self.test_desired_output_f2)
+                self.assertListEqual(pool.map(self._f2, self.test_data, worker_init=self._init1),
+                                     self.test_desired_output_f2)
                 self.assertEqual(counter.value, n_jobs * 2)
                 barrier.reset()
 
-                self.assertListEqual(pool.map(self._f1, self.test_data), self.test_desired_output_f1)
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                                     self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs * 3)
 
     def test_keep_alive_worker_lifespan_changes(self):
@@ -829,29 +783,100 @@ class KeepAliveTest(unittest.TestCase):
             with self.subTest(n_jobs=n_jobs), \
                     WorkerPool(n_jobs=n_jobs, shared_objects=shared, use_worker_state=True, keep_alive=True) as pool:
 
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=100),
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=100, worker_init=self._init1),
                                      self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs)
                 barrier.reset()
 
-                self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_lifespan=100)),
-                                     self.test_desired_output_f1)
+                self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_lifespan=100,
+                                                    worker_init=self._init1)), self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs)
                 barrier.reset()
 
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=200),
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=200, worker_init=self._init1),
                                      self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs * 2)
                 barrier.reset()
 
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=200),
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=200, worker_init=self._init1),
                                      self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs * 2)
                 barrier.reset()
 
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=100),
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=100, worker_init=self._init1),
                                      self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs * 3)
+
+    def test_keep_alive_worker_init_changes(self):
+        """
+        When keep_alive is set to True it should reuse existing workers between map calls, but only when the worker init
+        function is kept constant
+        """
+        for n_jobs in [1, 2, 4]:
+            barrier = Barrier(n_jobs)
+            counter = Value('i', 0)
+            shared = barrier, counter
+            with self.subTest(n_jobs=n_jobs), \
+                    WorkerPool(n_jobs=n_jobs, shared_objects=shared, use_worker_state=True, keep_alive=True) as pool:
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs)
+                barrier.reset()
+
+                self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_init=self._init2)),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs * 2)
+                barrier.reset()
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init2),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs * 2)
+                barrier.reset()
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs * 3)
+
+    def test_keep_alive_worker_exit_changes(self):
+        """
+        When keep_alive is set to True it should reuse existing workers between map calls, but only when the worker exit
+        function is kept constant
+        """
+        for n_jobs in [1, 2, 4]:
+            barrier = Barrier(n_jobs)
+            counter = Value('i', 0)
+            shared = barrier, counter
+            with self.subTest(n_jobs=n_jobs), \
+                    WorkerPool(n_jobs=n_jobs, shared_objects=shared, use_worker_state=True, keep_alive=True) as pool:
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1,
+                                              worker_exit=self._exit1), self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs)
+                barrier.reset()
+
+                self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_init=self._init1,
+                                                    worker_exit=self._exit2)), self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs * 2)
+                barrier.reset()
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1,
+                                              worker_exit=self._exit2), self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs * 2)
+                barrier.reset()
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1,
+                                              worker_exit=self._exit1), self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs * 3)
+
+    @staticmethod
+    def _init1(_, worker_state):
+        worker_state['already_counted'] = False
+
+    @staticmethod
+    def _init2(_, worker_state):
+        worker_state['already_counted'] = False
+        worker_state[4] = 2
 
     @staticmethod
     def _f1(shared, worker_state, x):
@@ -860,7 +885,7 @@ class KeepAliveTest(unittest.TestCase):
         returns x * 2
         """
         barrier, counter = shared
-        if 'already_counted' not in worker_state:
+        if not worker_state['already_counted']:
             with counter.get_lock():
                 counter.value += 1
             worker_state['already_counted'] = True
@@ -874,12 +899,20 @@ class KeepAliveTest(unittest.TestCase):
         returns x * 3
         """
         barrier, counter = shared
-        if 'already_counted' not in worker_state:
+        if not worker_state['already_counted']:
             with counter.get_lock():
                 counter.value += 1
             worker_state['already_counted'] = True
             barrier.wait()
         return x * 3
+
+    @staticmethod
+    def _exit1(_, worker_state):
+        return worker_state['already_counted']
+
+    @staticmethod
+    def _exit2(_, worker_state):
+        pass
 
 
 class ExceptionTest(unittest.TestCase):
@@ -941,196 +974,3 @@ class ExceptionTest(unittest.TestCase):
             raise ValueError(x)
         else:
             return idx, x * x
-
-
-class InsightsTest(unittest.TestCase):
-
-    def setUp(self):
-        # Create some test data. Note that the regular map reads the inputs as a list of single tuples (one argument),
-        # whereas parallel.map sees it as a list of argument lists. Therefore we give the regular map a lambda function
-        # which mimics the parallel.map behavior.
-        self.test_data = list(enumerate([1, 2, 3, 5, 6, 9, 37, 42, 1337, 0, 3, 5, 0]))
-        self.test_desired_output = list(map(lambda _args: square(*_args), self.test_data))
-        self.test_data_len = len(self.test_data)
-        self.test_data_args = {' | '.join(f"Arg {idx}: {repr(arg)}" for idx, arg in enumerate(args))
-                               for args in self.test_data}
-
-    def test_reset_insights(self):
-        """
-        Test if resetting the insights is done properly
-        """
-        for n_jobs in [1, 2, 4]:
-            with WorkerPool(n_jobs=n_jobs) as pool:
-
-                with self.subTest('initialized', n_jobs=n_jobs):
-                    self.assertIsNone(pool.insights_manager)
-                    self.assertIsNone(pool.worker_start_up_time)
-                    self.assertIsNone(pool.worker_init_time)
-                    self.assertIsNone(pool.worker_n_completed_tasks)
-                    self.assertIsNone(pool.worker_waiting_time)
-                    self.assertIsNone(pool.worker_working_time)
-                    self.assertIsNone(pool.worker_exit_time)
-                    self.assertIsNone(pool.max_task_duration)
-                    self.assertIsNone(pool.max_task_args)
-
-                # Containers should be properly initialized
-                with self.subTest('without initial values', n_jobs=n_jobs, enable_insights=True):
-                    pool._reset_insights(enable_insights=True)
-                    self.assertIsInstance(pool.insights_manager, managers.SyncManager)
-                    self.assertIsInstance(pool.worker_start_up_time, ctypes.Array)
-                    self.assertIsInstance(pool.worker_init_time, ctypes.Array)
-                    self.assertIsInstance(pool.worker_n_completed_tasks, ctypes.Array)
-                    self.assertIsInstance(pool.worker_waiting_time, ctypes.Array)
-                    self.assertIsInstance(pool.worker_working_time, ctypes.Array)
-                    self.assertIsInstance(pool.worker_exit_time, ctypes.Array)
-                    self.assertIsInstance(pool.max_task_duration, ctypes.Array)
-                    self.assertIsInstance(pool.max_task_args, managers.ListProxy)
-
-                    # Basic sanity checks for the values
-                    self.assertEqual(sum(pool.worker_start_up_time), 0)
-                    self.assertEqual(sum(pool.worker_init_time), 0)
-                    self.assertEqual(sum(pool.worker_n_completed_tasks), 0)
-                    self.assertEqual(sum(pool.worker_waiting_time), 0)
-                    self.assertEqual(sum(pool.worker_working_time), 0)
-                    self.assertEqual(sum(pool.worker_exit_time), 0)
-                    self.assertEqual(sum(pool.max_task_duration), 0)
-                    self.assertListEqual(list(pool.max_task_args), [''] * n_jobs * 5)
-
-                # Execute something so we can test if the containers will be properly resetted
-                pool.map(square, self.test_data)
-
-                # Containers should be properly initialized
-                with self.subTest('with initial values', n_jobs=n_jobs, enable_insights=True):
-                    pool._reset_insights(enable_insights=True)
-                    # Basic sanity checks for the values
-                    self.assertEqual(sum(pool.worker_start_up_time), 0)
-                    self.assertEqual(sum(pool.worker_init_time), 0)
-                    self.assertEqual(sum(pool.worker_n_completed_tasks), 0)
-                    self.assertEqual(sum(pool.worker_waiting_time), 0)
-                    self.assertEqual(sum(pool.worker_working_time), 0)
-                    self.assertEqual(sum(pool.worker_exit_time), 0)
-                    self.assertEqual(sum(pool.max_task_duration), 0)
-                    self.assertListEqual(list(pool.max_task_args), [''] * n_jobs * 5)
-
-                # Disabling should set things to None again
-                with self.subTest(n_jobs=n_jobs, enable_insights=False):
-                    pool._reset_insights(enable_insights=False)
-                    self.assertIsNone(pool.insights_manager)
-                    self.assertIsNone(pool.worker_start_up_time)
-                    self.assertIsNone(pool.worker_init_time)
-                    self.assertIsNone(pool.worker_n_completed_tasks)
-                    self.assertIsNone(pool.worker_waiting_time)
-                    self.assertIsNone(pool.worker_working_time)
-                    self.assertIsNone(pool.worker_exit_time)
-                    self.assertIsNone(pool.max_task_duration)
-                    self.assertIsNone(pool.max_task_args)
-
-    def test_enable_insights(self):
-        """
-        Insight containers are initially set to None values. When enabled they should be changed to appropriate
-        containers. When a second task is started it should reset them. If disabled, they should remain None
-        """
-        with WorkerPool(n_jobs=2) as pool:
-
-            # We run this a few times to see if it resets properly. We only verify this by checking the
-            # n_completed_tasks
-            for idx in range(3):
-                with self.subTest('enabled', idx=idx):
-
-                    self.assertListEqual(pool.map(square, self.test_data, enable_insights=True, worker_init=self._init,
-                                                  worker_exit=self._exit),
-                                         self.test_desired_output)
-
-                    # Basic sanity checks for the values. Some max task args can be empty, in that case the duration
-                    # should be 0 (= no data)
-                    self.assertGreater(sum(pool.worker_start_up_time), 0)
-                    self.assertGreater(sum(pool.worker_init_time), 0)
-                    self.assertEqual(sum(pool.worker_n_completed_tasks), self.test_data_len)
-                    self.assertGreater(sum(pool.worker_waiting_time), 0)
-                    self.assertGreater(sum(pool.worker_working_time), 0)
-                    self.assertGreater(sum(pool.worker_exit_time), 0)
-                    self.assertGreater(max(pool.max_task_duration), 0)
-                    for duration, args in zip(pool.max_task_duration, pool.max_task_args):
-                        if duration == 0:
-                            self.assertEqual(args, '')
-                        else:
-                            self.assertIn(args, self.test_data_args)
-
-            # Disabling should set things to None again
-            with self.subTest('disable'):
-                self.assertListEqual(pool.map(square, self.test_data, enable_insights=False), self.test_desired_output)
-                self.assertIsNone(pool.insights_manager)
-                self.assertIsNone(pool.worker_start_up_time)
-                self.assertIsNone(pool.worker_init_time)
-                self.assertIsNone(pool.worker_n_completed_tasks)
-                self.assertIsNone(pool.worker_waiting_time)
-                self.assertIsNone(pool.worker_working_time)
-                self.assertIsNone(pool.worker_exit_time)
-                self.assertIsNone(pool.max_task_duration)
-                self.assertIsNone(pool.max_task_args)
-
-    def test_get_insights(self):
-        """
-        Test if the insights are properly processed
-        """
-        with WorkerPool(n_jobs=2) as pool:
-
-            with self.subTest(enable_insights=False):
-                pool._reset_insights(enable_insights=False)
-                self.assertDictEqual(pool.get_insights(), {})
-
-            with self.subTest(enable_insights=True):
-                pool._reset_insights(enable_insights=True)
-                pool.worker_start_up_time[:] = [0.1, 0.2]
-                pool.worker_init_time[:] = [0.11, 0.22]
-                pool.worker_n_completed_tasks[:] = [2, 3]
-                pool.worker_waiting_time[:] = [0.4, 0.3]
-                pool.worker_working_time[:] = [42.0, 37.0]
-                pool.worker_exit_time[:] = [0.33, 0.44]
-
-                # Durations that are zero or args that are empty are skipped
-                pool.max_task_duration[:] = [0.0, 0.0, 1.0, 2.0, 0.0, 6.0, 0.8, 0.0, 0.1, 0.0]
-                pool.max_task_args[:] = ['', '', '1', '2', '', '3', '4', '', '5', '']
-                insights = pool.get_insights()
-
-                # Test ratios separately because of rounding errors
-                total_time = 0.3 + 0.33 + 0.7 + 79.0 + 0.77
-                self.assertAlmostEqual(insights['start_up_ratio'], 0.3 / total_time)
-                self.assertAlmostEqual(insights['init_ratio'], 0.33 / total_time)
-                self.assertAlmostEqual(insights['waiting_ratio'], 0.7 / total_time)
-                self.assertAlmostEqual(insights['working_ratio'], 79.0 / total_time)
-                self.assertAlmostEqual(insights['exit_ratio'], 0.77 / total_time)
-                del (insights['start_up_ratio'], insights['init_ratio'], insights['waiting_ratio'],
-                     insights['working_ratio'], insights['exit_ratio'])
-
-                self.assertDictEqual(insights, {
-                    'n_completed_tasks': [2, 3],
-                    'start_up_time': ['0:00:00.100', '0:00:00.200'],
-                    'init_time': ['0:00:00.110', '0:00:00.220'],
-                    'waiting_time': ['0:00:00.400', '0:00:00.300'],
-                    'working_time': ['0:00:42', '0:00:37'],
-                    'exit_time': ['0:00:00.330', '0:00:00.440'],
-                    'total_start_up_time': '0:00:00.300',
-                    'total_init_time': '0:00:00.330',
-                    'total_waiting_time': '0:00:00.700',
-                    'total_working_time': '0:01:19',
-                    'total_exit_time': '0:00:00.770',
-                    'top_5_max_task_durations': ['0:00:06', '0:00:02', '0:00:01', '0:00:00.800', '0:00:00.100'],
-                    'top_5_max_task_args': ['3', '2', '1', '4', '5'],
-                    'total_time': '0:01:21.100',
-                    'start_up_time_mean': '0:00:00.150', 'start_up_time_std': '0:00:00.050',
-                    'init_time_mean': '0:00:00.165', 'init_time_std': '0:00:00.055',
-                    'waiting_time_mean': '0:00:00.350', 'waiting_time_std': '0:00:00.050',
-                    'working_time_mean': '0:00:39.500', 'working_time_std': '0:00:02.500',
-                    'exit_time_mean': '0:00:00.385', 'exit_time_std': '0:00:00.055'
-                })
-
-    @staticmethod
-    def _init():
-        # It's just here so we have something to time
-        _ = [x**x for x in range(1000)]
-
-    @staticmethod
-    def _exit():
-        # It's just here so we have something to time
-        return [x ** x for x in range(1000)]

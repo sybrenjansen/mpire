@@ -9,7 +9,7 @@ def read_description():
 if __name__ == '__main__':
     setup(
         name="mpire",
-        version='1.3.0',
+        version='2.0.0',
         author="Slimmer AI",
         description="A Python package for easy multiprocessing, but faster than multiprocessing",
         long_description=read_description(),
@@ -17,7 +17,7 @@ if __name__ == '__main__':
         license='MIT',
         packages=find_packages(),
         scripts=['bin/mpire-dashboard'],
-        install_requires=["numpy", "tqdm"],
+        install_requires=["multiprocess", "numpy", "tqdm"],
         include_package_data=True,
         extras_require={
             'dashboard': ['flask'],
@@ -25,8 +25,7 @@ if __name__ == '__main__':
                      'sphinx-rtd-theme==0.5.0',
                      'sphinx-autodoc-typehints==1.11.0',
                      'sphinxcontrib-images==0.9.2',
-                     'sphinx-versions==1.0.1'],
-            'dill': ['multiprocess'],
+                     'sphinx-versions==1.0.1']
         },
         test_suite='tests',
         classifiers=[

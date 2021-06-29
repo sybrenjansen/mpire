@@ -3,7 +3,8 @@ Welcome to the MPIRE documentation!
 
 MPIRE, short for MultiProcessing Is Really Easy, is a Python package for multiprocessing, but faster and more
 user-friendly than the default multiprocessing package. It combines the convenient map like functions of
-``multiprocessing.Pool`` with the benefits of using copy-on-write shared objects of ``multiprocessing.Process``.
+``multiprocessing.Pool`` with the benefits of using copy-on-write shared objects of ``multiprocessing.Process``,
+together with easy-to-use worker state, worker insights, and progress bar functionality.
 
 Features
 --------
@@ -15,6 +16,7 @@ Features
   queue)
 - Progress bar support using tqdm_
 - Progress dashboard support
+- Graceful and user-friendly exception handling
 - Worker insights gives you insight in your multiprocessing efficiency
 - Automatic task chunking for all available map functions to speed up processing of small task queues (including numpy
   arrays)
@@ -23,11 +25,12 @@ Features
 - Nested pool of workers are allowed when setting the ``daemon`` option
 - Child processes can be pinned to specific or a range of CPUs
 - Multiple process start methods available, including: ``fork`` (default), ``forkserver``, ``spawn``, and ``threading``
-- (Optional) dill_ support
+- Uses dill_ as serialization backend through multiprocess_, enabling parallelizing functions in iPython (notebooks)
 
 If you have any issues or suggestions please inform the author.
 
 .. _dill: https://pypi.org/project/dill/
+.. _multiprocess: https://github.com/uqfoundation/multiprocess
 .. _tqdm: https://tqdm.github.io/
 
 Contents
@@ -43,6 +46,8 @@ Contents
     :titlesonly:
 
     install
+    getting_started
     usage/index
+    troubleshooting
     reference/index
     changelog

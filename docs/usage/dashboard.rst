@@ -138,4 +138,4 @@ In case you have enabled :ref:`worker insights` these insights will be shown rea
 
 Click on the ``Insights (click to expand/collapse)`` to either expand or collapse the insight details.
 
-The dashboard will update automatically every 0.5 seconds.
+The dashboard will refresh automatically every 0.5 seconds.

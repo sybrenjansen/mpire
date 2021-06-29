@@ -1,7 +1,7 @@
 Changelog
 =========
 
-1.3.0
+2.0.0
 -----
 
 *[TODO: insert date]*
@@ -11,7 +11,14 @@ Changelog
 * Dashboard ports can now be configured
 * Renamed ``func_pointer`` to ``func`` in each ``map`` function
 * Fixed a bug with the `threading` backend not terminating correctly
+* Fixed a bug with the progress bar not showing correctly in notebooks
+* Using ``multiprocess`` is now the default
+* Added some debug logging
+* Refactored a lot of code
+* Minor bug fixes, which should make things more stable.
 * Removed Python 3.5 support
+* Removed ``add_task``, ``get_result``, ``insert_poison_pill``, ``stop_workers``, and ``join`` functions from
+  :obj:`mpire.WorkerPool`. Made ``start_workers`` private.  There wasn't any reason to use these functions.
 
 1.2.2
 -----

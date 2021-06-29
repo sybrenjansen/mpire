@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 import numpy as np
 
-from mpire.utils import apply_numpy_chunking, chunk_tasks, get_n_chunks, make_single_arguments, format_seconds, TimeIt
+from mpire.utils import apply_numpy_chunking, chunk_tasks, format_seconds, get_n_chunks, make_single_arguments, TimeIt
+from tests.utils import MockDatetimeNow
 
 
 class ChunkTasksTest(unittest.TestCase):
@@ -497,14 +498,3 @@ class TimeItTest(unittest.TestCase):
 
                 # The heapq only had room for two entries. The highest durations should be kept
                 self.assertListEqual(max_time_array, [(2.0, formatted), (3.0, formatted)])
-
-
-class MockDatetimeNow(datetime):
-    """ Mocked datetime class which returns the predefined return values in order when .now() is called """
-    RETURN_VALUES = []
-    CURRENT_IDX = 0
-
-    @classmethod
-    def now(cls, *_):
-        cls.CURRENT_IDX += 1
-        return cls.RETURN_VALUES[cls.CURRENT_IDX - 1]

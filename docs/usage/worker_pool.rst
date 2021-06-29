@@ -160,6 +160,8 @@ Instead of passing the flag to the :obj:`mpire.WorkerPool` constructor you can a
         pool.map_unordered(square_sum, range(100))
 
 
+.. _shared_objects:
+
 Shared objects
 --------------
 
@@ -287,12 +289,7 @@ contexts, please refer to the multiprocessing documentation_ and caveats_ sectio
   server to fork a new process.
 - ``'threading'`` starts child threads.
 
-The ``'spawn'`` and ``'forkserver'`` methods have some caveats_. All resources needed for running the child process
-should be picklable. This can sometimes be a hassle when you heavily rely on lambdas or are trying to run MPIRE in an
-interactive shell. To remedy most of these problems MPIRE can use dill_ as a replacement for pickle. Simply install the
-required :ref:`dependencies <dilldep>` and you're good to go.
-
-Additionally, global variables (constants are fine) might have a different value than you might expect. You also have to
+Be aware that global variables (constants are fine) might have a different value than you might expect. You also have to
 import packages within the called function:
 
 .. code-block:: python
