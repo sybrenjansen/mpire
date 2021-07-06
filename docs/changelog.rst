@@ -8,6 +8,7 @@ Changelog
 
 * Worker insights added, providing users insight in multiprocessing efficiency
 * ``worker_init`` and ``worker_exit`` parameters added to each ``map`` function
+* ``max_active_tasks`` is now set to ``n_jobs * 2`` when ``max_active_tasks=None``, to speed up most jobs
 * Dashboard ports can now be configured
 * Renamed ``func_pointer`` to ``func`` in each ``map`` function
 * Fixed a bug with the `threading` backend not terminating correctly

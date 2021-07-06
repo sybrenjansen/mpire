@@ -78,19 +78,19 @@ class WorkerPoolParamsTest(unittest.TestCase):
 
         # Get number of tasks
         with self.subTest('get n_tasks', iterable_len=100):
-            n_tasks, _, _ = params.check_map_parameters(
+            n_tasks, *_ = params.check_map_parameters(
                 iterable_of_args=(x for x in []), iterable_len=100, max_tasks_active=None, chunk_size=None,
                 n_splits=None, worker_lifespan=None, progress_bar=False, progress_bar_position=0
             )
             self.assertEqual(n_tasks, 100)
         with self.subTest('get n_tasks, __len__ implemented', iterable_len=100):
-            n_tasks, _, _ = params.check_map_parameters(
+            n_tasks, *_ = params.check_map_parameters(
                 iterable_of_args=[1, 2, 3], iterable_len=100, max_tasks_active=None, chunk_size=None,
                 n_splits=None, worker_lifespan=None, progress_bar=False, progress_bar_position=0
             )
             self.assertEqual(n_tasks, 100)
         with self.subTest('get n_tasks, __len__ implemented', iterable_len=None):
-            n_tasks, chunk_size, progress_bar = params.check_map_parameters(
+            n_tasks, *_ = params.check_map_parameters(
                 iterable_of_args=[1, 2, 3], iterable_len=None, max_tasks_active=None, chunk_size=None,
                 n_splits=None, worker_lifespan=None, progress_bar=False, progress_bar_position=0
             )
@@ -102,7 +102,7 @@ class WorkerPoolParamsTest(unittest.TestCase):
             # When number of tasks can't be determined and chunk_size is None or a progress bar is requested, the chunk
             # size should be set to 1 and no progress bar should be used
             with self.subTest('no iterable_len', chunk_size=None):
-                n_tasks, chunk_size, progress_bar = params.check_map_parameters(
+                n_tasks, max_tasks_active, chunk_size, progress_bar = params.check_map_parameters(
                     iterable_of_args=(x for x in []), iterable_len=None, max_tasks_active=None, chunk_size=None,
                     n_splits=None, worker_lifespan=None, progress_bar=False, progress_bar_position=0
                 )
@@ -110,7 +110,7 @@ class WorkerPoolParamsTest(unittest.TestCase):
                 self.assertEqual(chunk_size, 1)
                 self.assertFalse(progress_bar)
             with self.subTest('no iterable_len', progress_bar=True):
-                n_tasks, chunk_size, progress_bar = params.check_map_parameters(
+                n_tasks, max_tasks_active, chunk_size, progress_bar = params.check_map_parameters(
                     iterable_of_args=(x for x in []), iterable_len=None, max_tasks_active=None, chunk_size=None,
                     n_splits=None, worker_lifespan=None, progress_bar=True, progress_bar_position=0
                 )
@@ -176,28 +176,31 @@ class WorkerPoolParamsTest(unittest.TestCase):
         """
         Check max_tasks_active parameter. Should raise when wrong parameter values are used.
         """
-        params = WorkerPoolParams()
+        for n_jobs in [1, 2, 4]:
+            params = WorkerPoolParams(n_jobs=n_jobs)
 
-        # Should work fine
-        for max_tasks_active in [1, 100, int(1e8), None]:
-            with self.subTest(max_tasks_active=max_tasks_active):
-                params.check_map_parameters(iterable_of_args=[], iterable_len=None, max_tasks_active=max_tasks_active,
-                                            chunk_size=None, n_splits=None, worker_lifespan=None,
-                                            progress_bar=False, progress_bar_position=0)
+            # Should work fine. When input is None, max_tasks_active should be converted to n_jobs * 2
+            for max_tasks_active in [1, 100, int(1e8), None]:
+                with self.subTest(n_jobs=n_jobs, max_tasks_active=max_tasks_active):
+                    _, new_max_tasks_active, *_ = params.check_map_parameters(
+                        iterable_of_args=[], iterable_len=None, max_tasks_active=max_tasks_active, chunk_size=None,
+                        n_splits=None, worker_lifespan=None, progress_bar=False, progress_bar_position=0
+                    )
+                    self.assertEqual(new_max_tasks_active, max_tasks_active or n_jobs * 2)
 
-        # max_tasks_active should be an integer, float, or None
-        for max_tasks_active in ['3', {8}]:
-            with self.subTest(max_tasks_active=max_tasks_active), self.assertRaises(TypeError):
-                params.check_map_parameters(iterable_of_args=[], iterable_len=None, max_tasks_active=max_tasks_active,
-                                            chunk_size=None, n_splits=None, worker_lifespan=None,
-                                            progress_bar=False, progress_bar_position=0)
+            # max_tasks_active should be an integer, float, or None
+            for max_tasks_active in ['3', {8}]:
+                with self.subTest(n_jobs=n_jobs, max_tasks_active=max_tasks_active), self.assertRaises(TypeError):
+                    params.check_map_parameters(iterable_of_args=[], iterable_len=None,
+                                                max_tasks_active=max_tasks_active, chunk_size=None, n_splits=None,
+                                                worker_lifespan=None, progress_bar=False, progress_bar_position=0)
 
-        # max_tasks_active should be positive > 0
-        for max_tasks_active in [0, -5]:
-            with self.subTest(max_tasks_active=max_tasks_active), self.assertRaises(ValueError):
-                params.check_map_parameters(iterable_of_args=[], iterable_len=None, max_tasks_active=max_tasks_active,
-                                            chunk_size=None, n_splits=None, worker_lifespan=None,
-                                            progress_bar=False, progress_bar_position=0)
+            # max_tasks_active should be positive > 0
+            for max_tasks_active in [0, -5]:
+                with self.subTest(n_jobs=n_jobs, max_tasks_active=max_tasks_active), self.assertRaises(ValueError):
+                    params.check_map_parameters(iterable_of_args=[], iterable_len=None,
+                                                max_tasks_active=max_tasks_active, chunk_size=None, n_splits=None,
+                                                worker_lifespan=None, progress_bar=False, progress_bar_position=0)
 
     def test_check_map_parameters_worker_lifespan(self):
         """

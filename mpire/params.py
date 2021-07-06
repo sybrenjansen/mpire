@@ -90,12 +90,11 @@ class WorkerPoolParams:
 
         return converted_cpu_ids
 
-    @staticmethod
-    def check_map_parameters(iterable_of_args: Union[Sized, Iterable, np.ndarray], iterable_len: Optional[int],
+    def check_map_parameters(self, iterable_of_args: Union[Sized, Iterable, np.ndarray], iterable_len: Optional[int],
                              max_tasks_active: Optional[int], chunk_size: Optional[Union[int, float]],
                              n_splits: Optional[int], worker_lifespan: Optional[int], progress_bar: bool,
                              progress_bar_position: int) \
-            -> Tuple[Optional[int], Optional[int], Union[bool, tqdm]]:
+            -> Tuple[Optional[int], int, Optional[int], Union[bool, tqdm]]:
         """
         Check the parameters provided to any (i)map function. Also extracts the number of tasks and can modify the
         ``chunk_size`` and ``progress_bar`` parameters.
@@ -114,7 +113,7 @@ class WorkerPoolParams:
         :param progress_bar: When ``True`` it will display a progress bar
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
             multiple progress bars at the same time
-        :return: Number of tasks, chunk size, progress bar
+        :return: Number of tasks, max tasks active, chunk size, progress bar
         """
         # Get number of tasks
         n_tasks = None
@@ -145,10 +144,12 @@ class WorkerPoolParams:
                 raise ValueError('n_splits should be a positive integer > 0')
 
         # Check max_tasks_active parameter
-        if isinstance(max_tasks_active, int):
+        if max_tasks_active is None:
+            max_tasks_active = self.n_jobs * 2
+        elif isinstance(max_tasks_active, int):
             if max_tasks_active <= 0:
-                raise ValueError('max_tasks_active should be a positive integer, None or "n_jobs*2')
-        elif max_tasks_active is not None:
+                raise ValueError('max_tasks_active should be a positive integer or None')
+        else:
             raise TypeError('max_tasks_active should be a positive integer or None')
 
         # If worker lifespan is not None or not a positive integer, raise
@@ -164,7 +165,7 @@ class WorkerPoolParams:
         if progress_bar_position < 0:
             raise ValueError('progress_bar_position should be a positive integer (>= 0)')
 
-        return n_tasks, chunk_size, progress_bar
+        return n_tasks, max_tasks_active, chunk_size, progress_bar
 
     def set_map_params(self, func: Callable, worker_init: Optional[Callable], worker_exit: Optional[Callable],
                        worker_lifespan: int) -> None:

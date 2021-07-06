@@ -321,7 +321,8 @@ class WorkerPool:
         :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
             to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
             iterable object, or by specifying the number of tasks
-        :param max_tasks_active: Maximum number of active tasks in the queue. Use ``None`` to not limit the queue
+        :param max_tasks_active: Maximum number of active tasks in the queue. If ``None`` it will be converted to
+            ``n_jobs * 2``
         :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
             number of chunks
         :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
@@ -389,7 +390,8 @@ class WorkerPool:
         :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
             to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
             iterable object, or by specifying the number of tasks
-        :param max_tasks_active: Maximum number of active tasks in the queue. Use ``None`` to not limit the queue
+        :param max_tasks_active: Maximum number of active tasks in the queue. If ``None`` it will be converted to
+            ``n_jobs * 2``
         :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
             number of chunks
         :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
@@ -434,7 +436,8 @@ class WorkerPool:
         :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
             to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
             iterable object, or by specifying the number of tasks
-        :param max_tasks_active: Maximum number of active tasks in the queue. Use ``None`` to not limit the queue
+        :param max_tasks_active: Maximum number of active tasks in the queue. If ``None`` it will be converted to
+            ``n_jobs * 2``
         :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
             number of chunks
         :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
@@ -519,7 +522,8 @@ class WorkerPool:
         :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
             to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
             iterable object, or by specifying the number of tasks
-        :param max_tasks_active: Maximum number of active tasks in the queue. Use ``None`` to not limit the queue
+        :param max_tasks_active: Maximum number of active tasks in the queue. If ``None`` it will be converted to
+            ``n_jobs * 2``
         :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
             number of chunks
         :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
@@ -549,7 +553,7 @@ class WorkerPool:
 
         # Check parameters and thereby obtain the number of tasks. The chunk_size and progress bar parameters could be
         # modified as well
-        n_tasks, chunk_size, progress_bar = self.params.check_map_parameters(
+        n_tasks, max_tasks_active, chunk_size, progress_bar = self.params.check_map_parameters(
             iterable_of_args, iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan, progress_bar,
             progress_bar_position
         )
@@ -557,7 +561,7 @@ class WorkerPool:
         # Chunk the function arguments. Make single arguments when we're dealing with numpy arrays
         if not isinstance(iterable_of_args, np.ndarray):
             iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size,
-                                                   n_splits or self.params.n_jobs * 4)
+                                                   n_splits or self.params.n_jobs * 64)
 
         # Reset profiling stats
         self._worker_insights.reset_insights(enable_insights)
@@ -578,42 +582,26 @@ class WorkerPool:
              ProgressBarHandler(func, self.params.n_jobs, progress_bar, n_tasks, progress_bar_position,
                                 self._worker_comms, self._worker_insights):
 
-            # Process all args in the iterable. If maximum number of active tasks is None, we avoid all the if and
-            # try-except clauses to speed up the process.
+            # Process all args in the iterable
             n_active = 0
-
-            if max_tasks_active is None:
-                for chunked_args in iterator_of_chunked_args:
-                    # Stop given tasks when an exception was caught
-                    if self._worker_comms.exception_caught():
+            while not self._worker_comms.exception_caught():
+                # Add task, only if allowed and if there are any
+                if n_active < max_tasks_active:
+                    try:
+                        self._worker_comms.add_task(next(iterator_of_chunked_args))
+                        n_active += 1
+                    except StopIteration:
                         break
 
-                    # Add task
-                    self._worker_comms.add_task(chunked_args)
-                    n_active += 1
+                # Check if new results are available, but don't wait for it
+                try:
+                    yield from self._worker_comms.get_results(block=False)
+                    n_active -= 1
+                except queue.Empty:
+                    pass
 
-                    # Restart workers if necessary
-                    self._restart_workers()
-
-            elif isinstance(max_tasks_active, int):
-                while not self._worker_comms.exception_caught():
-                    # Add task, only if allowed and if there are any
-                    if n_active < max_tasks_active:
-                        try:
-                            self._worker_comms.add_task(next(iterator_of_chunked_args))
-                            n_active += 1
-                        except StopIteration:
-                            break
-
-                    # Check if new results are available, but don't wait for it
-                    try:
-                        yield from self._worker_comms.get_results(block=False)
-                        n_active -= 1
-                    except queue.Empty:
-                        pass
-
-                    # Restart workers if necessary
-                    self._restart_workers()
+                # Restart workers if necessary
+                self._restart_workers()
 
             # Obtain the results not yet obtained
             while not self._worker_comms.exception_caught() and n_active != 0:
