@@ -57,7 +57,7 @@ class ExceptionHandler:
         """
         Keeps an eye on any exceptions being passed on by workers
         """
-        logger.info("Exception handler started")
+        logger.debug("Exception handler started")
 
         # Wait for an exception to occur
         err, traceback_str = self.worker_comms.get_exception(in_thread=True)
@@ -78,7 +78,7 @@ class ExceptionHandler:
                 self.worker_comms.add_exception(err, traceback_str)
 
         self.worker_comms.task_done_exception()
-        logger.info("Terminating exception handler")
+        logger.debug("Terminating exception handler")
 
     def raise_on_exception(self) -> None:
         """
@@ -96,5 +96,5 @@ class ExceptionHandler:
             # Get exception and raise here
             err, traceback_str = self.worker_comms.get_exception()
             self.worker_comms.task_done_exception()
-            logger.info("Raising caught exception")
+            logger.debug("Raising caught exception")
             raise err(traceback_str)

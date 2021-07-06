@@ -2,15 +2,20 @@ import ctypes
 import multiprocessing as mp
 from datetime import datetime
 from functools import partial
+from typing import Dict
 
 import numpy as np
-from typing import Dict
 
 from mpire.signal import ignore_keyboard_interrupt
 from mpire.utils import format_seconds
 
 
 class WorkerInsights:
+
+    """
+    Worker insights class for profiling the worker start up time, waiting time and working time. When worker init and
+    exit functions are provided it will time those as well.
+    """
 
     def __init__(self, ctx: mp.context.BaseContext, n_jobs: int) -> None:
         """

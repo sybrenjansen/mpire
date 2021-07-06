@@ -1,16 +1,20 @@
 import itertools
 import multiprocessing as mp
 import warnings
+from typing import Any, Callable, Iterable, List, Optional, Sized, Tuple, Union
 
 import numpy as np
 from tqdm import tqdm
-from typing import Any, Callable, Iterable, List, Optional, Sized, Tuple, Union
 
 # Typedefs
 CPUList = Optional[List[Union[int, List[int]]]]
 
 
 class WorkerPoolParams:
+
+    """
+    Data class, with some parameter verification, for all :obj:`mpire.WorkerPool` parameters.
+    """
 
     def __init__(self, n_jobs: Optional[int] = None, daemon: bool = True, cpu_ids: CPUList = None,
                  shared_objects: Any = None, pass_worker_id: bool = False, use_worker_state: bool = False,

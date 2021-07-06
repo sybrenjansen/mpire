@@ -104,7 +104,7 @@ class ProgressBarHandler:
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
             multiple progress bars at the same time
         """
-        logger.info("Progress bar handler started")
+        logger.debug("Progress bar handler started")
 
         # In case we're running tqdm in a notebook we need to apply a dirty hack to get progress bars working.
         # Solution adapted from https://github.com/tqdm/tqdm/issues/485#issuecomment-473338308
@@ -125,7 +125,7 @@ class ProgressBarHandler:
             # If we received a poison pill, we should quit right away. We do force a final refresh of the progress bar
             # to show the latest status
             if task_completed is POISON_PILL:
-                logger.info("Terminating progress bar handler")
+                logger.debug("Terminating progress bar handler")
                 if from_queue:
                     self.worker_comms.task_done_progress_bar()
                 progress_bar.refresh()
@@ -168,7 +168,7 @@ class ProgressBarHandler:
             self.dashboard_dict, self.dashboard_details_dict, dashboard_tqdm_lock = get_manager_client_dicts()
 
             # Register new progress bar
-            logger.info("Registering new progress bar to the dashboard server")
+            logger.debug("Registering new progress bar to the dashboard server")
             dashboard_tqdm_lock.acquire()
             self.progress_bar_id = len(self.dashboard_dict.keys()) + 1
             self.dashboard_details_dict.update([(self.progress_bar_id, self.function_details)])

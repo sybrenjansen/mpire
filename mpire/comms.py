@@ -9,6 +9,17 @@ POISON_PILL = '\0'
 
 class WorkerComms:
 
+    """
+    Class that contains all the inter-process communication objects (locks, events, queues, etc.) and functionality to
+    interact with them, except for the worker insights comms.
+
+    Contains:
+    - Progress bar comms
+    - Tasks & (exit) results comms
+    - Exception handling comms
+    - Terminating and restarting comms
+    """
+
     def __init__(self, ctx: mp.context.BaseContext, n_jobs: int) -> None:
         """
         :param ctx: Multiprocessing context

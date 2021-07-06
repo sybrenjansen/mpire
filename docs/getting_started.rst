@@ -104,7 +104,7 @@ functionality:
         return worker_state['model'].predict(worker_state['dataset'][idx])
 
     with WorkerPool(n_jobs=5, use_worker_state=True) as pool:
-        results = pool.map(time_consuming_function, range(10), worker_init=init)
+        results = pool.map(task, range(10), worker_init=init)
 
 Similarly, you can use the ``worker_exit`` parameter to let MPIRE call a function whenever a worker terminates. You can
 even let this exit function return results, which can be obtained later on. See the :ref:`worker_init_exit` section for

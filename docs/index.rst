@@ -27,8 +27,6 @@ Features
 - Multiple process start methods available, including: ``fork`` (default), ``forkserver``, ``spawn``, and ``threading``
 - Uses dill_ as serialization backend through multiprocess_, enabling parallelizing functions in iPython (notebooks)
 
-If you have any issues or suggestions please inform the author.
-
 .. _dill: https://pypi.org/project/dill/
 .. _multiprocess: https://github.com/uqfoundation/multiprocess
 .. _tqdm: https://tqdm.github.io/
