@@ -78,77 +78,90 @@ class AbstractWorker:
         Continuously asks the tasks queue for new task arguments. When not receiving a poisonous pill or when the max
         life span is not yet reached it will execute the new task and put the results in the results queue.
         """
-        # Store how long it took to start up
-        self.worker_insights.update_start_up_time(self.start_time)
+        self.worker_comms.set_worker_alive()
 
-        # Obtain additional args to pass to the function
-        additional_args = []
-        if self.params.pass_worker_id:
-            additional_args.append(self.worker_id)
-        if self.params.shared_objects is not None:
-            additional_args.append(self.params.shared_objects)
-        if self.params.use_worker_state:
-            additional_args.append(self.worker_state)
+        try:
+            # Store how long it took to start up
+            self.worker_insights.update_start_up_time(self.start_time)
 
-        # Run initialization function. If it returns True it means an exception occurred and we should exit
-        if self.params.worker_init and self._run_init_func(additional_args):
-            return
+            # Obtain additional args to pass to the function
+            additional_args = []
+            if self.params.pass_worker_id:
+                additional_args.append(self.worker_id)
+            if self.params.shared_objects is not None:
+                additional_args.append(self.params.shared_objects)
+            if self.params.use_worker_state:
+                additional_args.append(self.worker_state)
 
-        # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
-        # with idx support which deals with the provided idx variable.
-        func = partial(self._helper_func_with_idx if self.worker_comms.keep_order() else self._helper_func,
-                       partial(self.params.func, *additional_args))
-
-        n_chunks_executed = 0
-        while self.params.worker_lifespan is None or n_chunks_executed < self.params.worker_lifespan:
-
-            # Obtain new chunk of jobs
-            with TimeIt(self.worker_insights.worker_waiting_time, self.worker_id):
-                next_chunked_args = self.worker_comms.get_task()
-
-            # If we obtained a poison pill, we stop. When the _retrieve_task function returns None this means we stop
-            # because of an exception in the main process
-            if next_chunked_args == POISON_PILL or next_chunked_args is None:
-                self.worker_insights.update_task_insights()
-                if next_chunked_args == POISON_PILL:
-                    self.worker_comms.task_done()
-
-                    # Run exit function when a poison pill was received
-                    if self.params.worker_exit:
-                        self._run_exit_func(additional_args)
+            # Run initialization function. If it returns True it means an exception occurred and we should exit
+            if self.params.worker_init and self._run_init_func(additional_args):
                 return
 
-            # Execute jobs in this chunk
-            results = []
-            for args in next_chunked_args:
+            # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
+            # with idx support which deals with the provided idx variable.
+            func = partial(self._helper_func_with_idx if self.worker_comms.keep_order() else self._helper_func,
+                           partial(self.params.func, *additional_args))
 
-                # Try to run this function and save results
-                results_part, should_return = self._run_func(func, args)
-                if should_return:
-                    self.worker_comms.task_done()
+            n_chunks_executed = 0
+            while self.params.worker_lifespan is None or n_chunks_executed < self.params.worker_lifespan:
+
+                # Obtain new chunk of jobs
+                with TimeIt(self.worker_insights.worker_waiting_time, self.worker_id):
+                    next_chunked_args = self.worker_comms.get_task()
+
+                # If we obtained a poison pill, we stop. When the _retrieve_task function returns None this means we
+                # stop because of an exception in the main process
+                if next_chunked_args == POISON_PILL or next_chunked_args is None:
+                    self.worker_insights.update_task_insights()
+                    if next_chunked_args == POISON_PILL:
+                        self.worker_comms.task_done()
+
+                        # Run exit function when a poison pill was received
+                        if self.params.worker_exit:
+                            self._run_exit_func(additional_args)
                     return
-                results.append(results_part)
 
-                # Notify that we've completed a task (only when using a progress bar)
-                if self.worker_comms.has_progress_bar():
-                    self.worker_comms.task_completed_progress_bar()
+                # Execute jobs in this chunk
+                try:
+                    results = []
+                    for args in next_chunked_args:
 
-            # Send results back to main process
-            self.worker_comms.add_results(results)
-            self.worker_comms.task_done()
-            n_chunks_executed += 1
+                        # Try to run this function and save results
+                        results_part, should_return = self._run_func(func, args)
+                        if should_return:
+                            return
+                        results.append(results_part)
 
-            # Update task insights every once in a while (every 2 seconds)
-            self.worker_insights.update_task_insights_once_in_a_while()
+                        # Notify that we've completed a task once in a while (only when using a progress bar)
+                        if self.worker_comms.has_progress_bar():
+                            self.worker_comms.task_completed_progress_bar()
 
-        # Run exit function and store results
-        if self.params.worker_exit and self._run_exit_func(additional_args):
-            return
+                    # Send results back to main process
+                    self.worker_comms.add_results(results)
+                    n_chunks_executed += 1
 
-        # Notify WorkerPool to start a new worker if max lifespan is reached
-        self.worker_insights.update_task_insights()
-        if self.params.worker_lifespan is not None and n_chunks_executed == self.params.worker_lifespan:
-            self.worker_comms.signal_worker_restart()
+                # In case an exception occurred and we need to return, we want to call task_done no matter what
+                finally:
+                    self.worker_comms.task_done()
+
+                # Update task insights every once in a while (every 2 seconds)
+                self.worker_insights.update_task_insights_once_in_a_while()
+
+            # Run exit function and store results
+            if self.params.worker_exit and self._run_exit_func(additional_args):
+                return
+
+            # Notify WorkerPool to start a new worker if max lifespan is reached
+            self.worker_insights.update_task_insights()
+            if self.params.worker_lifespan is not None and n_chunks_executed == self.params.worker_lifespan:
+                self.worker_comms.signal_worker_restart()
+
+            # Force update the number of tasks completed for this worker (only when using a progress bar)
+            if self.worker_comms.has_progress_bar():
+                self.worker_comms.task_completed_progress_bar(force_update=True)
+
+        finally:
+            self.worker_comms.set_worker_dead()
 
     def _run_init_func(self, additional_args: List) -> bool:
         """
@@ -211,6 +224,9 @@ class AbstractWorker:
         :param no_args: Whether there were any args at all
         :return: True when the worker needs to shut down, False otherwise
         """
+        if self.worker_comms.exception_thrown():
+            return None, True
+
         try:
 
             try:

@@ -207,18 +207,9 @@ class WorkerPool:
                     break
                 self._restart_workers()
 
-            # Obtain results from the exit results queues (should be done before joining the workers). When an error
-            # occurred inside the exit function we need to catch it here.
+            # Obtain results from the exit results queues (should be done before joining the workers)
             if self.params.worker_exit:
-                for worker_id in range(self.params.n_jobs):
-                    while not self._worker_comms.exception_thrown():
-                        try:
-                            self._exit_results.append(self._worker_comms.get_exit_results(worker_id, timeout=0.1))
-                            break
-                        except queue.Empty:
-                            pass
-                    if self._worker_comms.exception_thrown():
-                        return
+                self._exit_results.extend(self._worker_comms.get_exit_results_all_workers())
 
             # Join queues and workers
             self._worker_comms.join_results_queues()
@@ -242,8 +233,10 @@ class WorkerPool:
         else:
             # Create cleanup threads such that processes can get killed simultaneously, which can save quite some time
             threads = []
-            for w in self._workers:
-                t = threading.Thread(target=self._terminate_worker, args=(w,))
+            dont_wait_event = threading.Event()
+            dont_wait_event.set()
+            for worker_id, worker_process in enumerate(self._workers):
+                t = threading.Thread(target=self._terminate_worker, args=(worker_id, worker_process, dont_wait_event))
                 t.start()
                 threads.append(t)
 
@@ -260,33 +253,55 @@ class WorkerPool:
         # Reset variables
         self._workers = []
 
-    @staticmethod
-    def _terminate_worker(process: mp.Process) -> None:
+    def _terminate_worker(self, worker_id: int, worker_process: mp.context.Process,
+                          dont_wait_event: threading.Event) -> None:
         """
         Terminates a single worker
 
-        :param process: Worker instance
+        :param worker_id: Worker ID
+        :param worker_process: Worker instance
+        :param dont_wait_event: Event object to indicate whether other termination threads should continue. I.e., when
+            we set it to False, threads should wait.
         """
         # We wait until workers are done terminating. However, we don't have all the patience in the world and sometimes
         # workers can get stuck when starting up when an exception is handled. So when the patience runs out we
         # terminate them.
-        try_count = 3
-        while process.is_alive() and try_count > 0:
-            # Send interrupt signal so the processes can die gracefully. Sometimes this will throw an exception, e.g.
-            # when processes are in the middle of restarting
+        try_count = 10
+        while try_count > 0:
             try:
-                os.kill(process.pid, signal.SIGUSR1)
+                os.kill(worker_process.pid, signal.SIGUSR1)
             except ProcessLookupError:
                 pass
+
+            self._worker_comms.wait_for_dead_worker(worker_id, timeout=0.1)
+            if not self._worker_comms.is_worker_alive(worker_id):
+                break
+
+            # For properly joining, it can help if we try to get some results here. Workers can still be busy putting
+            # items in queues under the hood
+            self._worker_comms.drain_queues_terminate_worker(worker_id, dont_wait_event)
             try_count -= 1
-            time.sleep(0.1)
+            if not dont_wait_event.is_set():
+                dont_wait_event.wait()
 
-        # If a graceful kill is not possible, terminate the process.
-        if process.is_alive():
-            process.terminate()
+        try_count = 10
+        while try_count > 0:
+            worker_process.join(timeout=0.1)
+            if not worker_process.is_alive():
+                break
 
-        # Join worker
-        process.join()
+            # For properly joining, it can help if we try to get some results here. Workers can still be busy putting
+            # items in queues under the hood
+            self._worker_comms.drain_queues_terminate_worker(worker_id, dont_wait_event)
+            try_count -= 1
+            if not dont_wait_event.is_set():
+                dont_wait_event.wait()
+
+        # If, after all this, the worker is still alive, we terminate it with a brutal kill signal. This shouldn't
+        # really happen. But, better safe than sorry
+        if worker_process.is_alive():
+            worker_process.terminate()
+            worker_process.join()
 
     def __enter__(self) -> 'WorkerPool':
         """

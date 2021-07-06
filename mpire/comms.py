@@ -1,8 +1,13 @@
+import logging
 import multiprocessing as mp
 import queue
-from typing import Any, Generator, Optional, Tuple, Union
+import threading
+from datetime import datetime
+from typing import Any, Generator, List, Optional, Tuple, Union
 
 from mpire.signal import DelayedKeyboardInterrupt
+
+logger = logging.getLogger(__name__)
 
 POISON_PILL = '\0'
 
@@ -43,6 +48,9 @@ class WorkerComms:
         # Array where the child processes can request a restart
         self._worker_done_array = None
 
+        # List of Event objects to indicate whether workers are alive
+        self._workers_dead = None
+
         # Queue related to the progress bar. Child processes signal whenever they are finished with a task
         self._task_completed_queue = None
 
@@ -57,8 +65,10 @@ class WorkerComms:
         # Whether or not an exception was caught by one of the child processes
         self._exception_caught = self.ctx.Event()
 
-        # Worker ID
+        # Worker specific containers
         self.worker_id = None
+        self._progress_bar_last_updated = None
+        self._progress_bar_n_tasks_completed = None
 
     ################
     # Initialization
@@ -76,17 +86,24 @@ class WorkerComms:
         self._exit_results_queues = [self.ctx.JoinableQueue()
                                      for _ in range(self.n_jobs)] if has_worker_exit else []
         self._worker_done_array = self.ctx.Array('b', self.n_jobs, lock=False)
+        self._workers_dead = [self.ctx.Event() for _ in range(self.n_jobs)]
+        [worker_dead.set() for worker_dead in self._workers_dead]
         self._exception_queue = self.ctx.JoinableQueue()
         self._exception_thrown.clear()
         self._exception_caught.clear()
         self._task_completed_queue = self.ctx.JoinableQueue() if has_progress_bar else None
         self.worker_id = None
+        self._progress_bar_last_updated = None
+        self._progress_bar_n_tasks_completed = None
 
     def init_worker(self, worker_id: int) -> None:
         """
         :param worker_id: Worker ID
         """
         self.worker_id = worker_id
+        if self.has_progress_bar():
+            self._progress_bar_last_updated = datetime.now()
+            self._progress_bar_n_tasks_completed = 0
 
     ################
     # Progress bar
@@ -98,11 +115,18 @@ class WorkerComms:
         """
         return self._task_completed_queue is not None
 
-    def task_completed_progress_bar(self) -> None:
+    def task_completed_progress_bar(self, force_update: bool = False) -> None:
         """
-        Signal that we've completed a task, for the progress bar
+        Signal that we've completed a task every 0.1 seconds, for the progress bar
+
+        :param force_update: Whether to force an update
         """
-        self._task_completed_queue.put(1)
+        self._progress_bar_n_tasks_completed += 1
+        now = datetime.now()
+        if force_update or (now - self._progress_bar_last_updated).total_seconds() > 0.1:
+            self._task_completed_queue.put(self._progress_bar_n_tasks_completed)
+            self._progress_bar_last_updated = now
+            self._progress_bar_n_tasks_completed = 0
 
     def add_progress_bar_poison_pill(self) -> None:
         """
@@ -193,15 +217,16 @@ class WorkerComms:
         """
         self._results_queue.put(results)
 
-    def get_results(self, block: bool = True, timeout: Optional[float] = None) -> Any:
+    def get_results(self, block: bool = True, timeout: Optional[float] = None, in_thread: bool = False) -> Any:
         """
         Obtain the next result from the results queue.
 
         :param block: Whether to block (wait for results)
         :param timeout: How long to wait for results in case ``block==True``
+        :param in_thread: Whether this function is called from within a thread
         :return: The next result from the queue, which is the result of calling the function
         """
-        with DelayedKeyboardInterrupt():
+        with DelayedKeyboardInterrupt(in_thread=in_thread):
             results = self._results_queue.get(block=block, timeout=timeout)
             self._results_queue.task_done()
         return results
@@ -212,17 +237,42 @@ class WorkerComms:
         """
         self._exit_results_queues[self.worker_id].put(results)
 
-    def get_exit_results(self, worker_id: int, timeout: Optional[float] = None) -> Any:
+    def get_exit_results(self, worker_id: int, block: bool = True, timeout: Optional[float] = None,
+                         in_thread: bool = False) -> Any:
         """
         Obtain exit results from a specific worker.
 
         :param worker_id: Worker ID
+        :param block: Whether to block (wait for results)
         :param timeout: How long to wait for results
+        :param in_thread: Whether this function is called from within a thread
         :return: Exit results
         """
-        results = self._exit_results_queues[worker_id].get(block=True, timeout=timeout)
-        self._exit_results_queues[worker_id].task_done()
-        return results
+        with DelayedKeyboardInterrupt(in_thread=in_thread):
+            results = self._exit_results_queues[worker_id].get(block=block, timeout=timeout)
+            self._exit_results_queues[worker_id].task_done()
+            return results
+
+    def get_exit_results_all_workers(self) -> List[Any]:
+        """
+        Obtain results from the exit results queues (should be done before joining the workers). When an error occurred
+        inside the exit function we return immediately. There's always exactly one entry in a queue.
+
+        :return: Exit results
+        """
+        exit_results = []
+
+        for worker_id in range(self.n_jobs):
+            while not self.exception_thrown():
+                try:
+                    exit_results.append(self.get_exit_results(worker_id, timeout=0.1))
+                    break
+                except queue.Empty:
+                    pass
+            if self.exception_thrown():
+                break
+
+        return exit_results
 
     ################
     # Exceptions
@@ -322,6 +372,35 @@ class WorkerComms:
         """
         self._worker_done_array[worker_id] = False
 
+    def set_worker_alive(self) -> None:
+        """
+        Indicate that a worker is alive
+        """
+        self._workers_dead[self.worker_id].clear()
+
+    def set_worker_dead(self) -> None:
+        """
+`       Indicate that a worker is dead
+        """
+        self._workers_dead[self.worker_id].set()
+
+    def is_worker_alive(self, worker_id: int) -> bool:
+        """
+        Check whether the worker is alive
+
+        :param worker_id: Worker ID
+        """
+        return not self._workers_dead[worker_id].is_set()
+
+    def wait_for_dead_worker(self, worker_id: int, timeout=None) -> None:
+        """
+        Wait until a worker is dead
+
+        :param worker_id: Worker ID
+        :param timeout: How long to wait for a worker to be dead
+        """
+        self._workers_dead[worker_id].wait(timeout=timeout)
+
     def join_results_queues(self) -> None:
         """
         Join results and exit results queues
@@ -347,17 +426,63 @@ class WorkerComms:
         """
         self._exception_queue.join()
 
+    def drain_queues_terminate_worker(self, worker_id: int, dont_wait_event: threading.Event) -> None:
+        """
+        Drain the results queues once. This is done when terminating workers, while they could still be busy putting
+        something in the results queue. This function will always be called from within a thread.
+
+        :param worker_id: Worker ID
+        :param dont_wait_event: Event object to indicate whether other termination threads should continue. I.e., when
+            we set it to False, threads should wait.
+        """
+        # Get results from the results queue. If we got any, keep going and inform the other termination threads to wait
+        # until this one's finished
+        got_results = False
+        try:
+            while True:
+                self.get_results(block=False, in_thread=True)
+                dont_wait_event.clear()
+                got_results = True
+        except queue.Empty:
+            if got_results:
+                dont_wait_event.set()
+
+        # Get results from the exit results queue. If we got any, keep going and inform the other termination threads to
+        # wait until this one's finished
+        if self._exit_results_queues:
+            got_results = False
+            try:
+                self.get_exit_results(worker_id, block=False, in_thread=True)
+                dont_wait_event.clear()
+                got_results = True
+            except queue.Empty:
+                if got_results:
+                    dont_wait_event.set()
+
+        # Get results from the progress bar queue. If we got any, keep going and inform the other termination threads to
+        # wait until this one's finished
+        if self.has_progress_bar():
+            got_results = False
+            try:
+                while True:
+                    self._task_completed_queue.get(block=False)
+                    dont_wait_event.clear()
+                    got_results = True
+            except queue.Empty:
+                if got_results:
+                    dont_wait_event.set()
+
     def drain_queues(self) -> None:
         """
         Drain tasks, results, and exit results queues. Note that the progress bar tasks_done and exception queues never
         have to be drained. They are properly cleaned up in the respective __exit__ functions.
         """
-        self._drain_and_join_queue(self._tasks_queue, block=True)
-        self._drain_and_join_queue(self._results_queue, block=False)
+        self._drain_and_join_queue(self._tasks_queue)
+        self._drain_and_join_queue(self._results_queue)
         [self._drain_and_join_queue(q) for q in self._exit_results_queues]
 
     @staticmethod
-    def _drain_and_join_queue(q: mp.JoinableQueue, join: bool = True, block: bool = False) -> None:
+    def _drain_and_join_queue(q: mp.JoinableQueue, join: bool = True) -> None:
         """
         Drains a queue completely, such that it is joinable
 
@@ -379,8 +504,8 @@ class WorkerComms:
             pass
 
         try:
-            while n != 0:
-                q.get(block=block)
+            while not q.empty() or n != 0:
+                q.get(block=True, timeout=1.0)
                 n -= 1
         except (queue.Empty, EOFError):
             pass

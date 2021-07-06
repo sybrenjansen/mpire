@@ -120,14 +120,16 @@ class ProgressBarHandler:
 
         while True:
             # Wait for a job to finish
-            task_completed, from_queue = self.worker_comms.get_tasks_completed_progress_bar()
+            tasks_completed, from_queue = self.worker_comms.get_tasks_completed_progress_bar()
 
             # If we received a poison pill, we should quit right away. We do force a final refresh of the progress bar
             # to show the latest status
-            if task_completed is POISON_PILL:
+            if tasks_completed is POISON_PILL:
                 logger.debug("Terminating progress bar handler")
                 if from_queue:
                     self.worker_comms.task_done_progress_bar()
+                if progress_bar.n != progress_bar.total:
+                    progress_bar.set_description('Exception occurred, terminating ... ')
                 progress_bar.refresh()
                 progress_bar.close()
 
@@ -141,7 +143,7 @@ class ProgressBarHandler:
             self._register_progress_bar(progress_bar)
 
             # Update progress bar
-            progress_bar.update(1)
+            progress_bar.update(tasks_completed)
             self.worker_comms.task_done_progress_bar()
 
             # Force a refresh when we're at 100%. Tqdm doesn't always show the last update. It does when we close the
