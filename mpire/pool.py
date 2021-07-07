@@ -188,7 +188,7 @@ class WorkerPool:
         """
         if self._workers:
             # Insert poison pill
-            logger.info("Cleaning up workers")
+            logger.debug("Cleaning up workers")
             self._worker_comms.insert_poison_pill()
 
             # It can occur that some processes requested a restart while all tasks are already complete. This means that
@@ -215,11 +215,12 @@ class WorkerPool:
             for w in self._workers:
                 w.join()
             self._workers = []
-            logger.info("Cleaning up workers done")
+            logger.debug("Cleaning up workers done")
 
     def terminate(self) -> None:
         """
-        Does not wait until all workers are finished, but terminates them.
+        Tries to do a graceful shutdown of the workers, by interrupting them. In the case processes deadlock it will
+        send a sigkill.
         """
         logger.debug("Terminating workers")
 
@@ -255,16 +256,15 @@ class WorkerPool:
     def _terminate_worker(self, worker_id: int, worker_process: mp.context.Process,
                           dont_wait_event: threading.Event) -> None:
         """
-        Terminates a single worker
+        Terminates a single worker process
 
         :param worker_id: Worker ID
         :param worker_process: Worker instance
         :param dont_wait_event: Event object to indicate whether other termination threads should continue. I.e., when
             we set it to False, threads should wait.
         """
-        # We wait until workers are done terminating. However, we don't have all the patience in the world and sometimes
-        # workers can get stuck when starting up when an exception is handled. So when the patience runs out we
-        # terminate them.
+        # We wait until workers are done terminating. However, we don't have all the patience in the world. When the
+        # patience runs out we terminate them.
         try_count = 10
         while try_count > 0:
             try:
@@ -283,6 +283,7 @@ class WorkerPool:
             if not dont_wait_event.is_set():
                 dont_wait_event.wait()
 
+        # Join the worker process
         try_count = 10
         while try_count > 0:
             worker_process.join(timeout=0.1)
@@ -290,7 +291,7 @@ class WorkerPool:
                 break
 
             # For properly joining, it can help if we try to get some results here. Workers can still be busy putting
-            # items in queues under the hood
+            # items in queues under the hood, even at this point.
             self._worker_comms.drain_queues_terminate_worker(worker_id, dont_wait_event)
             try_count -= 1
             if not dont_wait_event.is_set():

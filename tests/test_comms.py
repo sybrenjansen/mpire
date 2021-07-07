@@ -512,14 +512,14 @@ class WorkerCommsTest(unittest.TestCase):
         """
         _drain_and_join_queue should be called for every queue that matters
         """
-        for n_jobs, has_worker_exit in product([1, 2, 4], [False, True]):
+        for n_jobs, has_worker_exit, has_progress_bar in product([1, 2, 4], [False, True], [False, True]):
             comms = WorkerComms(mp.get_context('fork'), n_jobs)
-            comms.init_comms(has_worker_exit=has_worker_exit, has_progress_bar=False)
+            comms.init_comms(has_worker_exit=has_worker_exit, has_progress_bar=has_progress_bar)
 
-            with self.subTest(n_jobs=n_jobs, has_worker_exit=has_worker_exit), \
+            with self.subTest(n_jobs=n_jobs, has_worker_exit=has_worker_exit, has_progress_bar=has_progress_bar), \
                     patch.object(comms, '_drain_and_join_queue') as p:
                 comms.drain_queues()
-                self.assertEqual(p.call_count, 2 + (n_jobs if has_worker_exit else 0))
+                self.assertEqual(p.call_count, 2 + (n_jobs if has_worker_exit else 0) + (1 if has_progress_bar else 0))
 
     def test__drain_and_join_queue(self):
         """

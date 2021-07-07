@@ -428,8 +428,8 @@ class WorkerComms:
 
     def drain_queues_terminate_worker(self, worker_id: int, dont_wait_event: threading.Event) -> None:
         """
-        Drain the results queues once. This is done when terminating workers, while they could still be busy putting
-        something in the results queue. This function will always be called from within a thread.
+        Drain the results queues without blocking. This is done when terminating workers, while they could still be busy
+        putting something in the queues. This function will always be called from within a thread.
 
         :param worker_id: Worker ID
         :param dont_wait_event: Event object to indicate whether other termination threads should continue. I.e., when
@@ -466,6 +466,7 @@ class WorkerComms:
             try:
                 while True:
                     self._task_completed_queue.get(block=False)
+                    self._task_completed_queue.task_done()
                     dont_wait_event.clear()
                     got_results = True
             except queue.Empty:
@@ -474,11 +475,13 @@ class WorkerComms:
 
     def drain_queues(self) -> None:
         """
-        Drain tasks, results, and exit results queues. Note that the progress bar tasks_done and exception queues never
-        have to be drained. They are properly cleaned up in the respective __exit__ functions.
+        Drain tasks, results, progress bar, and exit results queues. Note that the exception queue doesn't need to be
+        drained. This one is properly cleaned up in the exception handling class.
         """
         self._drain_and_join_queue(self._tasks_queue)
         self._drain_and_join_queue(self._results_queue)
+        if self.has_progress_bar():
+            self._drain_and_join_queue(self._task_completed_queue)
         [self._drain_and_join_queue(q) for q in self._exit_results_queues]
 
     @staticmethod
