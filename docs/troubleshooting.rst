@@ -70,6 +70,9 @@ To remedy this issue you can use the ``max_tasks_active`` parameter and set it t
 from the added benefit that the workers can start more quickly, the queues won't get that full anymore and shutting down
 will be much quicker. See :ref:`max_active_tasks` for more information.
 
+When you're using a lazy map function also be sure to iterate through the results, otherwise that queue will be full and
+draining it will take a longer time.
+
 
 Unpicklable tasks/results
 -------------------------

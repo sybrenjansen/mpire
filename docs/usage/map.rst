@@ -119,10 +119,10 @@ would like to return a generator we would need to pass on the iterable length as
 Task chunking
 -------------
 
-By default, MPIRE chunks the given tasks in to four times the number of jobs chunks. Each worker is given one chunk of
-tasks at a time before returning its results. This usually makes processing faster when you have rather small tasks
-(computation wise) and results are pickled/unpickled when they are send to a worker or main process. Chunking the tasks
-and results ensures that each process has to pickle/unpickle less often.
+By default, MPIRE chunks the given tasks in to ``64 * n_jobs`` chunks. Each worker is given one chunk of tasks at a time
+before returning its results. This usually makes processing faster when you have rather small tasks (computation wise)
+and results are pickled/unpickled when they are send to a worker or main process. Chunking the tasks and results ensures
+that each process has to pickle/unpickle less often.
 
 However, to determine the number of tasks in the argument list the iterable should implement the ``__len__`` method,
 which is available in default containers like ``list`` or ``tuple``, but isn't available in most generator objects
@@ -133,24 +133,24 @@ to pass the iterable length:
 
     with WorkerPool(n_jobs=4) as pool:
         # 1. This will issue a warning and sets the chunk size to 1
-        results = pool.map(square, ((x,) for x in range(100)))
+        results = pool.map(square, ((x,) for x in range(1000)))
 
         # 2. This will issue a warning as well and sets the chunk size to 1
-        results = pool.map(square, ((x,) for x in range(100)), n_splits=4)
+        results = pool.map(square, ((x,) for x in range(1000)), n_splits=4)
 
         # 3. Square the numbers using a generator using a specific number of splits
-        results = pool.map(square, ((x,) for x in range(100)), iterable_len=100, n_splits=4)
+        results = pool.map(square, ((x,) for x in range(1000)), iterable_len=1000, n_splits=4)
 
         # 4. Square the numbers using a generator using automatic chunking
-        results = pool.map(square, ((x,) for x in range(100)), iterable_len=100)
+        results = pool.map(square, ((x,) for x in range(1000)), iterable_len=1000)
 
         # 5. Square the numbers using a generator using a fixed chunk size
-        results = pool.map(square, ((x,) for x in range(100)), chunk_size=4)
+        results = pool.map(square, ((x,) for x in range(1000)), chunk_size=4)
 
-In the first two examples the function call will fail because MPIRE doesn't know how large the chunks should be as the
-total number of tasks is unknown, therefore it will fall back to a chunk size of 1. The third example should work as
-expected where 4 chunks are used. The fourth example uses 16 chunks (the default four times the number of workers). The
-last example uses a fixed chunk size of four, so MPIRE doesn't need to know the iterable length.
+In the first two examples the function call will issue a warning because MPIRE doesn't know how large the chunks should
+be as the total number of tasks is unknown, therefore it will fall back to a chunk size of 1. The third example should
+work as expected where 4 chunks are used. The fourth example uses 256 chunks (the default 64 times the number of
+workers). The last example uses a fixed chunk size of four, so MPIRE doesn't need to know the iterable length.
 
 You can also call the chunk function manually:
 
@@ -321,16 +321,20 @@ Worker lifespan
 
 Occasionally, workers that process multiple, memory intensive tasks do not release their used up memory properly, which
 results in memory usage building up. This is not a bug in MPIRE, but a consequence of Python's poor garbage collection.
-To avoid this type of problem you can set the worker lifespan: the number of tasks (well, actually the number of chunks
-of tasks) after which a worker should restart.
+To avoid this type of problem you can set the worker lifespan: the number of tasks after which a worker should restart.
 
 .. code-block:: python
 
     with WorkerPool(n_jobs=4) as pool:
         # Square the numbers using a generator
-        results = pool.map(square, range(100), worker_lifespan=1)
+        results = pool.map(square, range(100), worker_lifespan=1, chunk_size=1)
 
-In this example each worker is restarted after finishing a single chunk of tasks.
+In this example each worker is restarted after finishing a single task.
+
+.. note::
+
+    When the worker lifespan has been reached, a worker will finish the current chunk of tasks before restarting. I.e.,
+    based on the ``chunk_size`` a worker could end up completing more tasks than is allowed by the worker lifespan.
 
 
 Progress bar

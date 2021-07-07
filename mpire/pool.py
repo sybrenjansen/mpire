@@ -4,7 +4,6 @@ import os
 import queue
 import signal
 import threading
-import time
 from datetime import datetime
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Sized, Union
 
@@ -338,10 +337,10 @@ class WorkerPool:
             iterable object, or by specifying the number of tasks
         :param max_tasks_active: Maximum number of active tasks in the queue. If ``None`` it will be converted to
             ``n_jobs * 2``
-        :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
-            number of chunks
-        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
-        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
+        :param chunk_size: Number of simultaneous tasks to give to a worker. When ``None`` it will use ``n_splits``.
+        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``. When both ``chunk_size`` and
+            ``n_splits`` are ``None``, it will use ``n_splits = n_jobs * 64``.
+        :param worker_lifespan: Number of tasks a worker can handle before it is restarted. If ``None``, workers will
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: When ``True`` it will display a progress bar
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
@@ -407,10 +406,10 @@ class WorkerPool:
             iterable object, or by specifying the number of tasks
         :param max_tasks_active: Maximum number of active tasks in the queue. If ``None`` it will be converted to
             ``n_jobs * 2``
-        :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
-            number of chunks
-        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
-        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
+        :param chunk_size: Number of simultaneous tasks to give to a worker. When ``None`` it will use ``n_splits``.
+        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``. When both ``chunk_size`` and
+            ``n_splits`` are ``None``, it will use ``n_splits = n_jobs * 64``.
+        :param worker_lifespan: Number of tasks a worker can handle before it is restarted. If ``None``, workers will
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: When ``True`` it will display a progress bar
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
@@ -453,10 +452,10 @@ class WorkerPool:
             iterable object, or by specifying the number of tasks
         :param max_tasks_active: Maximum number of active tasks in the queue. If ``None`` it will be converted to
             ``n_jobs * 2``
-        :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
-            number of chunks
-        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
-        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
+        :param chunk_size: Number of simultaneous tasks to give to a worker. When ``None`` it will use ``n_splits``.
+        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``. When both ``chunk_size`` and
+            ``n_splits`` are ``None``, it will use ``n_splits = n_jobs * 64``.
+        :param worker_lifespan: Number of tasks a worker can handle before it is restarted. If ``None``, workers will
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: When ``True`` it will display a progress bar
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
@@ -539,10 +538,10 @@ class WorkerPool:
             iterable object, or by specifying the number of tasks
         :param max_tasks_active: Maximum number of active tasks in the queue. If ``None`` it will be converted to
             ``n_jobs * 2``
-        :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
-            number of chunks
-        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
-        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
+        :param chunk_size: Number of simultaneous tasks to give to a worker. When ``None`` it will use ``n_splits``.
+        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``. When both ``chunk_size`` and
+            ``n_splits`` are ``None``, it will use ``n_splits = n_jobs * 64``.
+        :param worker_lifespan: Number of tasks a worker can handle before it is restarted. If ``None``, workers will
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: When ``True`` it will display a progress bar
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using

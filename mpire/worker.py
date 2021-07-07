@@ -102,8 +102,8 @@ class AbstractWorker:
             func = partial(self._helper_func_with_idx if self.worker_comms.keep_order() else self._helper_func,
                            partial(self.params.func, *additional_args))
 
-            n_chunks_executed = 0
-            while self.params.worker_lifespan is None or n_chunks_executed < self.params.worker_lifespan:
+            n_tasks_executed = 0
+            while self.params.worker_lifespan is None or n_tasks_executed < self.params.worker_lifespan:
 
                 # Obtain new chunk of jobs
                 with TimeIt(self.worker_insights.worker_waiting_time, self.worker_id):
@@ -138,7 +138,7 @@ class AbstractWorker:
 
                     # Send results back to main process
                     self.worker_comms.add_results(results)
-                    n_chunks_executed += 1
+                    n_tasks_executed += len(results)
 
                 # In case an exception occurred and we need to return, we want to call task_done no matter what
                 finally:
@@ -153,7 +153,7 @@ class AbstractWorker:
 
             # Notify WorkerPool to start a new worker if max lifespan is reached
             self.worker_insights.update_task_insights()
-            if self.params.worker_lifespan is not None and n_chunks_executed == self.params.worker_lifespan:
+            if self.params.worker_lifespan is not None and n_tasks_executed == self.params.worker_lifespan:
                 self.worker_comms.signal_worker_restart()
 
             # Force update the number of tasks completed for this worker (only when using a progress bar)
