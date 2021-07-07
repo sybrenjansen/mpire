@@ -1,20 +1,22 @@
+import heapq
 import itertools
 import math
-from multiprocessing import cpu_count
-from typing import Generator, Iterable, List, Optional, Tuple, Union
+from datetime import datetime, timedelta
+from multiprocessing import Array, cpu_count
+from typing import Callable, Generator, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 
 
 def chunk_tasks(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int] = None,
-                chunk_size: Optional[int] = None, n_splits: Optional[int] = None) \
+                chunk_size: Optional[Union[int, float]] = None, n_splits: Optional[int] = None) \
         -> Generator[Union[Tuple, np.ndarray], None, None]:
     """
     Chunks tasks such that individual workers will receive chunks of tasks rather than individual ones, which can
     speed up processing drastically.
 
     :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-        passes it to the function pointer
+        passes it to the function
     :param iterable_len: Number of tasks available in ``iterable_of_args``. Only needed when ``iterable_of_args`` is a
         generator
     :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None``, will use ``n_splits`` to determine
@@ -73,7 +75,7 @@ def apply_numpy_chunking(iterable_of_args: Union[Iterable, np.ndarray], iterable
     If we're dealing with numpy arrays, chunk them using numpy slicing and return changed map parameters
 
     :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-        passes it to the function pointer
+        passes it to the function
     :param iterable_len: When chunk_size is set to ``None`` it needs to know the number of tasks. This can either be
         provided by implementing the ``__len__`` function on the iterable object, or by specifying the number of tasks
     :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None``, will generate ``n_jobs * 4``
@@ -99,7 +101,7 @@ def get_n_chunks(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Op
     Get number of chunks
 
     :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-        passes it to the function pointer
+        passes it to the function
     :param iterable_len: Number of tasks available in ``iterable_of_args``. Only needed when ``iterable_of_args`` is a
         generator
     :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None``, will use ``n_splits`` to determine
@@ -130,9 +132,63 @@ def make_single_arguments(iterable_of_args: Union[Iterable, np.ndarray], generat
     Converts an iterable of single arguments to an iterable of single argument tuples
 
     :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-        passes it to the function pointer
+        passes it to the function
     :param generator: Whether or not to return a generator, otherwise a materialized list will be returned
     :return: Iterable of single argument tuples
     """
     gen = ((arg,) for arg in iterable_of_args)
     return gen if generator else list(gen)
+
+
+def format_seconds(seconds: Optional[Union[int, float]], with_milliseconds: bool) -> str:
+    """
+    Format seconds to a string, without milliseconds
+
+    :param seconds: Number of seconds
+    :param with_milliseconds: Whether to display milliseconds as well
+    :return: String formatted time
+    """
+    if seconds is None:
+        return ''
+
+    # Format to hours:minutes:seconds.milliseconds. Only the first 3 digits of the milliseconds is shown
+    duration = str(timedelta(seconds=seconds)).rsplit('.', 1)
+    if with_milliseconds and len(duration) > 1:
+        duration = f'{duration[0]}.{duration[1][:3]}'
+    else:
+        duration = duration[0]
+
+    return duration
+
+
+class TimeIt:
+
+    """ Simple class that provides a context manager for keeping track of task duration and adds the total number
+     of seconds in a designated output array """
+
+    def __init__(self, cum_time_array: Optional[Array], array_idx: int, max_time_array: Optional[Array] = None,
+                 format_args_func: Optional[Callable] = None) -> None:
+        """
+        :param cum_time_array: Optional array to store cumulative time in
+        :param array_idx: Index of cum_time_array to store the time value to
+        :param max_time_array: Optional array to store maximum time duration in. Note that the array_idx doesn't apply
+            to this array. The entire array is used for heapq
+        :param format_args_func: Optional function which should return the formatted args corresponding to the function
+            called within this context manager
+        """
+        self.cum_time_array = cum_time_array
+        self.array_idx = array_idx
+        self.max_time_array = max_time_array
+        self.format_args_func = format_args_func
+        self.start_dt = None
+
+    def __enter__(self) -> None:
+        self.start_dt = datetime.now()
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        duration = (datetime.now() - self.start_dt).total_seconds()
+        if self.cum_time_array is not None:
+            self.cum_time_array[self.array_idx] += duration
+        if self.max_time_array is not None and duration > self.max_time_array[0][0]:
+            heapq.heappushpop(self.max_time_array,
+                              (duration, self.format_args_func() if self.format_args_func is not None else None))

@@ -1,7 +1,7 @@
 Map family
 ==========
 
-This section describes the different ways of interacting with a :obj:`mpire.WorkerPool` object.
+This section describes the different ways of interacting with a :obj:`mpire.WorkerPool` instance.
 
 .. contents:: Contents
     :depth: 2
@@ -21,14 +21,14 @@ map family of functions
 - :meth:`mpire.WorkerPool.imap_unordered`: The same as :meth:`mpire.WorkerPool.imap`, but results are ordered by task
   completion time. Usually faster than :meth:`mpire.WorkerPool.imap`.
 
-When using a single worker the unordered versions are equivalent to their ordered counterpart.
+When using a single worker the unordered versions are equivalent to their ordered counterparts.
 
 .. important::
 
     Each ``map`` function should receive a function pointer and an iterable of arguments, where the elements of the
-    iterable are expected to be iterables that are unpacked as arguments. If the elements are not iterables, the single
-    value is simply passed on as the only argument. However, if a single value is a dictionary the (key, value) pairs
-    will be unpacked with the ``**``-operator.
+    iterable can be single values or iterables that are unpacked as arguments. If an element is a dictionary, the
+    (key, value) pairs will be unpacked with the ``**``-operator. Look at the examples below on ways to circumvent this
+    behavior.
 
 A few examples:
 
@@ -46,7 +46,7 @@ A few examples:
 
     with WorkerPool(n_jobs=4) as pool:
         # 2. Square the numbers, results should be: [0, 1, 4, 9, 16, 25, ...]
-        # Note: you'll probably don't want to execute this, it will take a long time ...
+        # Note: don't execute this, it will take a long time ...
         results = pool.map(square, range(int(1e30)), iterable_len=int(1e30), chunk_size=1)
 
     with WorkerPool(n_jobs=4) as pool:
@@ -62,16 +62,15 @@ A few examples:
             print(result)
 
 The first example should work as expected, the numbers are simply squared. MPIRE knows how many tasks there are because
-a ``range`` object implements the ``__len__`` method (see section below).
+a ``range`` object implements the ``__len__`` method (see `Task chunking`_).
 
 In the second example the ``1e30`` number is too large for Python: try calling ``len(range(int(1e30)))``, this will
-throw an ``OverflowError`` (I know ...). Therefore, we must use the ``iterable_len`` parameter to let MPIRE know how
-large the tasks list is. We also have to specify a chunk size here as the chunk size should be lower than
+throw an ``OverflowError`` (don't get me started ...). Therefore, we must use the ``iterable_len`` parameter to let
+MPIRE know how large the tasks list is. We also have to specify a chunk size here as the chunk size should be lower than
 ``sys.maxsize``.
 
-The third example shows an example of using multiple function arguments. Also note that we use ``imap`` in the third
-example, which allows us to process the results whenever they come available, not having to wait for all results to be
-ready.
+The third example shows an example of using multiple function arguments. Note that we use ``imap`` in the third example,
+which allows us to process the results whenever they come available, not having to wait for all results to be ready.
 
 The final example shows the use of an iterable of dictionaries. The (key, value) pairs are unpacked with the
 ``**``-operator, as you would expect. So it doesn't matter in what order the keys are stored. This should work for
@@ -91,11 +90,13 @@ dictionary:
 
     with WorkerPool(n_jobs=4) as pool:
         # Multiply the numbers, results should be [0, 101, ...]
-        for result in pool.imap(multiply_dict, [({'x': 0, 'y': 100},), ({'y': 101, 'x': 1},), ...]):
+        for result in pool.imap(multiply_dict, [({'x': 0, 'y': 100},),
+                                                ({'y': 101, 'x': 1},),
+                                                ...]):
             # Do something with this result
             print(result)
 
-There is, however, a utility function that does this transformation for you:
+There is a utility function available that does this transformation for you:
 
 .. code-block:: python
 
@@ -113,13 +114,15 @@ There is, however, a utility function that does this transformation for you:
 second argument of this function specifies if you want the function to return a generator or a materialized list. If we
 would like to return a generator we would need to pass on the iterable length as well.
 
+.. _Task chunking:
+
 Task chunking
 -------------
 
-By default, MPIRE chunks the given tasks in to four times the number of jobs chunks. Each worker is given one chunk of
-tasks at a time before returning its results. This usually makes processing faster when you have rather small tasks
-(computation wise) and results are pickled/unpickled when they are send to a worker or main process. Chunking the tasks
-and results ensures that each process has to pickle/unpickle less often.
+By default, MPIRE chunks the given tasks in to ``64 * n_jobs`` chunks. Each worker is given one chunk of tasks at a time
+before returning its results. This usually makes processing faster when you have rather small tasks (computation wise)
+and results are pickled/unpickled when they are send to a worker or main process. Chunking the tasks and results ensures
+that each process has to pickle/unpickle less often.
 
 However, to determine the number of tasks in the argument list the iterable should implement the ``__len__`` method,
 which is available in default containers like ``list`` or ``tuple``, but isn't available in most generator objects
@@ -130,24 +133,24 @@ to pass the iterable length:
 
     with WorkerPool(n_jobs=4) as pool:
         # 1. This will issue a warning and sets the chunk size to 1
-        results = pool.map(square, ((x,) for x in range(100)))
+        results = pool.map(square, ((x,) for x in range(1000)))
 
         # 2. This will issue a warning as well and sets the chunk size to 1
-        results = pool.map(square, ((x,) for x in range(100)), n_splits=4)
+        results = pool.map(square, ((x,) for x in range(1000)), n_splits=4)
 
         # 3. Square the numbers using a generator using a specific number of splits
-        results = pool.map(square, ((x,) for x in range(100)), iterable_len=100, n_splits=4)
+        results = pool.map(square, ((x,) for x in range(1000)), iterable_len=1000, n_splits=4)
 
         # 4. Square the numbers using a generator using automatic chunking
-        results = pool.map(square, ((x,) for x in range(100)), iterable_len=100)
+        results = pool.map(square, ((x,) for x in range(1000)), iterable_len=1000)
 
         # 5. Square the numbers using a generator using a fixed chunk size
-        results = pool.map(square, ((x,) for x in range(100)), chunk_size=4)
+        results = pool.map(square, ((x,) for x in range(1000)), chunk_size=4)
 
-In the first two examples the function call will fail because MPIRE doesn't know how large the chunks should be as the
-total number of tasks is unknown, therefore it will fall back to a chunk size of 1. The third example should work as
-expected where 4 chunks are used. The fourth example uses 16 chunks (the default four times the number of workers). The
-last example uses a fixed chunk size of four, so MPIRE doesn't need to know the iterable length.
+In the first two examples the function call will issue a warning because MPIRE doesn't know how large the chunks should
+be as the total number of tasks is unknown, therefore it will fall back to a chunk size of 1. The third example should
+work as expected where 4 chunks are used. The fourth example uses 256 chunks (the default 64 times the number of
+workers). The last example uses a fixed chunk size of four, so MPIRE doesn't need to know the iterable length.
 
 You can also call the chunk function manually:
 
@@ -288,6 +291,8 @@ This will return individual arrays:
      array([[5.11783283, 5.12585031, 5.39864368]])]
 
 
+.. _max_active_tasks:
+
 Maximum number of active tasks
 ------------------------------
 
@@ -316,16 +321,20 @@ Worker lifespan
 
 Occasionally, workers that process multiple, memory intensive tasks do not release their used up memory properly, which
 results in memory usage building up. This is not a bug in MPIRE, but a consequence of Python's poor garbage collection.
-To avoid this type of problem you can set the worker lifespan: the number of tasks (well, actually the number of chunks
-of tasks) after which a worker should restart.
+To avoid this type of problem you can set the worker lifespan: the number of tasks after which a worker should restart.
 
 .. code-block:: python
 
     with WorkerPool(n_jobs=4) as pool:
         # Square the numbers using a generator
-        results = pool.map(square, range(100), worker_lifespan=1)
+        results = pool.map(square, range(100), worker_lifespan=1, chunk_size=1)
 
-In this example each worker is restarted after finishing a single chunk of tasks.
+In this example each worker is restarted after finishing a single task.
+
+.. note::
+
+    When the worker lifespan has been reached, a worker will finish the current chunk of tasks before restarting. I.e.,
+    based on the ``chunk_size`` a worker could end up completing more tasks than is allowed by the worker lifespan.
 
 
 Progress bar
@@ -388,6 +397,144 @@ the main WorkerPool (which is the default).
     notebook session. It'll work but you'll get some additional new lines in your output and it could be that your main
     progress bar won't update as you would expect. Note that you can always use the MPIRE dashboard.
 
+
+.. _worker_init_exit:
+
+Worker init and exit
+--------------------
+
+When you want to initialize a worker you can make use of the ``worker_init`` parameter of any ``map`` function. This
+will call the initialization function only once per worker. Similarly, if you need to clean up the worker at the end of
+its lifecycle you can use the ``worker_exit`` parameter. Additionally, the exit function can return anything you like,
+which can be collected using :meth:`mpire.WorkerPool.get_exit_results` after the workers are done.
+
+For example:
+
+.. code-block:: python
+
+    def init_func(worker_state):
+        # Initialize a counter for each worker
+        worker_state['count_even'] = 0
+
+    def square_and_count_even(worker_state, x):
+        # Count number of even numbers and return the square
+        if x % 2 == 0:
+            worker_state['count_even'] += 1
+        return x**x
+
+    def exit_func(worker_state):
+        # Return the counter
+        return worker_state['count_even']
+
+    with WorkerPool(n_jobs=4, use_worker_state=True) as pool:
+        pool.map(square_and_count_even, range(100), worker_init=init_func, worker_exit=exit_func)
+        print(pool.get_exit_results())  # Output, e.g.: [13, 13, 12, 12]
+        print(sum(pool.get_exit_results()))  # Output: 50
+
+Both init and exit functions receive the worker ID, shared objects, and worker state in the same way as the task
+function does, given they're enabled.
+
+.. important::
+
+    When the ``worker_lifespan`` option is used to restart workers during execution, the exit function will be called
+    for the worker that's shutting down and the init function will be called again for the new worker. Therefore, the
+    number of elements in the list that's returned from :meth:`mpire.WorkerPool.get_exit_results` does not always equal
+    ``n_jobs``.
+
+.. important::
+
+    When ``keep_alive`` is enabled the workers won't be terminated after a ``map`` call. This means the exit function
+    won't be called until it's time for cleaning up the entire pool. You will have to explicitly call
+    :meth:`mpire.WorkerPool.stop_and_join` to receive the exit results.
+
+One usecase for these functions is to load a big dataset or model that is needed for every task only once per worker
+(see :ref:`worker_state` for this example). Another usecase would be to set up and close a database connection on init
+and exit.
+
+
+.. _worker insights:
+
+Worker insights
+---------------
+
+Worker insights gives you insight in your multiprocessing efficiency by tracking worker start up time, waiting time and
+time spend on executing tasks. Tracking is disabled by default, but can be enabled by setting ``enable_insights`` in the
+map functions:
+
+.. code-block:: python
+
+    with WorkerPool(n_jobs=4) as pool:
+        pool.map(square, range(100), enable_insights=True)
+
+The overhead is very minimal and you shouldn't really notice it, even on very small tasks. You can view the tracking
+results using :meth:`mpire.WorkerPool.get_insights` or use :meth:`mpire.WorkerPool.print_insights` to directly print
+the insights to console:
+
+.. code-block:: python
+
+    import time
+
+    def sleep_and_square(x):
+        # For illustration purposes
+        time.sleep(x / 1000)
+        return x * x
+
+    with WorkerPool(n_jobs=4) as pool:
+        pool.map(sleep_and_square, range(100), enable_insights=True)
+        insights = pool.get_insights()
+        print(insights)
+
+    # Output:
+    {'n_completed_tasks': [28, 24, 24, 24],
+     'total_start_up_time': '0:00:00.038',
+     'total_init_time': '0:00:00',
+     'total_waiting_time': '0:00:00.798',
+     'total_working_time': '0:00:04.980',
+     'total_exit_time': '0:00:00',
+     'total_time': '0:00:05.816',
+     'start_up_time': ['0:00:00.010', '0:00:00.008', '0:00:00.008', '0:00:00.011'],
+     'start_up_time_mean': '0:00:00.009',
+     'start_up_time_std': '0:00:00.001',
+     'start_up_ratio': 0.006610452621805033,
+     'init_time': ['0:00:00', '0:00:00', '0:00:00', '0:00:00'],
+     'init_time_mean': '0:00:00',
+     'init_time_std': '0:00:00',
+     'init_ratio': 0.0,
+     'waiting_time': ['0:00:00.309', '0:00:00.311', '0:00:00.165', '0:00:00.012'],
+     'waiting_time_mean': '0:00:00.199',
+     'waiting_time_std': '0:00:00.123',
+     'waiting_ratio': 0.13722942739284952,
+     'working_time': ['0:00:01.142', '0:00:01.135', '0:00:01.278', '0:00:01.423'],
+     'working_time_mean': '0:00:01.245',
+     'working_time_std': '0:00:00.117',
+     'working_ratio': 0.8561601182661567,
+     'exit_time': ['0:00:00', '0:00:00', '0:00:00', '0:00:00']
+     'exit_time_mean': '0:00:00',
+     'exit_time_std': '0:00:00',
+     'exit_ratio': 0.0,
+     'top_5_max_task_durations': ['0:00:00.099', '0:00:00.098', '0:00:00.097', '0:00:00.096',
+                                  '0:00:00.095'],
+     'top_5_max_task_args': ['Arg 0: 99', 'Arg 0: 98', 'Arg 0: 97', 'Arg 0: 96', 'Arg 0: 95']}
+
+We specified 4 workers, so there are 4 entries in the ``n_completed_tasks``, ``start_up_time``, ``init_time``,
+``waiting_time``, ``working_time``, and ``exit_time`` containers. They show per worker the number of completed tasks,
+the total start up time, the total time spend on the ``worker_init`` function, the total time waiting for new tasks,
+total time spend on main function, and the total time spend on the ``worker_exit`` function, respectively. The insights
+also contain mean, standard deviation, and ratio of the tracked time. The ratio is the time for that part divided by the
+total time. In general, the higher the working ratio the more efficient your multiprocessing setup is. Of course, your
+setup might still not be optimal because the task itself is inefficient, but timing that is beyond the scope of MPIRE.
+
+Additionally, the insights keep track of the top 5 tasks that took the longest to run. The data is split up in two
+containers: one for the duration and one for the arguments that were passed on to the task function. Both are sorted
+based on task duration (desc), so index ``0`` of the args list corresponds to index ``0`` of the duration list, etc.
+
+When using the MPIRE :ref:`Dashboard` you can track these insights in real-time. See :ref:`Dashboard` for more
+information.
+
+.. note::
+
+    When you use `imap` or `imap_unordered` you can view the insights during execution. Simply call ``get_insights()``
+    or ``print_insights()`` inside your loop where you process the results.
 
 .. _tqdm: https://pypi.python.org/pypi/tqdm
 .. _`tqdm documentation`: https://pypi.python.org/pypi/tqdm#documentation

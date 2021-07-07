@@ -1,10 +1,15 @@
+import logging
+import sys
 from datetime import datetime, timedelta
-from multiprocessing import Event, JoinableQueue, Lock, Process
+from multiprocessing import Lock, Process
 from typing import Any, Callable, Dict
 
 from tqdm.auto import tqdm
 
+from mpire.comms import WorkerComms, POISON_PILL
+from mpire.insights import WorkerInsights
 from mpire.signal import DisableKeyboardInterruptSignal
+from mpire.utils import format_seconds
 
 # If a user has not installed the dashboard dependencies than the imports below will fail
 try:
@@ -20,6 +25,8 @@ except ImportError:
     def get_manager_client_dicts():
         raise NotImplementedError
 
+logger = logging.getLogger(__name__)
+
 DATETIME_FORMAT = "%Y-%m-%d, %H:%M:%S"
 
 # Set lock for TQDM such that racing conditions are avoided when using multiple progress bars
@@ -29,27 +36,28 @@ tqdm.set_lock(TQDM_LOCK)
 
 class ProgressBarHandler:
 
-    def __init__(self, func_pointer: Callable, show_progress_bar: bool, progress_bar_total: int,
-                 progress_bar_position: int, task_completed_queue: JoinableQueue, exception_queue: JoinableQueue,
-                 exception_caught: Event) -> None:
+    def __init__(self, func: Callable, n_jobs: int, show_progress_bar: bool, progress_bar_total: int,
+                 progress_bar_position: int, worker_comms: WorkerComms, worker_insights: WorkerInsights) -> None:
         """
-        :param func_pointer: Function pointer passed on to a WorkerPool map function
+        :param func: Function passed on to a WorkerPool map function
+        :param n_jobs: Number of workers that are used
         :param show_progress_bar: When ``True`` will display a progress bar
         :param progress_bar_total: Total number of tasks that will be processed
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
             multiple progress bars at the same time
-        :param task_completed_queue: Queue related to the progress bar. Child processes can pass on a random value
-            whenever they are finished with a job
-        :param exception_queue: Queue where the workers can pass on an encountered exception
-        :param exception_caught: Whether or not an exception was caught by one of the child processes
+        :param worker_comms: Worker communication objects (queues, locks, events, ...)
+        :param worker_insights: WorkerInsights object which stores the worker insights
         """
         self.show_progress_bar = show_progress_bar
         self.progress_bar_total = progress_bar_total
         self.progress_bar_position = progress_bar_position
-        self.task_completed_queue = task_completed_queue
-        self.exception_queue = exception_queue
-        self.exception_caught = exception_caught
-        self.function_details = get_function_details(func_pointer) if show_progress_bar else None
+        self.worker_comms = worker_comms
+        self.worker_insights = worker_insights
+        if show_progress_bar and DASHBOARD_STARTED_EVENT is not None:
+            self.function_details = get_function_details(func)
+            self.function_details['n_jobs'] = n_jobs
+        else:
+            self.function_details = None
 
         self.process = None
         self.progress_bar_id = None
@@ -84,7 +92,8 @@ class ProgressBarHandler:
         if self.show_progress_bar:
 
             # Insert poison pill and close the handling process
-            self.task_completed_queue.put(None)
+            if not self.worker_comms.exception_caught():
+                self.worker_comms.add_progress_bar_poison_pill()
             self.process.join()
 
     def _progress_bar_handler(self, progress_bar_total: int, progress_bar_position: int) -> None:
@@ -95,9 +104,11 @@ class ProgressBarHandler:
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
             multiple progress bars at the same time
         """
+        logger.debug("Progress bar handler started")
+
         # In case we're running tqdm in a notebook we need to apply a dirty hack to get progress bars working.
         # Solution adapted from https://github.com/tqdm/tqdm/issues/485#issuecomment-473338308
-        if tqdm.__name__ == 'tqdm_notebook':
+        if 'IPython' in sys.modules and 'IPKernelApp' in sys.modules['IPython'].get_ipython().config:
             print(' ', end='', flush=True)
 
         # Create progress bar and register the start time
@@ -109,12 +120,16 @@ class ProgressBarHandler:
 
         while True:
             # Wait for a job to finish
-            task_completed = self.task_completed_queue.get(block=True)
+            tasks_completed, from_queue = self.worker_comms.get_tasks_completed_progress_bar()
 
-            # If we received None, we should quit right away. We do force a final refresh of the progress bar to show
-            # the latest status
-            if task_completed is None:
-                self.task_completed_queue.task_done()
+            # If we received a poison pill, we should quit right away. We do force a final refresh of the progress bar
+            # to show the latest status
+            if tasks_completed is POISON_PILL:
+                logger.debug("Terminating progress bar handler")
+                if from_queue:
+                    self.worker_comms.task_done_progress_bar()
+                if progress_bar.n != progress_bar.total:
+                    progress_bar.set_description('Exception occurred, terminating ... ')
                 progress_bar.refresh()
                 progress_bar.close()
 
@@ -128,8 +143,8 @@ class ProgressBarHandler:
             self._register_progress_bar(progress_bar)
 
             # Update progress bar
-            progress_bar.update(1)
-            self.task_completed_queue.task_done()
+            progress_bar.update(tasks_completed)
+            self.worker_comms.task_done_progress_bar()
 
             # Force a refresh when we're at 100%. Tqdm doesn't always show the last update. It does when we close the
             # progress bar, but because that happens in the main process it won't show it properly (tqdm and pickle
@@ -155,6 +170,7 @@ class ProgressBarHandler:
             self.dashboard_dict, self.dashboard_details_dict, dashboard_tqdm_lock = get_manager_client_dicts()
 
             # Register new progress bar
+            logger.debug("Registering new progress bar to the dashboard server")
             dashboard_tqdm_lock.acquire()
             self.progress_bar_id = len(self.dashboard_dict.keys()) + 1
             self.dashboard_details_dict.update([(self.progress_bar_id, self.function_details)])
@@ -175,9 +191,9 @@ class ProgressBarHandler:
 
         # In case we have a failure and are not using a dashboard we need to remove the additional error put in the
         # exception queue by the exception handler. We won't be using it
-        elif failed and self.exception_caught.is_set():
-            self.exception_queue.get(block=True)
-            self.exception_queue.task_done()
+        elif failed and self.worker_comms.exception_caught():
+            self.worker_comms.get_exception()
+            self.worker_comms.task_done_exception()
 
     def _get_progress_bar_update_dict(self, progress_bar: tqdm, failed: bool) -> Dict[str, Any]:
         """
@@ -198,10 +214,10 @@ class ProgressBarHandler:
         # Obtain traceback string in case of failure. If an exception was caught an additional traceback string will be
         # available in the exception_queue. Otherwise, it will be a KeyboardInterrupt
         if failed:
-            if self.exception_caught.is_set():
-                _, traceback_str = self.exception_queue.get(block=True)
+            if self.worker_comms.exception_caught():
+                _, traceback_str = self.worker_comms.get_exception()
                 traceback_str = traceback_str.strip()
-                self.exception_queue.task_done()
+                self.worker_comms.task_done_exception()
             else:
                 traceback_str = 'KeyboardInterrupt'
         else:
@@ -213,11 +229,11 @@ class ProgressBarHandler:
                 "total": total,
                 "percentage": n / total,
                 "duration": str(now - self.start_t).rsplit('.', 1)[0],
-                "remaining": (str(timedelta(seconds=remaining_time)).rsplit('.', 1)[0]
-                              if remaining_time is not None else ''),
+                "remaining": format_seconds(remaining_time, False),
                 "started_raw": self.start_t,
                 "started": self.start_t.strftime(DATETIME_FORMAT),
                 "finished_raw": now + timedelta(seconds=remaining_time) if remaining_time is not None else None,
                 "finished": ((now + timedelta(seconds=remaining_time)).strftime(DATETIME_FORMAT)
                              if remaining_time is not None else ''),
-                "traceback": traceback_str}
+                "traceback": traceback_str,
+                "insights": self.worker_insights.get_insights()}

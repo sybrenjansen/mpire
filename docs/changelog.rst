@@ -1,6 +1,27 @@
 Changelog
 =========
 
+2.0.0
+-----
+
+*(2021-07-07)*
+
+* Worker insights added, providing users insight in multiprocessing efficiency
+* ``worker_init`` and ``worker_exit`` parameters added to each ``map`` function
+* ``max_active_tasks`` is now set to ``n_jobs * 2`` when ``max_active_tasks=None``, to speed up most jobs
+* ``n_splits`` is now set to ``n_jobs * 64`` when both ``chunk_size`` and ``n_splits`` are ``None``
+* Dashboard ports can now be configured
+* Renamed ``func_pointer`` to ``func`` in each ``map`` function
+* Fixed a bug with the `threading` backend not terminating correctly
+* Fixed a bug with the progress bar not showing correctly in notebooks
+* Using ``multiprocess`` is now the default
+* Added some debug logging
+* Refactored a lot of code
+* Minor bug fixes, which should make things more stable.
+* Removed Python 3.5 support
+* Removed ``add_task``, ``get_result``, ``insert_poison_pill``, ``stop_workers``, and ``join`` functions from
+  :obj:`mpire.WorkerPool`. Made ``start_workers`` private.  There wasn't any reason to use these functions.
+
 1.2.2
 -----
 

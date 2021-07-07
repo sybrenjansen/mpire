@@ -6,7 +6,7 @@ import socket
 from datetime import datetime
 from multiprocessing import Event, Process, Value
 from pkg_resources import resource_string
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Sequence, Union
 
 from flask import escape, Flask, jsonify, render_template, request
 from werkzeug.serving import make_server
@@ -68,22 +68,41 @@ def progress_bar_new() -> str:
 
     :return: JSON string containing new progress bar HTML
     """
+    pb_id = int(request.args['pb_id'])
+    has_insights = request.args['has_insights'] == 'true'
+
     # Obtain progress bar details. Only show the user@host part if it doesn't equal the user@host of this process
     # (in case someone connected to this dashboard from another machine or user)
-    progress_bar_details = _DASHBOARD_TQDM_DETAILS_DICT.get(int(request.args['pb_id']))
+    progress_bar_details = _DASHBOARD_TQDM_DETAILS_DICT.get(pb_id)
     if progress_bar_details['user'] == '{}@{}'.format(getpass.getuser(), socket.gethostname()):
         progress_bar_details['user'] = ''
     else:
         progress_bar_details['user'] = '{}:'.format(progress_bar_details['user'])
 
-    return jsonify(result=_progress_bar_html.format(id=request.args['pb_id'],
+    # Create table for worker insights
+    insights_workers = []
+    if has_insights:
+        for worker_id in range(progress_bar_details['n_jobs']):
+            insights_workers.append(f"<tr><td>{worker_id}</td>"
+                                    f"<td id='pb_{pb_id}_insights_worker_{worker_id}_tasks_completed'></td>"
+                                    f"<td id='pb_{pb_id}_insights_worker_{worker_id}_start_up_time'></td>"
+                                    f"<td id='pb_{pb_id}_insights_worker_{worker_id}_init_time'></td>"
+                                    f"<td id='pb_{pb_id}_insights_worker_{worker_id}_waiting_time'></td>"
+                                    f"<td id='pb_{pb_id}_insights_worker_{worker_id}_working_time'></td>"
+                                    f"<td id='pb_{pb_id}_insights_worker_{worker_id}_exit_time'></td>"
+                                    f"</tr>")
+    insights_workers = "\n".join(insights_workers)
+
+    return jsonify(result=_progress_bar_html.format(id=pb_id, insights_workers=insights_workers,
+                                                    has_insights='block' if has_insights else 'none',
                                                     **{k: escape(v) for k, v in progress_bar_details.items()}))
 
 
-def start_dashboard() -> Dict[str, Union[int, str]]:
+def start_dashboard(port_range: Sequence = range(8080, 8100)) -> Dict[str, Union[int, str]]:
     """
     Starts a new MPIRE dashboard
 
+    :param port_range: Port range to try.
     :return: A dictionary containing the dashboard port number and manager host and port_nr being used
     """
     global _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
@@ -94,12 +113,12 @@ def start_dashboard() -> Dict[str, Union[int, str]]:
         with DisableKeyboardInterruptSignal():
 
             # Set up manager server
-            _DASHBOARD_MANAGER = start_manager_server()
+            _DASHBOARD_MANAGER = start_manager_server(port_range)
 
             # Start flask server
             logging.getLogger('werkzeug').setLevel(logging.WARN)
             dashboard_port_nr = Value('i', 0, lock=False)
-            Process(target=_run, args=(DASHBOARD_STARTED_EVENT, dashboard_port_nr),
+            Process(target=_run, args=(DASHBOARD_STARTED_EVENT, dashboard_port_nr, port_range),
                     daemon=True, name='dashboard-process').start()
             DASHBOARD_STARTED_EVENT.wait()
 
@@ -130,19 +149,20 @@ def connect_to_dashboard(manager_port_nr: int, manager_host: Optional[str] = Non
         raise RuntimeError("You're already connected to a running dashboard")
 
 
-def _run(started: Event, dashboard_port_nr: Value) -> None:
+def _run(started: Event, dashboard_port_nr: Value, port_range: Sequence) -> None:
     """
     Starts a dashboard server
 
     :param started: Event that signals the dashboard server has started
     :param dashboard_port_nr: Value object for storing the dashboad port number that is used
+    :param port_range: Port range to try.
     """
     # Connect to manager from this process
     global _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _server
     _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _ = get_manager_client_dicts()
 
     # Try different ports, until a free one is found
-    for port in range(8080, 8100):
+    for port in port_range:
         try:
             _server = make_server('0.0.0.0', port, app)
             dashboard_port_nr.value = port
@@ -155,7 +175,7 @@ def _run(started: Event, dashboard_port_nr: Value) -> None:
                 raise exc
 
     if not _server:
-        raise OSError("All ports (8080-8099) are in use")
+        raise OSError(f"Dashboard server: All ports are in use: {port_range}")
 
 
 @atexit.register

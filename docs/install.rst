@@ -13,33 +13,18 @@ MPIRE can be installed through pip:
 
 .. note::
 
-    MPIRE is only available for Python 3.x.
+    MPIRE is only available for Python >= 3.6.
 
 Dependencies
 ------------
 
-- Python 3.x
+- Python >= 3.6
 
 Python packages (installed automatically when installing MPIRE):
 
+- multiprocess
 - numpy
-- tqdm_
-
-.. _tqdm: https://pypi.python.org/pypi/tqdm
-
-.. _dilldep:
-
-DILL
-~~~~
-
-Optionally, you can choose to use dill_ instead of regular pickle which allows you to serialize some more exotic types,
-like lambdas. Install the appropriate dependencies to enable this:
-
-.. code-block:: bash
-
-    pip install mpire[dill]
-
-.. _dill: https://pypi.org/project/dill/
+- tqdm
 
 .. _dashboarddep:
 

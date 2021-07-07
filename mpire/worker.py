@@ -1,23 +1,19 @@
 import collections
-import queue
+import dill
 import signal
 import traceback
+from datetime import datetime
 from functools import partial
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 import numpy as np
 
+from mpire.comms import WorkerComms, POISON_PILL
 from mpire.context import MP_CONTEXTS
 from mpire.exception import CannotPickleExceptionError, StopWorker
-
-# If multiprocess is installed we want to use that as it has more capabilities than regular multiprocessing (e.g.,
-# pickling lambdas en functions located in __main__)
-try:
-    import multiprocess as mp
-    import dill as pickle
-except ImportError:
-    import multiprocessing as mp
-    import pickle
+from mpire.insights import WorkerInsights
+from mpire.params import WorkerPoolParams
+from mpire.utils import TimeIt
 
 
 class AbstractWorker:
@@ -25,57 +21,33 @@ class AbstractWorker:
     A multiprocessing helper class which continuously asks the queue for new jobs, until a poison pill is inserted
     """
 
-    def __init__(self, start_method: str, worker_id: int, tasks_queue: mp.JoinableQueue,
-                 results_queue: mp.JoinableQueue, worker_done_array: mp.Array, task_completed_queue: mp.JoinableQueue,
-                 exception_queue: mp.JoinableQueue, exception_lock: mp.Lock, exception_thrown: mp.Event,
-                 func_pointer: Callable, keep_order: bool, shared_objects: Any = None,
-                 worker_lifespan: Optional[int] = None, pass_worker_id: bool = False,
-                 use_worker_state: bool = False) -> None:
+    def __init__(self, worker_id: int, params: WorkerPoolParams, worker_comms: WorkerComms,
+                 worker_insights: WorkerInsights, start_time: datetime) -> None:
         """
-        :param start_method: What Process start method to use
         :param worker_id: Worker ID
-        :param tasks_queue: Queue object for retrieving new task arguments
-        :param results_queue: Queue object for storing the results
-        :param worker_done_array: Array object for notifying the ``WorkerPool`` to restart a worker
-        :param task_completed_queue: Queue object for notifying the main process we're done with a single task. ``None``
-            when notifying is not necessary
-        :param exception_queue: Queue object for sending Exception objects to whenever an Exception was raised inside a
-            user function
-        :param exception_lock: Lock object such that child processes can only throw one at a time
-        :param func_pointer: Function pointer to call each time new task arguments become available
-        :param keep_order: Boolean flag which signals if the task arguments contain an order index which should be
-            preserved and not fed to the function pointer (e.g., used in ``map``)
-        :param shared_objects: ``None`` or an iterable of process-aware shared objects (e.g., ``multiprocessing.Array``)
-            to pass to the function as the first argument
-        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
-            stay alive the entire time. Use this when workers use up too much memory over the course of time
-        :param pass_worker_id: Whether or not to pass the worker ID to the function
-        :param use_worker_state: Whether to let a worker have a worker state or not
+        :param params: WorkerPool parameters
+        :param worker_comms: Worker communication objects (queues, locks, events, ...)
+        :param worker_insights: WorkerInsights object which stores the worker insights
+        :param start_time: `datetime` object indicating at what time the Worker instance was created and started
         """
         super().__init__()
 
         # Parameters
-        self.start_method = start_method
         self.worker_id = worker_id
-        self.tasks_queue = tasks_queue
-        self.results_queue = results_queue
-        self.worker_done_array = worker_done_array
-        self.task_completed_queue = task_completed_queue
-        self.exception_queue = exception_queue
-        self.exception_lock = exception_lock
-        self.exception_thrown = exception_thrown
-        self.func_pointer = func_pointer
-        self.keep_order = keep_order
-        self.shared_objects = shared_objects
-        self.worker_lifespan = worker_lifespan
-        self.pass_worker_id = pass_worker_id
-        self.use_worker_state = use_worker_state
+        self.params = params
+        self.worker_comms = worker_comms
+        self.worker_insights = worker_insights
+        self.start_time = start_time
 
         # Worker state
         self.worker_state = {}
 
+        # Initialize worker comms and insights for this worker
+        self.worker_comms.init_worker(self.worker_id)
+        self.worker_insights.init_worker(self.worker_id)
+
         # Exception handling variables
-        ctx = MP_CONTEXTS[self.start_method]
+        ctx = MP_CONTEXTS[self.params.start_method]
         self.is_running = False
         self.is_running_lock = ctx.Lock()
 
@@ -87,15 +59,15 @@ class AbstractWorker:
         This function is called when the main process sends a kill signal to this process. This can only mean another
         child process encountered an exception which means we should exit.
 
-        We do this by setting the stop event and, if the process is in the middle of running the user defined function,
-        by raising a StopWorker exception (which is then caught by the ``run()`` function) so we can quit gracefully.
+        If this process is in the middle of running the user defined function we raise a StopWorker exception (which is
+        then caught by the ``_run_safely()`` function) so we can quit gracefully.
         """
-        # A rather complex locking mechanism is used here so we can make sure we only raise an exception when we should.
-        # We want to make sure we only raise an exception when the user function is called. If it is running the
-        # exception is caught and `run` will return. If it is running and the user function throws another exception
-        # first, it depends on who obtains the lock first. If `run` obtains it it will set `running` to False, meaning
-        # we won't raise and `run` will return. If this function obtains it first it will throw, which again is caught
-        # by the `run` function, which will return.
+        # A rather complex locking and exception mechanism is used here so we can make sure we only raise an exception
+        # when we should. We want to make sure we only raise an exception when the user function is called. If it is
+        # running the exception is caught and `run` will return. If it is running and the user function throws another
+        # exception first, it depends on who obtains the lock first. If `run` obtains it, it will set `running` to
+        # False, meaning we won't raise and `run` will return. If this function obtains it first it will throw, which
+        # again is caught by the `run` function, which will return.
         with self.is_running_lock:
             if self.is_running:
                 self.is_running = False
@@ -106,117 +78,207 @@ class AbstractWorker:
         Continuously asks the tasks queue for new task arguments. When not receiving a poisonous pill or when the max
         life span is not yet reached it will execute the new task and put the results in the results queue.
         """
-        # Obtain additional args to pass to the function
-        additional_args = []
-        if self.pass_worker_id:
-            additional_args.append(self.worker_id)
-        if self.shared_objects is not None:
-            additional_args.append(self.shared_objects)
-        if self.use_worker_state:
-            additional_args.append(self.worker_state)
+        self.worker_comms.set_worker_alive()
 
-        # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
-        # with idx support which deals with the provided idx variable.
-        func = partial(self._helper_func_with_idx if self.keep_order else self._helper_func,
-                       partial(self.func_pointer, *additional_args))
+        try:
+            # Store how long it took to start up
+            self.worker_insights.update_start_up_time(self.start_time)
 
-        n_chunks_executed = 0
-        while self.worker_lifespan is None or n_chunks_executed < self.worker_lifespan:
+            # Obtain additional args to pass to the function
+            additional_args = []
+            if self.params.pass_worker_id:
+                additional_args.append(self.worker_id)
+            if self.params.shared_objects is not None:
+                additional_args.append(self.params.shared_objects)
+            if self.params.use_worker_state:
+                additional_args.append(self.worker_state)
 
-            # Obtain new chunk of jobs
-            next_chunked_args = self._retrieve_task()
-
-            # If we obtained a poison pill, we stop. When we receive None this means we stop because of an exception
-            if next_chunked_args == '\0' or next_chunked_args is None:
-                if next_chunked_args == '\0':
-                    self.tasks_queue.task_done()
+            # Run initialization function. If it returns True it means an exception occurred and we should exit
+            if self.params.worker_init and self._run_init_func(additional_args):
                 return
 
-            # Execute jobs in this chunk
-            results = []
-            for args in next_chunked_args:
-                try:
+            # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
+            # with idx support which deals with the provided idx variable.
+            func = partial(self._helper_func_with_idx if self.worker_comms.keep_order() else self._helper_func,
+                           partial(self.params.func, *additional_args))
 
-                    try:
-                        # Try to run this function and save results
-                        with self.is_running_lock:
-                            self.is_running = True
-                        results.append(func(args))
-                        with self.is_running_lock:
-                            self.is_running = False
+            n_tasks_executed = 0
+            while self.params.worker_lifespan is None or n_tasks_executed < self.params.worker_lifespan:
 
-                    except StopWorker:
-                        raise
+                # Obtain new chunk of jobs
+                with TimeIt(self.worker_insights.worker_waiting_time, self.worker_id):
+                    next_chunked_args = self.worker_comms.get_task()
 
-                    except Exception as err:
-                        # Let the signal handler know it shouldn't raise any exception anymore, we got this.
-                        with self.is_running_lock:
-                            self.is_running = False
+                # If we obtained a poison pill, we stop. When the _retrieve_task function returns None this means we
+                # stop because of an exception in the main process
+                if next_chunked_args == POISON_PILL or next_chunked_args is None:
+                    self.worker_insights.update_task_insights()
+                    if next_chunked_args == POISON_PILL:
+                        self.worker_comms.task_done()
 
-                        # Pass exception to parent process and stop
-                        self._raise(args, err)
-                        raise StopWorker
-
-                except StopWorker:
-                    # The main process tells us to stop working, shutting down
-                    self.tasks_queue.task_done()
+                        # Run exit function when a poison pill was received
+                        if self.params.worker_exit:
+                            self._run_exit_func(additional_args)
                     return
 
-                # Notify that we've completed a task (only when using a progress bar)
-                if self.task_completed_queue is not None:
-                    self.task_completed_queue.put(1)
+                # Execute jobs in this chunk
+                try:
+                    results = []
+                    for args in next_chunked_args:
 
-            # Send results back to main process
-            self.results_queue.put(results)
-            self.tasks_queue.task_done()
-            n_chunks_executed += 1
+                        # Try to run this function and save results
+                        results_part, should_return = self._run_func(func, args)
+                        if should_return:
+                            return
+                        results.append(results_part)
 
-        # Notify WorkerPool to start a new worker if max lifespan is reached
-        if self.worker_lifespan is not None and n_chunks_executed == self.worker_lifespan:
-            self.worker_done_array[self.worker_id] = True
+                        # Notify that we've completed a task once in a while (only when using a progress bar)
+                        if self.worker_comms.has_progress_bar():
+                            self.worker_comms.task_completed_progress_bar()
 
-    def _retrieve_task(self) -> Any:
+                    # Send results back to main process
+                    self.worker_comms.add_results(results)
+                    n_tasks_executed += len(results)
+
+                # In case an exception occurred and we need to return, we want to call task_done no matter what
+                finally:
+                    self.worker_comms.task_done()
+
+                # Update task insights every once in a while (every 2 seconds)
+                self.worker_insights.update_task_insights_once_in_a_while()
+
+            # Run exit function and store results
+            if self.params.worker_exit and self._run_exit_func(additional_args):
+                return
+
+            # Notify WorkerPool to start a new worker if max lifespan is reached
+            self.worker_insights.update_task_insights()
+            if self.params.worker_lifespan is not None and n_tasks_executed == self.params.worker_lifespan:
+                self.worker_comms.signal_worker_restart()
+
+            # Force update the number of tasks completed for this worker (only when using a progress bar)
+            if self.worker_comms.has_progress_bar():
+                self.worker_comms.task_completed_progress_bar(force_update=True)
+
+        finally:
+            self.worker_comms.set_worker_dead()
+
+    def _run_init_func(self, additional_args: List) -> bool:
         """
-        Obtain new chunk of jobs and occasionally poll the stop event
+        Runs the init function when provided.
 
-        :return: Chunked args
+        :param additional_args: Additional args to pass to the function (worker ID, shared objects, worker state)
+        :return: True when the worker needs to shut down, False otherwise
         """
-        while not self.exception_thrown.is_set():
+        def _init_func():
+            with TimeIt(self.worker_insights.worker_init_time, self.worker_id):
+                self.params.worker_init(*additional_args)
+
+        return self._run_safely(_init_func, no_args=True)[1]
+
+    def _run_func(self, func: Callable, args: List) -> Tuple[Any, bool]:
+        """
+        Runs the main function when provided.
+
+        :param func: Function to call
+        :param args: Args to pass to the function
+        :return: Tuple containing results from the function and a boolean value indicating whether the worker needs to
+            shut down
+        """
+        def _func():
+            with TimeIt(self.worker_insights.worker_working_time, self.worker_id,
+                        self.worker_insights.max_task_duration_list, lambda: self._format_args(args, separator=' | ')):
+                results = func(args)
+            self.worker_insights.update_n_completed_tasks()
+            return results
+
+        return self._run_safely(_func, args)
+
+    def _run_exit_func(self, additional_args: List) -> bool:
+        """
+        Runs the exit function when provided and stores its results.
+
+        :param additional_args: Additional args to pass to the function (worker ID, shared objects, worker state)
+        :return: True when the worker needs to shut down, False otherwise
+        """
+        def _exit_func():
+            with TimeIt(self.worker_insights.worker_exit_time, self.worker_id):
+                return self.params.worker_exit(*additional_args)
+
+        results, should_return = self._run_safely(_exit_func, no_args=True)
+
+        if should_return:
+            return True
+        else:
+            self.worker_comms.add_exit_results(results)
+            return False
+
+    def _run_safely(self, func: Callable, exception_args: Optional[Any] = None,
+                    no_args: bool = False) -> Tuple[Any, bool]:
+        """
+        A rather complex locking and exception mechanism is used here so we can make sure we only raise an exception
+        when we should. See `_exit_gracefully` for more information.
+
+        :param func: Function to run
+        :param exception_args: Arguments to pass to `_format_args` when an exception occurred
+        :param no_args: Whether there were any args at all
+        :return: True when the worker needs to shut down, False otherwise
+        """
+        if self.worker_comms.exception_thrown():
+            return None, True
+
+        try:
+
             try:
-                return self.tasks_queue.get(block=True, timeout=0.1)
-            except queue.Empty:
-                pass
+                # Obtain lock and try to run the function. During this block a StopWorker exception from the parent
+                # process can come through to signal we should stop
+                with self.is_running_lock:
+                    self.is_running = True
+                results = func()
+                with self.is_running_lock:
+                    self.is_running = False
 
-        return None
+            except StopWorker:
+                # The main process tells us to stop working, shutting down
+                raise
 
-    def _raise(self, args: Any, err: Exception) -> None:
+            except Exception as err:
+                # An exception occurred inside the provided function. Let the signal handler know it shouldn't raise any
+                # StopWorker exceptions from the parent process anymore, we got this.
+                with self.is_running_lock:
+                    self.is_running = False
+
+                # Pass exception to parent process and stop
+                self._raise(exception_args, no_args, err)
+                raise StopWorker
+
+        except StopWorker:
+            # Stop working
+            return None, True
+
+        # Carry on
+        return results, False
+
+    def _raise(self, args: Any, no_args: bool, err: Exception) -> None:
         """
         Create exception and pass it to the parent process. Let other processes know an exception is set
 
         :param args: Funtion arguments where exception was raised
+        :param no_args: Whether there were any args at all
         :param err: Exception that should be passed on to parent process
         """
         # Only one process can throw at a time
-        with self.exception_lock:
+        with self.worker_comms.exception_lock:
 
             # Only raise an exception when this process is the first one to raise. We do this because when the first
             # exception is caught by the main process the workers are joined which can cause a deadlock on draining the
             # exception queue. By only allowing one process to throw we know for sure that the exception queue will be
             # empty when the first one arrives.
-            if not self.exception_thrown.is_set():
-
-                # Determine function arguments
-                func_args = args[1] if self.keep_order else args
-                if isinstance(func_args, dict):
-                    argument_str = "\n".join("Arg %s: %s" % (str(key), str(value)) for key, value in func_args.items())
-                elif isinstance(func_args, collections.abc.Iterable) and not isinstance(func_args, (str, bytes)):
-                    argument_str = "\n".join("Arg %d: %s" % (arg_nr, str(arg)) for arg_nr, arg in enumerate(func_args))
-                else:
-                    argument_str = "Arg 0: %s" % func_args
+            if not self.worker_comms.exception_thrown():
 
                 # Create traceback string
                 traceback_str = "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % (
-                    self.worker_id, argument_str, traceback.format_exc()
+                    self.worker_id, self._format_args(args, no_args), traceback.format_exc()
                 )
 
                 # Sometimes an exception cannot be pickled (i.e., we get the _pickle.PickleError: Can't pickle
@@ -224,19 +286,38 @@ class AbstractWorker:
                 # The call to `queue.put` creates a thread in which it pickles and when that raises an exception we
                 # cannot catch it.
                 try:
-                    pickle.dumps(type(err))
-                except pickle.PicklingError:
+                    dill.dumps(type(err))
+                except dill.PicklingError:
                     err = CannotPickleExceptionError()
 
-                # Add exception to queue
-                self.exception_queue.put((type(err), traceback_str))
-                self.exception_thrown.set()
+                # Add exception
+                self.worker_comms.add_exception(type(err), traceback_str)
+
+    def _format_args(self, args: Any, no_args: bool = False, separator: str = '\n') -> str:
+        """
+        Format the function arguments to a string form.
+
+        :param args: Funtion arguments
+        :param no_args: Whether there were any args at all. If not, then return special string
+        :param separator: String to use as separator between arguments
+        :return: String containing the task arguments
+        """
+        # Determine function arguments
+        func_args = args[1] if args and self.worker_comms.keep_order() else args
+        if no_args:
+            return "N/A"
+        elif isinstance(func_args, dict):
+            return separator.join("Arg %s: %s" % (str(key), repr(value)) for key, value in func_args.items())
+        elif isinstance(func_args, collections.abc.Iterable) and not isinstance(func_args, (str, bytes)):
+            return separator.join("Arg %d: %s" % (arg_nr, repr(arg)) for arg_nr, arg in enumerate(func_args))
+        else:
+            return "Arg 0: %s" % func_args
 
     def _helper_func_with_idx(self, func: Callable, args: Tuple[int, Any]) -> Tuple[int, Any]:
         """
-        Helper function which calls the function pointer but preserves the order index
+        Helper function which calls the function `func` but preserves the order index
 
-        :param func: Function pointer to call each time new task arguments become available
+        :param func: Function to call each time new task arguments become available
         :param args: Tuple of ``(idx, _args)`` where ``_args`` correspond to the arguments to pass on to the function.
             ``idx`` is used to preserve order
         :return: (idx, result of calling the function with the given arguments) tuple
@@ -245,9 +326,9 @@ class AbstractWorker:
 
     def _helper_func(self, func: Callable, args: Any) -> Any:
         """
-        Helper function which calls the function pointer
+        Helper function which calls the function `func`
 
-        :param func: Function pointer to call each time new task arguments become available
+        :param func: Function to call each time new task arguments become available
         :param args: Arguments to pass on to the function
         :return: Result of calling the function with the given arguments) tuple
         """
@@ -256,9 +337,9 @@ class AbstractWorker:
     @staticmethod
     def _call_func(func: Callable, args: Any) -> Any:
         """
-        Helper function which calls the function pointer and passes the arguments in the correct way
+        Helper function which calls the function `func` and passes the arguments in the correct way
 
-        :param func: Function pointer to call each time new task arguments become available
+        :param func: Function to call each time new task arguments become available
         :param args: Arguments to pass on to the function
         :return: Result of calling the function with the given arguments) tuple
         """
@@ -291,15 +372,15 @@ def worker_factory(start_method):
     Returns the appropriate worker class given the start method
 
     :param start_method: What Process/Threading start method to use, see the WorkerPool constructor
-    :return: Worker class where the start_method is already filled in
+    :return: Worker class
     """
     if start_method == 'fork':
-        return partial(ForkWorker, start_method)
+        return ForkWorker
     elif start_method == 'forkserver':
-        return partial(ForkServerWorker, start_method)
+        return ForkServerWorker
     elif start_method == 'spawn':
-        return partial(SpawnWorker, start_method)
+        return SpawnWorker
     elif start_method == 'threading':
-        return partial(ThreadingWorker, start_method)
+        return ThreadingWorker
     else:
         raise ValueError("Unknown start method: '{}'".format(start_method))

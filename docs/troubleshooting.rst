@@ -1,7 +1,7 @@
-Known issues
-============
+Troubleshooting
+===============
 
-This section describes the known issues in MPIRE.
+This section describes some known problems that can arise when using MPIRE.
 
 .. contents:: Contents
     :depth: 2
@@ -58,12 +58,28 @@ This will work just fine. See the unittest_ documentation for more information.
 .. _unittest: https://docs.python.org/3.4/library/unittest.html#command-line-interface
 
 
+Shutting down takes a long time on error
+----------------------------------------
+
+When you issue a ``KeyboardInterrupt`` or when an error occured in the function that's run in parallel, there are
+situations where MPIRE needs a few seconds to gracefully shutdown. This has to do with the fact that in these situations
+the task or results queue can be quite full, still. MPIRE drains these queues until they're completely empty, as to
+properly shutdown and clean up every communication channel.
+
+To remedy this issue you can use the ``max_tasks_active`` parameter and set it to ``n_jobs * 2``, or similar. Aside
+from the added benefit that the workers can start more quickly, the queues won't get that full anymore and shutting down
+will be much quicker. See :ref:`max_active_tasks` for more information.
+
+When you're using a lazy map function also be sure to iterate through the results, otherwise that queue will be full and
+draining it will take a longer time.
+
+
 Unpicklable tasks/results
 -------------------------
 
-Sometimes you can encounter deadlocks in your code when using MPIRE. When you encounter this, it could well be that some
-tasks or results from your script can't be pickled. MPIRE makes use of multiprocessing queues for inter-process
-communication and if your function returns unpicklable results the queue will unfortunately deadlock.
+Sometimes you can encounter deadlocks in your code when using MPIRE. When you encounter this, chances are some tasks or
+results from your script can't be pickled. MPIRE makes use of multiprocessing queues for inter-process communication and
+if your function returns unpicklable results the queue will unfortunately deadlock.
 
 The only way I could remedy this problem in MPIRE would be to manually pickle objects before sending it to a queue and
 quit gracefully when encountering a pickle error. However, this would mean objects would always be pickled twice. This

@@ -1,11 +1,14 @@
 import types
 import unittest
+from datetime import datetime
 from itertools import chain, product
 from multiprocessing import cpu_count
+from unittest.mock import patch
 
 import numpy as np
 
-from mpire.utils import apply_numpy_chunking, chunk_tasks, get_n_chunks, make_single_arguments
+from mpire.utils import apply_numpy_chunking, chunk_tasks, format_seconds, get_n_chunks, make_single_arguments, TimeIt
+from tests.utils import MockDatetimeNow
 
 
 class ChunkTasksTest(unittest.TestCase):
@@ -364,3 +367,134 @@ class MakeSingleArgumentsTest(unittest.TestCase):
 
             # Check contents
             self.assertEqual(list(args_transformed), args_out)
+
+
+class FormatSecondsTest(unittest.TestCase):
+
+    def test_none_input(self):
+        """
+        When the input is None it should return an empty string
+        """
+        for with_milliseconds in [False, True]:
+            with self.subTest(with_milliseconds=with_milliseconds):
+                self.assertEqual(format_seconds(None, with_milliseconds=with_milliseconds), '')
+
+    def test_without_milliseconds(self):
+        """
+        Test output without milliseconds
+        """
+        for seconds, expected_output in [(0, '0:00:00'), (1, '0:00:01'), (1.337, '0:00:01'), (2.9, '0:00:02'),
+                                         (123456.78901234, '1 day, 10:17:36')]:
+            with self.subTest(seconds=seconds):
+                self.assertEqual(format_seconds(seconds, with_milliseconds=False), expected_output)
+
+    def test_with_milliseconds(self):
+        """
+        Test output with milliseconds. Only shows them when they're actually needed.
+        """
+        for seconds, expected_output in [(0, '0:00:00'), (1, '0:00:01'), (1.337, '0:00:01.337'), (2.9, '0:00:02.900'),
+                                         (123456.78901234, '1 day, 10:17:36.789')]:
+            with self.subTest(seconds=seconds):
+                self.assertEqual(format_seconds(seconds, with_milliseconds=True), expected_output)
+
+
+class TimeItTest(unittest.TestCase):
+
+    def test_array_storage(self):
+        """
+        TimeIt should write to the correct idx in the cum_time_array container. The max_time_array is a min-heap
+        container, so the lowest value is stored at index 0. The single highest value in this case is stored at index 2
+        """
+        for array_idx in range(5):
+            cum_time_array = [0, 0, 0, 0, 0]
+            max_time_array = [(0, ''), (0, ''), (0, ''), (0, ''), (0, '')]
+            MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0),
+                                             datetime(1970, 1, 1, 0, 0, 4, 200000)]
+            MockDatetimeNow.CURRENT_IDX = 0
+            with self.subTest(array_idx=array_idx), patch('mpire.utils.datetime', new=MockDatetimeNow), \
+                    TimeIt(cum_time_array, array_idx, max_time_array):
+                pass
+            self.assertListEqual([t for idx, t in enumerate(cum_time_array) if idx != array_idx], [0, 0, 0, 0])
+            self.assertListEqual([t for idx, t in enumerate(max_time_array) if idx != 2],
+                                 [(0, ''), (0, ''), (0, ''), (0, '')])
+            self.assertEqual(cum_time_array[array_idx], 4.2)
+            self.assertGreaterEqual(max_time_array[2], (4.2, None))
+
+    def test_cum_time(self):
+        """
+        Using TimeIt multiple times should increase the cum_time_array
+        """
+        # These return values are used by TimeIt in order: start, end, start, end, ... So the first time the duration
+        # will be 1 second, then 2 seconds, and 3 seconds.
+        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0),
+                                         datetime(1970, 1, 1, 0, 0, 1, 0),
+                                         datetime(1970, 1, 1, 0, 0, 0, 0),
+                                         datetime(1970, 1, 1, 0, 0, 2, 0),
+                                         datetime(1970, 1, 1, 0, 0, 0, 0),
+                                         datetime(1970, 1, 1, 0, 0, 3, 0)]
+        MockDatetimeNow.CURRENT_IDX = 0
+        cum_time_array = [0]
+        with patch('mpire.utils.datetime', new=MockDatetimeNow):
+            with TimeIt(cum_time_array, 0):
+                pass
+            self.assertEqual(cum_time_array[0], 1.0)
+
+            with TimeIt(cum_time_array, 0):
+                pass
+            self.assertEqual(cum_time_array[0], 3.0)
+
+            with TimeIt(cum_time_array, 0):
+                pass
+            self.assertEqual(cum_time_array[0], 6.0)
+
+    def test_max_time(self):
+        """
+        Using TimeIt multiple times should store the max duration value in the max_time_array using heapq. There's only
+        room for the highest 5 values, while it is called 6 times. The smallest duration shouldn't be present.
+        """
+        # These return values are used by TimeIt in order: start, end, start, end, ... So the first time the duration
+        # will be 1 second, then 2 seconds, 3 seconds, 3 seconds again, 0.5 seconds, and 10 seconds.
+        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0),
+                                         datetime(1970, 1, 1, 0, 0, 1, 0),
+                                         datetime(1970, 1, 1, 0, 0, 0, 0),
+                                         datetime(1970, 1, 1, 0, 0, 2, 0),
+                                         datetime(1970, 1, 1, 0, 0, 0, 0),
+                                         datetime(1970, 1, 1, 0, 0, 3, 0),
+                                         datetime(1970, 1, 1, 0, 0, 0, 0),
+                                         datetime(1970, 1, 1, 0, 0, 3, 0),
+                                         datetime(1970, 1, 1, 0, 0, 0, 0),
+                                         datetime(1970, 1, 1, 0, 0, 0, 500000),
+                                         datetime(1970, 1, 1, 0, 0, 0, 0),
+                                         datetime(1970, 1, 1, 0, 0, 10, 0)]
+        MockDatetimeNow.CURRENT_IDX = 0
+        cum_time_array = [0]
+        max_time_array = [(0, ''), (0, ''), (0, ''), (0, ''), (0, '')]
+        with patch('mpire.utils.datetime', new=MockDatetimeNow):
+            for _ in range(6):
+                with TimeIt(cum_time_array, 0, max_time_array):
+                    pass
+            self.assertListEqual(max_time_array, [(1.0, None), (2.0, None), (10.0, None), (3.0, None), (3.0, None)])
+
+    def test_format_args(self):
+        """
+        The format args func should be called when provided
+        """
+        for format_func, formatted in [(lambda: "1", "1"), (lambda: 2, 2), (lambda: "foo", "foo")]:
+            # These return values are used by TimeIt in order: start, end, start, end, ... So the first time the
+            # duration will be 1 second, then 2 seconds, and 3 seconds.
+            MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0),
+                                             datetime(1970, 1, 1, 0, 0, 1, 0),
+                                             datetime(1970, 1, 1, 0, 0, 0, 0),
+                                             datetime(1970, 1, 1, 0, 0, 2, 0),
+                                             datetime(1970, 1, 1, 0, 0, 0, 0),
+                                             datetime(1970, 1, 1, 0, 0, 3, 0)]
+            MockDatetimeNow.CURRENT_IDX = 0
+            with self.subTest(format_func=format_func), patch('mpire.utils.datetime', new=MockDatetimeNow):
+                cum_time_array = [0]
+                max_time_array = [(0, ''), (0, '')]
+                for _ in range(3):
+                    with TimeIt(cum_time_array, 0, max_time_array, format_func):
+                        pass
+
+                # The heapq only had room for two entries. The highest durations should be kept
+                self.assertListEqual(max_time_array, [(2.0, formatted), (3.0, formatted)])

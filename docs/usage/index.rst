@@ -4,7 +4,6 @@ Usage
 .. toctree::
     :maxdepth: 1
 
-    setup
+    worker_pool
     map
     dashboard
-    known_issues
