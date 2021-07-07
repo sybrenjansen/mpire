@@ -4,7 +4,7 @@ Changelog
 2.0.0
 -----
 
-*[TODO: insert date]*
+*(2021-07-07)*
 
 * Worker insights added, providing users insight in multiprocessing efficiency
 * ``worker_init`` and ``worker_exit`` parameters added to each ``map`` function
