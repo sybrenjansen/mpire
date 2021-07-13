@@ -14,6 +14,7 @@ class ThreadingContext:
     Array = mp.Array
     JoinableQueue = mp.JoinableQueue
     Process = mp.Process
+    Value = mp.Value
 
 
 MP_CONTEXTS = {'fork': mp.get_context('fork'),

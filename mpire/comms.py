@@ -3,6 +3,8 @@ import multiprocessing as mp
 import queue
 import threading
 from datetime import datetime
+
+import numpy as np
 from typing import Any, Generator, List, Optional, Tuple, Union
 
 from mpire.signal import DelayedKeyboardInterrupt
@@ -38,6 +40,7 @@ class WorkerComms:
 
         # Queue to pass on tasks to child processes
         self._tasks_queue = None
+        self._n_tasks_active = None
 
         # Queue where the child processes can pass on results
         self._results_queue = None
@@ -81,7 +84,9 @@ class WorkerComms:
         :param has_worker_exit: Whether there's a worker_exit function provided
         :param has_progress_bar: Whether there's a progress bar
         """
-        self._tasks_queue = self.ctx.JoinableQueue()
+        # self._tasks_queue = self.ctx.JoinableQueue()
+        self._tasks_queue = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
+        self._n_tasks_active = [self.ctx.Value('i') for _ in range(self.n_jobs)]
         self._results_queue = self.ctx.JoinableQueue()
         self._exit_results_queues = [self.ctx.JoinableQueue()
                                      for _ in range(self.n_jobs)] if has_worker_exit else []
@@ -183,14 +188,32 @@ class WorkerComms:
     # Tasks & results
     ################
 
-    def add_task(self, task: Any) -> None:
+    def add_task(self, task: Any, worker_id: Optional[int] = None) -> None:
         """
         Add a task to the queue so a worker can process it.
 
         :param task: A tuple of arguments to pass to a worker, which acts upon it
+        :param worker_id: If provided, give the task to the worker ID. Otherwise, decide based on tasks left
         """
+        if worker_id is None:
+            min_idx = None
+            min_value = None
+            for idx, v in enumerate(self._n_tasks_active):
+                with v.get_lock():
+                    value = v.value
+                if min_value is None or value < min_value:
+                    min_idx = idx
+                    min_value = value
+        else:
+            min_idx = worker_id
+
         with DelayedKeyboardInterrupt():
-            self._tasks_queue.put(task, block=True)
+            self._tasks_queue[min_idx].put(task, block=True)
+            with self._n_tasks_active[min_idx].get_lock():
+                self._n_tasks_active[min_idx].value += 1
+
+        # with DelayedKeyboardInterrupt():
+        #     self._tasks_queue.put(task, block=True)
 
     def get_task(self) -> Any:
         """
@@ -200,7 +223,11 @@ class WorkerComms:
         """
         while not self.exception_thrown():
             try:
-                return self._tasks_queue.get(block=True, timeout=0.1)
+                task = self._tasks_queue[self.worker_id].get(block=True, timeout=0.1)
+                with self._n_tasks_active[self.worker_id].get_lock():
+                    self._n_tasks_active[self.worker_id].value -= 1
+                return task
+                # return self._tasks_queue.get(block=True, timeout=0.1)
             except queue.Empty:
                 pass
         return None
@@ -209,7 +236,7 @@ class WorkerComms:
         """
         Signal that we've completed a task
         """
-        self._tasks_queue.task_done()
+        self._tasks_queue[self.worker_id].task_done()
 
     def add_results(self, results: Any) -> None:
         """
@@ -347,8 +374,8 @@ class WorkerComms:
         """
         'Tell' the workers their job is done.
         """
-        for _ in range(self.n_jobs):
-            self.add_task(POISON_PILL)
+        for worker_id in range(self.n_jobs):
+            self.add_task(POISON_PILL, worker_id)
 
     def signal_worker_restart(self) -> None:
         """
@@ -412,7 +439,8 @@ class WorkerComms:
         """
         Join tasks queue
         """
-        self._tasks_queue.join()
+        [q.join() for q in self._tasks_queue]
+        # self._tasks_queue.join()
 
     def join_progress_bar_task_completed_queue(self) -> None:
         """
@@ -478,7 +506,8 @@ class WorkerComms:
         Drain tasks, results, progress bar, and exit results queues. Note that the exception queue doesn't need to be
         drained. This one is properly cleaned up in the exception handling class.
         """
-        self._drain_and_join_queue(self._tasks_queue)
+        [self._drain_and_join_queue(q) for q in self._tasks_queue]
+        # self._drain_and_join_queue(self._tasks_queue)
         self._drain_and_join_queue(self._results_queue)
         if self.has_progress_bar():
             self._drain_and_join_queue(self._task_completed_queue)
