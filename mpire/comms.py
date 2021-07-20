@@ -449,30 +449,47 @@ class WorkerComms:
         """
         self._terminate_done.set()
 
-    def join_results_queues(self) -> None:
+    def join_results_queues(self, keep_alive: bool = False) -> None:
         """
         Join results and exit results queues
+
+        :param keep_alive: Whether to keep the queues alive
         """
         self._results_queue.join()
         [q.join() for q in self._exit_results_queues]
+        if not keep_alive:
+            self._results_queue.close()
+            [q.close() for q in self._exit_results_queues]
 
-    def join_tasks_queue(self) -> None:
+    def join_tasks_queues(self, keep_alive: bool = False) -> None:
         """
         Join tasks queue
+
+        :param keep_alive: Whether to keep the queues alive
         """
         [q.join() for q in self._task_queues]
+        if not keep_alive:
+            [q.close() for q in self._task_queues]
 
-    def join_progress_bar_task_completed_queue(self) -> None:
+    def join_progress_bar_task_completed_queue(self, keep_alive: bool = False) -> None:
         """
         Join progress bar tasks completed queue
+
+        :param keep_alive: Whether to keep the queues alive
         """
         self._task_completed_queue.join()
+        if not keep_alive:
+            self._task_completed_queue.close()
 
-    def join_exception_queue(self) -> None:
+    def join_exception_queue(self, keep_alive: bool = False) -> None:
         """
         Join exception queue
+
+        :param keep_alive: Whether to keep the queues alive
         """
         self._exception_queue.join()
+        if not keep_alive:
+            self._exception_queue.close()
 
     def drain_queues_terminate_worker(self, worker_id: int, dont_wait_event: threading.Event) -> None:
         """
@@ -568,16 +585,20 @@ class WorkerComms:
             while True:
                 q.task_done()
                 n += 1
-        except ValueError:
+        except (OSError, ValueError):
             pass
 
         try:
             while not q.empty() or n != 0:
                 q.get(block=True, timeout=1.0)
                 n -= 1
-        except (queue.Empty, EOFError):
+        except (OSError, EOFError, queue.Empty):
             pass
 
         # Join
         if join:
-            q.join()
+            try:
+                q.join()
+                q.close()
+            except OSError:
+                pass

@@ -37,7 +37,8 @@ tqdm.set_lock(TQDM_LOCK)
 class ProgressBarHandler:
 
     def __init__(self, func: Callable, n_jobs: int, show_progress_bar: bool, progress_bar_total: int,
-                 progress_bar_position: int, worker_comms: WorkerComms, worker_insights: WorkerInsights) -> None:
+                 progress_bar_position: int, worker_comms: WorkerComms, worker_insights: WorkerInsights,
+                 keep_alive: bool) -> None:
         """
         :param func: Function passed on to a WorkerPool map function
         :param n_jobs: Number of workers that are used
@@ -47,12 +48,14 @@ class ProgressBarHandler:
             multiple progress bars at the same time
         :param worker_comms: Worker communication objects (queues, locks, events, ...)
         :param worker_insights: WorkerInsights object which stores the worker insights
+        :param keep_alive: Whether to keep the progress bar queue alive after we're done here
         """
         self.show_progress_bar = show_progress_bar
         self.progress_bar_total = progress_bar_total
         self.progress_bar_position = progress_bar_position
         self.worker_comms = worker_comms
         self.worker_insights = worker_insights
+        self.keep_alive = keep_alive
         if show_progress_bar and DASHBOARD_STARTED_EVENT is not None:
             self.function_details = get_function_details(func)
             self.function_details['n_jobs'] = n_jobs
@@ -105,6 +108,7 @@ class ProgressBarHandler:
             if not self.worker_comms.exception_caught():
                 self.worker_comms.add_progress_bar_poison_pill()
             self.process.join()
+            self.worker_comms.join_progress_bar_task_completed_queue(self.keep_alive)
             logger.debug("Progress bar handler joined")
 
     def _progress_bar_handler(self, progress_bar_total: int, progress_bar_position: int) -> None:

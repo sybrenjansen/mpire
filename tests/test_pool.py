@@ -5,6 +5,7 @@ from multiprocessing import Barrier, Value
 from unittest.mock import patch
 
 import numpy as np
+from tqdm import tqdm
 
 from mpire import cpu_count, WorkerPool
 
@@ -41,8 +42,12 @@ class MapTest(unittest.TestCase):
 
         # Test results for different number of jobs to run in parallel and the maximum number of active tasks in the
         # queue
+        print()
         for n_jobs, n_tasks_max_active, worker_lifespan, chunk_size, n_splits in \
-                product([1, 2, None], [None, 2], [None, 2], [None, 3], [None, 3]):
+                tqdm(product([1, 2, None], [None, 2], [None, 2], [None, 3], [None, 3]), total=3*2*2*2*2):
+
+            if n_jobs is not None:
+                continue
 
             with WorkerPool(n_jobs=n_jobs) as pool:
 
@@ -85,8 +90,9 @@ class MapTest(unittest.TestCase):
         """
         Test map with numpy input
         """
+        print()
         for n_jobs, n_tasks_max_active, worker_lifespan, chunk_size, n_splits in \
-                product([1, 2, None], [None, 2], [None, 2], [None, 3], [None, 3]):
+                tqdm(product([1, 2, None], [None, 2], [None, 2], [None, 3], [None, 3]), total=3*2*2*2*2):
 
             with WorkerPool(n_jobs=n_jobs) as pool:
 
@@ -165,7 +171,8 @@ class MapTest(unittest.TestCase):
         """
         Test different start methods. All should work just fine
         """
-        for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
+        print()
+        for start_method in tqdm(['fork', 'forkserver', 'spawn', 'threading']):
             with self.subTest(start_method=start_method, map='map'), WorkerPool(3, start_method=start_method) as pool:
                 results_list = pool.map(square, self.test_data)
                 self.assertIsInstance(results_list, list)

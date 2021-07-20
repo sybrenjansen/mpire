@@ -216,7 +216,7 @@ class WorkerPool:
             # this problem we start a thread which waits for the tasks queue (including poison pills) to be empty. If
             # this thread isn't done that means that some tasks/poison pills are still there, meaning that there are
             # child processes which could/should be restarted, but aren't.
-            t = threading.Thread(target=self._worker_comms.join_tasks_queue)
+            t = threading.Thread(target=self._worker_comms.join_tasks_queues, args=(keep_alive,))
             t.start()
             while True:
                 t.join(timeout=0.1)
@@ -236,7 +236,7 @@ class WorkerPool:
                 return
 
             # Join queues and workers
-            self._worker_comms.join_results_queues()
+            self._worker_comms.join_results_queues(keep_alive)
             if not keep_alive:
                 for w in self._workers:
                     w.join()
@@ -619,7 +619,7 @@ class WorkerPool:
         # updates from the workers and updates the progress bar accordingly
         with ExceptionHandler(self.terminate, self._worker_comms, bool(progress_bar)) as exception_handler, \
              ProgressBarHandler(func, self.params.n_jobs, progress_bar, n_tasks, progress_bar_position,
-                                self._worker_comms, self._worker_insights):
+                                self._worker_comms, self._worker_insights, self.params.keep_alive):
 
             # Process all args in the iterable
             n_active = 0
@@ -662,6 +662,9 @@ class WorkerPool:
             exception_handler.raise_on_exception()
             self.stop_and_join(keep_alive=self.params.keep_alive)
             exception_handler.raise_on_exception()
+
+        # Join exception queue, if it hasn't already
+        self._worker_comms.join_exception_queue(self.params.keep_alive)
 
         # Log insights
         if enable_insights:

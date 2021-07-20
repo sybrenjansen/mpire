@@ -189,9 +189,16 @@ class WorkerCommsTest(unittest.TestCase):
         # Set exception
         comms.set_exception_caught()
         self.assertEqual(comms.get_tasks_completed_progress_bar(), (POISON_PILL, False))
+        comms._exception_caught.clear()
 
-        # Should be joinable now
-        comms.join_progress_bar_task_completed_queue()
+        # Should be joinable. When using keep_alive, it should still be open
+        comms.join_progress_bar_task_completed_queue(keep_alive=True)
+        comms.task_completed_progress_bar(force_update=True)
+        comms.get_tasks_completed_progress_bar()
+        comms.task_done_progress_bar()
+        comms.join_progress_bar_task_completed_queue(keep_alive=False)
+        with self.assertRaises(AssertionError):
+            comms.task_completed_progress_bar(force_update=True)
 
     def test_keep_order(self):
         """
@@ -261,7 +268,7 @@ class WorkerCommsTest(unittest.TestCase):
             self.assertIsNone(comms.get_task(worker_id))
 
         # Should be joinable
-        comms.join_tasks_queue()
+        comms.join_tasks_queues()
 
     def test_results(self):
         """
@@ -288,8 +295,13 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertEqual(comms.get_results(), '123')
         self.assertEqual(comms._last_completed_task_worker_id, 0)
 
-        # Should be joinable
-        comms.join_results_queues()
+        # Should be joinable. When using keep_alive, it should still be open
+        comms.join_results_queues(keep_alive=True)
+        comms.add_results(0, 12)
+        comms.get_results()
+        comms.join_results_queues(keep_alive=False)
+        with self.assertRaises(AssertionError):
+            comms.add_results(0, 12)
 
     def test_exit_results(self):
         """
@@ -315,8 +327,15 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertListEqual([comms.get_exit_results(worker_id=2) for _ in range(3)],
                              [2, 'hello world', {'foo': 'bar'}])
 
-        # Should be joinable
-        comms.join_results_queues()
+        # Should be joinable. When using keep_alive, it should still be open
+        comms.join_results_queues(keep_alive=True)
+        for worker_id in range(3):
+            comms.add_exit_results(worker_id, 'hello world')
+            comms.get_exit_results(worker_id)
+        comms.join_results_queues(keep_alive=False)
+        for worker_id in range(3):
+            with self.assertRaises(AssertionError):
+                comms.add_exit_results(worker_id, 'hello world')
 
     def test_exit_results_all_workers(self):
         """
@@ -381,8 +400,14 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertEqual(comms.get_exception(), (POISON_PILL, POISON_PILL))
         comms.task_done_exception()
 
-        # Should be joinable now
-        comms.join_exception_queue()
+        # Should be joinable. When using keep_alive, it should still be open
+        comms.join_exception_queue(keep_alive=True)
+        comms.add_exception(TypeError, 'TypeError')
+        comms.get_exception()
+        comms.task_done_exception()
+        comms.join_exception_queue(keep_alive=False)
+        with self.assertRaises(AssertionError):
+            comms.add_exception(TypeError, 'TypeError')
 
     def test_exception_thrown(self):
         """
@@ -427,7 +452,7 @@ class WorkerCommsTest(unittest.TestCase):
                 for worker_id in range(n_jobs):
                     self.assertEqual(comms.get_task(worker_id), POISON_PILL)
                     comms.task_done(worker_id)
-                comms.join_tasks_queue()
+                comms.join_tasks_queues()
 
     def test_worker_non_lethal_poison_pill(self):
         """
@@ -444,7 +469,7 @@ class WorkerCommsTest(unittest.TestCase):
                 for worker_id in range(n_jobs):
                     self.assertEqual(comms.get_task(worker_id), NON_LETHAL_POISON_PILL)
                     comms.task_done(worker_id)
-                comms.join_tasks_queue()
+                comms.join_tasks_queues()
 
     def test_worker_restart(self):
         """
@@ -604,11 +629,7 @@ class WorkerCommsTest(unittest.TestCase):
         q.put('hello')
         q.put('world')
 
-        # Drain queue. It should now be empty
+        # Drain queue. It should now be closed
         comms._drain_and_join_queue(q)
-        with self.assertRaises(queue.Empty):
+        with self.assertRaises(OSError):
             q.get(block=False)
-
-        # Even though it's joined we test it here again, to be sure it's actually joinable. It isn't joinable when
-        # task_done isn't called as many times as there are items in the queue.
-        q.join()

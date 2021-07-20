@@ -101,5 +101,6 @@ class ExceptionHandler:
             logger.debug("Obtaining caught exception")
             err, traceback_str = self.worker_comms.get_exception()
             self.worker_comms.task_done_exception()
+            self.worker_comms.join_exception_queue()
             logger.debug("Raising caught exception")
             raise err(traceback_str)

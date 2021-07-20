@@ -11,6 +11,7 @@ Changelog
 * Fixed progress bar and worker insights not displaying properly when using threading
 * Progress bar handling improved when using threading and an exception occurred
 * Progress bar handling improved when keep alive is enabled
+* Added closing of ``multiprocessing.JoinableQueue`` objects, to clean up intermediate junk
 * Removed ``numpy`` dependency
 * Made ``dill`` optional again. In many cases it slows processing down
 
