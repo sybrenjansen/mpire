@@ -1,5 +1,5 @@
 import logging
-import multiprocess as mp
+import multiprocessing as mp
 import os
 import queue
 import signal
@@ -7,7 +7,12 @@ import threading
 from datetime import datetime
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Sized, Union
 
-import numpy as np
+try:
+    import numpy as np
+    NUMPY_INSTALLED = True
+except ImportError:
+    np = None
+    NUMPY_INSTALLED = False
 
 from mpire.comms import WorkerComms
 from mpire.exception import ExceptionHandler
@@ -28,7 +33,7 @@ class WorkerPool:
 
     def __init__(self, n_jobs: Optional[int] = None, daemon: bool = True, cpu_ids: CPUList = None,
                  shared_objects: Any = None, pass_worker_id: bool = False, use_worker_state: bool = False,
-                 start_method: str = 'fork', keep_alive: bool = False) -> None:
+                 start_method: str = 'fork', keep_alive: bool = False, use_dill: bool = False) -> None:
         """
         :param n_jobs: Number of workers to spawn. If ``None``, will use ``cpu_count()``
         :param daemon: Whether to start the child processes as daemon
@@ -50,20 +55,26 @@ class WorkerPool:
             caveats when using the ``'spawn'`` or ``'forkserver'`` methods
         :param keep_alive: When True it will keep workers alive after completing a map call, allowing to reuse workers
             when map is called with the same function and worker lifespan multiple times in a row
+        :param use_dill: Whether to use dill as serialization backend. Some exotic types (e.g., lambdas, nested
+            functions) don't work well when using ``spawn`` as start method. In such cased, use ``dill`` (can be a bit
+            slower sometimes)
         """
         # Set parameters
         self.params = WorkerPoolParams(n_jobs, daemon, cpu_ids, shared_objects, pass_worker_id, use_worker_state,
-                                       start_method, keep_alive)
-
-        # Multiprocessing context
-        self.ctx = MP_CONTEXTS[start_method]
+                                       start_method, keep_alive, use_dill)
 
         # Worker factory
-        self.Worker = worker_factory(start_method)
+        self.Worker = worker_factory(start_method, use_dill)
+
+        # Multiprocessing context
+        if start_method == 'threading':
+            self.ctx = MP_CONTEXTS['threading']
+        else:
+            self.ctx = MP_CONTEXTS['mp_dill' if use_dill else 'mp'][start_method]
 
         # Container of the child processes and corresponding communication objects
         self._workers = []
-        self._worker_comms = WorkerComms(self.ctx, self.params.n_jobs)
+        self._worker_comms = WorkerComms(self.ctx, self.params.n_jobs, start_method == 'threading')
         self._exit_results = None
 
         # Worker insights, used for profiling
@@ -124,6 +135,8 @@ class WorkerPool:
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: Whether there's a progress bar
         """
+        logger.debug("Spinning up workers")
+
         # Save params for later reference (for example, when restarting workers)
         self.params.set_map_params(func, worker_init, worker_exit, worker_lifespan)
 
@@ -178,9 +191,11 @@ class WorkerPool:
         """
         return self._exit_results
 
-    def stop_and_join(self) -> None:
+    def stop_and_join(self, keep_alive: bool = False) -> None:
         """
-        Inserts a poison pill, grabs the exit results, and waits until all workers are finished.
+        When ``keep_alive=False``: inserts a poison pill, grabs the exit results, waits until the tasks/results queues
+        are done, and wait until all workers are finished.
+        When ``keep_alive=True``: inserts a non-lethal poison pill, and waits until the tasks/results queues are done.
 
         Note that the results queue should be drained first before joining the workers, otherwise we can get a deadlock.
         For more information, see the warnings at:
@@ -188,8 +203,11 @@ class WorkerPool:
         """
         if self._workers:
             # Insert poison pill
-            logger.debug("Cleaning up workers")
-            self._worker_comms.insert_poison_pill()
+            if keep_alive:
+                self._worker_comms.insert_non_lethal_poison_pill()
+            else:
+                logger.debug("Cleaning up workers")
+                self._worker_comms.insert_poison_pill()
 
             # It can occur that some processes requested a restart while all tasks are already complete. This means that
             # processes won't get restarted anymore, although a poison pill is just added (at the time they we're still
@@ -207,15 +225,23 @@ class WorkerPool:
                 self._restart_workers()
 
             # Obtain results from the exit results queues (should be done before joining the workers)
-            if self.params.worker_exit:
+            if not keep_alive and self.params.worker_exit:
                 self._exit_results.extend(self._worker_comms.get_exit_results_all_workers())
+
+            # If an exception occurred in the exit function, we should know about it here. We wait until the exception
+            # is caught by the exception handler, and terminate after that.
+            if self._worker_comms.exception_thrown():
+                self._worker_comms.wait_until_exception_is_caught()
+                self.terminate()
+                return
 
             # Join queues and workers
             self._worker_comms.join_results_queues()
-            for w in self._workers:
-                w.join()
-            self._workers = []
-            logger.debug("Cleaning up workers done")
+            if not keep_alive:
+                for w in self._workers:
+                    w.join()
+                self._workers = []
+                logger.debug("Cleaning up workers done")
 
     def terminate(self) -> None:
         """
@@ -250,8 +276,9 @@ class WorkerPool:
         self._worker_comms.drain_queues()
         logger.debug("Draining queues done")
 
-        # Reset variables
+        # Reset workers and signal we're done with this function
         self._workers = []
+        self._worker_comms.terminate_done()
 
     def _terminate_worker(self, worker_id: int, worker_process: mp.context.Process,
                           dont_wait_event: threading.Event) -> None:
@@ -316,13 +343,11 @@ class WorkerPool:
         if self._workers:
             self.terminate()
 
-    def map(self, func: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
-            iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
-            chunk_size: Optional[int] = None, n_splits: Optional[int] = None, worker_lifespan: Optional[int] = None,
-            progress_bar: bool = False, progress_bar_position: int = 0,
+    def map(self, func: Callable, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int] = None,
+            max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
+            worker_lifespan: Optional[int] = None, progress_bar: bool = False, progress_bar_position: int = 0,
             concatenate_numpy_output: bool = True, enable_insights: bool = False,
-            worker_init: Optional[Callable] = None,
-            worker_exit: Optional[Callable] = None) -> Union[List[Any], np.ndarray]:
+            worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None) -> Any:
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
@@ -363,7 +388,7 @@ class WorkerPool:
         self._worker_comms.set_keep_order()
 
         # If we're dealing with numpy arrays, we have to chunk them here already
-        if isinstance(iterable_of_args, np.ndarray):
+        if NUMPY_INSTALLED and isinstance(iterable_of_args, np.ndarray):
             iterable_of_args, iterable_len, chunk_size, n_splits = apply_numpy_chunking(iterable_of_args, iterable_len,
                                                                                         chunk_size, n_splits,
                                                                                         self.params.n_jobs)
@@ -382,16 +407,15 @@ class WorkerPool:
         sorted_results = [result[1] for result in sorted(results, key=lambda result: result[0])]
 
         # Convert back to numpy if necessary
-        return (np.concatenate(sorted_results)
-                if sorted_results and concatenate_numpy_output and isinstance(sorted_results[0], np.ndarray) else
-                sorted_results)
+        return (np.concatenate(sorted_results) if NUMPY_INSTALLED and sorted_results and concatenate_numpy_output and
+                                                  isinstance(sorted_results[0], np.ndarray) else sorted_results)
 
-    def map_unordered(self, func: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
+    def map_unordered(self, func: Callable, iterable_of_args: Union[Sized, Iterable],
                       iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                       chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                       worker_lifespan: Optional[int] = None, progress_bar: bool = False,
                       progress_bar_position: int = 0, enable_insights: bool = False,
-                      worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None) -> List[Any]:
+                      worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None) -> Any:
         """
         Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
@@ -432,9 +456,8 @@ class WorkerPool:
                                         n_splits, worker_lifespan, progress_bar, progress_bar_position,
                                         enable_insights, worker_init, worker_exit))
 
-    def imap(self, func: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
-             iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
-             chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
+    def imap(self, func: Callable, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int] = None,
+             max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
              worker_lifespan: Optional[int] = None, progress_bar: bool = False,
              progress_bar_position: int = 0, enable_insights: bool = False, worker_init: Optional[Callable] = None,
              worker_exit: Optional[Callable] = None) -> Generator[Any, None, None]:
@@ -477,7 +500,7 @@ class WorkerPool:
         self._worker_comms.set_keep_order()
 
         # If we're dealing with numpy arrays, we have to chunk them here already
-        if isinstance(iterable_of_args, np.ndarray):
+        if NUMPY_INSTALLED and isinstance(iterable_of_args, np.ndarray):
             iterable_of_args, iterable_len, chunk_size, n_splits = apply_numpy_chunking(iterable_of_args, iterable_len,
                                                                                         chunk_size, n_splits,
                                                                                         self.params.n_jobs)
@@ -517,7 +540,7 @@ class WorkerPool:
         # Notify workers to forget about order
         self._worker_comms.clear_keep_order()
 
-    def imap_unordered(self, func: Callable, iterable_of_args: Union[Sized, Iterable, np.ndarray],
+    def imap_unordered(self, func: Callable, iterable_of_args: Union[Sized, Iterable],
                        iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                        chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                        worker_lifespan: Optional[int] = None, progress_bar: bool = False,
@@ -561,10 +584,12 @@ class WorkerPool:
         """
         # If we're dealing with numpy arrays, we have to chunk them here already
         iterator_of_chunked_args = []
-        if isinstance(iterable_of_args, np.ndarray):
+        numpy_chunking = False
+        if NUMPY_INSTALLED and isinstance(iterable_of_args, np.ndarray):
             iterator_of_chunked_args, iterable_len, chunk_size, n_splits = apply_numpy_chunking(
                 iterable_of_args, iterable_len, chunk_size, n_splits, self.params.n_jobs
             )
+            numpy_chunking = True
 
         # Check parameters and thereby obtain the number of tasks. The chunk_size and progress bar parameters could be
         # modified as well
@@ -573,8 +598,8 @@ class WorkerPool:
             progress_bar_position
         )
 
-        # Chunk the function arguments. Make single arguments when we're dealing with numpy arrays
-        if not isinstance(iterable_of_args, np.ndarray):
+        # Chunk the function arguments. Make single arguments when we're not dealing with numpy arrays
+        if not numpy_chunking:
             iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size,
                                                    n_splits or self.params.n_jobs * 64)
 
@@ -584,9 +609,8 @@ class WorkerPool:
         # Start workers if there aren't any. If they already exist they must be restarted when either the function to
         # execute or the worker lifespan changes
         if self._workers and self.params.workers_need_restart(func, worker_init, worker_exit, worker_lifespan):
-            self.stop_and_join()
+            self.stop_and_join(keep_alive=False)
         if not self._workers:
-            logger.debug("Spinning up workers")
             self._start_workers(func, worker_init, worker_exit, worker_lifespan, bool(progress_bar))
 
         # Create exception, exit results, and progress bar handlers. The exception handler receives any exceptions
@@ -629,12 +653,15 @@ class WorkerPool:
                 # Restart workers if necessary
                 self._restart_workers()
 
-            # Clean up time. When keep_alive is set to True we won't join the workers. During the stop_and_join call an
-            # error can occur as well, so we have to check once again whether an exception occurred and raise if it did
+            # Terminate if exception has been caught
+            if self._worker_comms.exception_caught():
+                self.terminate()
+
+            # Clean up time. During the stop_and_join call an error can occur as well, so we have to check once again
+            # whether an exception occurred and raise if it did
             exception_handler.raise_on_exception()
-            if not self.params.keep_alive:
-                self.stop_and_join()
-                exception_handler.raise_on_exception()
+            self.stop_and_join(keep_alive=self.params.keep_alive)
+            exception_handler.raise_on_exception()
 
         # Log insights
         if enable_insights:

@@ -1,14 +1,29 @@
-import collections
-import dill
+import collections.abc
+try:
+    import dill as pickle
+except ImportError:
+    import pickle
+import multiprocessing as mp
 import signal
 import traceback
 from datetime import datetime
 from functools import partial
-from typing import Any, Callable, List, Optional, Tuple
+from threading import Thread
+from typing import Any, Callable, List, Optional, Tuple, Union, Type
 
-import numpy as np
+try:
+    import multiprocess
+    DILL_INSTALLED = True
+except ImportError:
+    DILL_INSTALLED = False
+try:
+    import numpy as np
+    NUMPY_INSTALLED = True
+except ImportError:
+    np = None
+    NUMPY_INSTALLED = False
 
-from mpire.comms import WorkerComms, POISON_PILL
+from mpire.comms import NON_LETHAL_POISON_PILL, POISON_PILL, WorkerComms
 from mpire.context import MP_CONTEXTS
 from mpire.exception import CannotPickleExceptionError, StopWorker
 from mpire.insights import WorkerInsights
@@ -42,12 +57,17 @@ class AbstractWorker:
         # Worker state
         self.worker_state = {}
 
-        # Initialize worker comms and insights for this worker
-        self.worker_comms.init_worker(self.worker_id)
-        self.worker_insights.init_worker(self.worker_id)
+        # Local variables needed for each worker
+        self.progress_bar_last_updated = datetime.now()
+        self.progress_bar_n_tasks_completed = 0
+        self.max_task_duration_last_updated = datetime.now()
+        self.max_task_duration_list = self.worker_insights.get_max_task_duration_list(self.worker_id)
 
         # Exception handling variables
-        ctx = MP_CONTEXTS[self.params.start_method]
+        if self.params.start_method == 'threading':
+            ctx = MP_CONTEXTS['threading']
+        else:
+            ctx = MP_CONTEXTS['mp_dill' if self.params.use_dill else 'mp'][self.params.start_method]
         self.is_running = False
         self.is_running_lock = ctx.Lock()
 
@@ -78,11 +98,11 @@ class AbstractWorker:
         Continuously asks the tasks queue for new task arguments. When not receiving a poisonous pill or when the max
         life span is not yet reached it will execute the new task and put the results in the results queue.
         """
-        self.worker_comms.set_worker_alive()
+        self.worker_comms.set_worker_alive(self.worker_id)
 
         try:
             # Store how long it took to start up
-            self.worker_insights.update_start_up_time(self.start_time)
+            self.worker_insights.update_start_up_time(self.worker_id, self.start_time)
 
             # Obtain additional args to pass to the function
             additional_args = []
@@ -107,18 +127,23 @@ class AbstractWorker:
 
                 # Obtain new chunk of jobs
                 with TimeIt(self.worker_insights.worker_waiting_time, self.worker_id):
-                    next_chunked_args = self.worker_comms.get_task()
+                    next_chunked_args = self.worker_comms.get_task(self.worker_id)
 
-                # If we obtained a poison pill, we stop. When the _retrieve_task function returns None this means we
-                # stop because of an exception in the main process
-                if next_chunked_args == POISON_PILL or next_chunked_args is None:
-                    self.worker_insights.update_task_insights()
+                # Force update task insights and progress bar when we got a (non-lethal) poison pill. In case of a
+                # lethal pill we additionally run the worker exit function and stop. Otherwise, we simply continue
+                if next_chunked_args == POISON_PILL or next_chunked_args == NON_LETHAL_POISON_PILL:
+                    self._update_task_insights(force_update=True)
+                    self._update_progress_bar(force_update=True)
+                    self.worker_comms.task_done(self.worker_id)
                     if next_chunked_args == POISON_PILL:
-                        self.worker_comms.task_done()
-
-                        # Run exit function when a poison pill was received
                         if self.params.worker_exit:
                             self._run_exit_func(additional_args)
+                        return
+                    else:
+                        continue
+
+                # When we recieved None this means we need to stop because of an exception in the main process
+                elif next_chunked_args is None:
                     return
 
                 # Execute jobs in this chunk
@@ -132,36 +157,32 @@ class AbstractWorker:
                             return
                         results.append(results_part)
 
-                        # Notify that we've completed a task once in a while (only when using a progress bar)
-                        if self.worker_comms.has_progress_bar():
-                            self.worker_comms.task_completed_progress_bar()
+                        # Update progress bar info
+                        self._update_progress_bar()
 
                     # Send results back to main process
-                    self.worker_comms.add_results(results)
+                    self.worker_comms.add_results(self.worker_id, results)
                     n_tasks_executed += len(results)
 
                 # In case an exception occurred and we need to return, we want to call task_done no matter what
                 finally:
-                    self.worker_comms.task_done()
+                    self.worker_comms.task_done(self.worker_id)
 
-                # Update task insights every once in a while (every 2 seconds)
-                self.worker_insights.update_task_insights_once_in_a_while()
+                # Update task insights
+                self._update_task_insights()
 
-            # Run exit function and store results
+            # Max lifespan reached
+            self._update_task_insights(force_update=True)
+            self._update_progress_bar(force_update=True)
             if self.params.worker_exit and self._run_exit_func(additional_args):
                 return
 
-            # Notify WorkerPool to start a new worker if max lifespan is reached
-            self.worker_insights.update_task_insights()
+            # Notify WorkerPool to start a new worker
             if self.params.worker_lifespan is not None and n_tasks_executed == self.params.worker_lifespan:
-                self.worker_comms.signal_worker_restart()
-
-            # Force update the number of tasks completed for this worker (only when using a progress bar)
-            if self.worker_comms.has_progress_bar():
-                self.worker_comms.task_completed_progress_bar(force_update=True)
+                self.worker_comms.signal_worker_restart(self.worker_id)
 
         finally:
-            self.worker_comms.set_worker_dead()
+            self.worker_comms.set_worker_dead(self.worker_id)
 
     def _run_init_func(self, additional_args: List) -> bool:
         """
@@ -187,9 +208,9 @@ class AbstractWorker:
         """
         def _func():
             with TimeIt(self.worker_insights.worker_working_time, self.worker_id,
-                        self.worker_insights.max_task_duration_list, lambda: self._format_args(args, separator=' | ')):
+                        self.max_task_duration_list, lambda: self._format_args(args, separator=' | ')):
                 results = func(args)
-            self.worker_insights.update_n_completed_tasks()
+            self.worker_insights.update_n_completed_tasks(self.worker_id)
             return results
 
         return self._run_safely(_func, args)
@@ -210,7 +231,7 @@ class AbstractWorker:
         if should_return:
             return True
         else:
-            self.worker_comms.add_exit_results(results)
+            self.worker_comms.add_exit_results(self.worker_id, results)
             return False
 
     def _run_safely(self, func: Callable, exception_args: Optional[Any] = None,
@@ -286,8 +307,8 @@ class AbstractWorker:
                 # The call to `queue.put` creates a thread in which it pickles and when that raises an exception we
                 # cannot catch it.
                 try:
-                    dill.dumps(type(err))
-                except dill.PicklingError:
+                    pickle.dumps(type(err))
+                except pickle.PicklingError:
                     err = CannotPickleExceptionError()
 
                 # Add exception
@@ -345,42 +366,94 @@ class AbstractWorker:
         """
         if isinstance(args, dict):
             return func(**args)
-        elif isinstance(args, collections.abc.Iterable) and not isinstance(args, (str, bytes, np.ndarray)):
+        elif (isinstance(args, collections.abc.Iterable) and not isinstance(args, (str, bytes)) and not
+              (NUMPY_INSTALLED and isinstance(args, np.ndarray))):
             return func(*args)
         else:
             return func(args)
 
+    def _update_progress_bar(self, force_update: bool = False) -> None:
+        """
+        Update the progress bar data
 
-class ForkWorker(AbstractWorker, MP_CONTEXTS['fork'].Process):
+        :param force_update: Whether to force an update
+        """
+        if self.worker_comms.has_progress_bar():
+            (self.progress_bar_last_updated,
+             self.progress_bar_n_tasks_completed) = self.worker_comms.task_completed_progress_bar(
+                self.progress_bar_last_updated, self.progress_bar_n_tasks_completed, force_update
+             )
+
+    def _update_task_insights(self, force_update: bool = False) -> None:
+        """
+        Update the task insights data
+
+        :param force_update: Whether to force an update
+        """
+        self.max_task_duration_last_updated = self.worker_insights.update_task_insights(
+            self.worker_id, self.max_task_duration_last_updated, self.max_task_duration_list, force_update=force_update
+        )
+
+
+class ForkWorker(AbstractWorker, MP_CONTEXTS['mp']['fork'].Process):
     pass
 
 
-class ForkServerWorker(AbstractWorker, MP_CONTEXTS['forkserver'].Process):
+class ForkServerWorker(AbstractWorker, MP_CONTEXTS['mp']['forkserver'].Process):
     pass
 
 
-class SpawnWorker(AbstractWorker, MP_CONTEXTS['spawn'].Process):
+class SpawnWorker(AbstractWorker, MP_CONTEXTS['mp']['spawn'].Process):
     pass
 
 
-class ThreadingWorker(AbstractWorker, MP_CONTEXTS['threading'].Thread):
+class DillForkWorker(AbstractWorker, MP_CONTEXTS['mp']['fork'].Process):
     pass
 
 
-def worker_factory(start_method):
+if DILL_INSTALLED:
+    class DillForkServerWorker(AbstractWorker, MP_CONTEXTS['mp_dill']['forkserver'].Process):
+        pass
+
+
+    class DillSpawnWorker(AbstractWorker, MP_CONTEXTS['mp_dill']['spawn'].Process):
+        pass
+
+
+    class ThreadingWorker(AbstractWorker, MP_CONTEXTS['threading'].Thread):
+        pass
+
+
+def worker_factory(start_method: str, use_dill: bool) -> Type[Union[mp.Process, Thread]]:
     """
     Returns the appropriate worker class given the start method
 
     :param start_method: What Process/Threading start method to use, see the WorkerPool constructor
+    :param use_dill: Whether to use dill has serialization backend. Some exotic types (e.g., lambdas, nested functions)
+        don't work well when using ``spawn`` as start method. In such cased, use ``dill`` (can be a bit slower
+        sometimes)
     :return: Worker class
     """
-    if start_method == 'fork':
-        return ForkWorker
-    elif start_method == 'forkserver':
-        return ForkServerWorker
-    elif start_method == 'spawn':
-        return SpawnWorker
-    elif start_method == 'threading':
+    if start_method == 'threading':
         return ThreadingWorker
+    elif use_dill:
+        if not DILL_INSTALLED:
+            raise ImportError("Can't use dill as the dependencies are not installed. Use `pip install mpire[dill]` to "
+                              "install the required dependencies.")
+        elif start_method == 'fork':
+            return DillForkWorker
+        elif start_method == 'forkserver':
+            return DillForkServerWorker
+        elif start_method == 'spawn':
+            return DillSpawnWorker
+        else:
+            raise ValueError(f"Unknown start method with dill: '{start_method}'")
     else:
-        raise ValueError("Unknown start method: '{}'".format(start_method))
+        if start_method == 'fork':
+            return ForkWorker
+        elif start_method == 'forkserver':
+            return ForkServerWorker
+        elif start_method == 'spawn':
+            return SpawnWorker
+        else:
+            raise ValueError("Unknown start method: '{}'".format(start_method))

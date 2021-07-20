@@ -1,7 +1,7 @@
 import logging
 import sys
 from datetime import datetime, timedelta
-from multiprocessing import Lock, Process
+from multiprocessing import Event, Lock, Process
 from typing import Any, Callable, Dict
 
 from tqdm.auto import tqdm
@@ -60,6 +60,7 @@ class ProgressBarHandler:
             self.function_details = None
 
         self.process = None
+        self.process_started = Event()
         self.progress_bar_id = None
         self.dashboard_dict = None
         self.dashboard_details_dict = None
@@ -77,11 +78,20 @@ class ProgressBarHandler:
             # Disable the interrupt signal. We let the process die gracefully
             with DisableKeyboardInterruptSignal():
 
-                # We start a new process because updating the progress bar in a thread can slow down processing of
-                # results and can fail to show real-time updates
-                self.process = Process(target=self._progress_bar_handler,
-                                       args=(self.progress_bar_total, self.progress_bar_position))
-                self.process.start()
+                # For some reason, when using forkserver as backend, starting the progress bar process fails 1 out of
+                # 1000 times. Therefore, we try a few times
+                while True:
+                    # We start a new process because updating the progress bar in a thread can slow down processing
+                    # of results and can fail to show real-time updates
+                    self.process = Process(target=self._progress_bar_handler,
+                                           args=(self.progress_bar_total, self.progress_bar_position))
+
+                    self.process.start()
+                    if self.process_started.wait(timeout=1.0):
+                        break
+                    self.process.terminate()
+                    self.process.join()
+                    self.process_started.clear()
 
         return self
 
@@ -95,6 +105,7 @@ class ProgressBarHandler:
             if not self.worker_comms.exception_caught():
                 self.worker_comms.add_progress_bar_poison_pill()
             self.process.join()
+            logger.debug("Progress bar handler joined")
 
     def _progress_bar_handler(self, progress_bar_total: int, progress_bar_position: int) -> None:
         """
@@ -105,6 +116,7 @@ class ProgressBarHandler:
             multiple progress bars at the same time
         """
         logger.debug("Progress bar handler started")
+        self.process_started.set()
 
         # In case we're running tqdm in a notebook we need to apply a dirty hack to get progress bars working.
         # Solution adapted from https://github.com/tqdm/tqdm/issues/485#issuecomment-473338308
@@ -157,6 +169,8 @@ class ProgressBarHandler:
             # will make the dashboard a lot more responsive
             if progress_bar.n == progress_bar.last_print_n:
                 self._send_update(progress_bar)
+
+        logger.debug("Progress bar handler done")
 
     def _register_progress_bar(self, progress_bar: tqdm) -> None:
         """

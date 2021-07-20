@@ -1,10 +1,10 @@
 import ctypes
-import multiprocessing as mp
+import math
+import multiprocessing.context
+import multiprocessing.managers
 from datetime import datetime
 from functools import partial
-from typing import Dict
-
-import numpy as np
+from typing import Dict, Optional, List, Tuple
 
 from mpire.signal import ignore_keyboard_interrupt
 from mpire.utils import format_seconds
@@ -17,7 +17,7 @@ class WorkerInsights:
     exit functions are provided it will time those as well.
     """
 
-    def __init__(self, ctx: mp.context.BaseContext, n_jobs: int) -> None:
+    def __init__(self, ctx: multiprocessing.context.BaseContext, n_jobs: int) -> None:
         """
         Parameter class for worker insights.
 
@@ -58,11 +58,6 @@ class WorkerInsights:
         # Manager.List object which holds the top 5 task arguments (string) for the longest task per worker
         self.max_task_args = None
 
-        # Local variables needed for each worker
-        self.worker_id = None
-        self.max_task_duration_list = None
-        self.max_task_duration_last_updated = None
-
     def reset_insights(self, enable_insights: bool) -> None:
         """
         Resets the insights containers
@@ -71,7 +66,7 @@ class WorkerInsights:
         """
         if enable_insights:
             # We need to ignore the KeyboardInterrupt signal for the manager to avoid BrokenPipeErrors
-            self.insights_manager = mp.managers.SyncManager(ctx=self.ctx)
+            self.insights_manager = multiprocessing.managers.SyncManager(ctx=self.ctx)
             self.insights_manager.start(ignore_keyboard_interrupt)
             self.insights_manager_lock = self.ctx.Lock()
             self.worker_start_up_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
@@ -82,7 +77,6 @@ class WorkerInsights:
             self.worker_exit_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
             self.max_task_duration = self.ctx.Array(ctypes.c_double, self.n_jobs * 5, lock=False)
             self.max_task_args = self.insights_manager.list([''] * self.n_jobs * 5)
-            self.max_task_duration_last_updated = datetime.now()
         else:
             self.insights_manager = None
             self.insights_manager_lock = None
@@ -94,61 +88,64 @@ class WorkerInsights:
             self.worker_exit_time = None
             self.max_task_duration = None
             self.max_task_args = None
-            self.max_task_duration_last_updated = None
 
-        self.worker_id = None
-        self.max_task_duration_list = None
         self.insights_enabled = enable_insights
 
-    def init_worker(self, worker_id: int) -> None:
+    def get_max_task_duration_list(self, worker_id: int) -> Optional[List[Tuple[float, str]]]:
         """
         Initialize insights for a specific worker
 
         :param worker_id: worker ID
         """
-        self.worker_id = worker_id
-
         if self.insights_enabled:
             # Local worker insights container that holds (task duration, task args) tuples, sorted for heapq. We use a
             # local container for each worker as to not put too big of a burden on interprocess communication
             with self.insights_manager_lock:
-                self.max_task_duration_list = (list(zip(self.max_task_duration[worker_id * 5:(worker_id + 1) * 5],
-                                                        self.max_task_args[worker_id * 5:(worker_id + 1) * 5]))
-                                               if self.max_task_duration is not None else None)
+                return (list(zip(self.max_task_duration[worker_id * 5:(worker_id + 1) * 5],
+                                 self.max_task_args[worker_id * 5:(worker_id + 1) * 5]))
+                        if self.max_task_duration is not None else None)
 
-    def update_start_up_time(self, start_time: datetime) -> None:
+    def update_start_up_time(self, worker_id: int, start_time: datetime) -> None:
         """
         Update start up time
 
+        :param worker_id: Worker ID
         :param start_time: datetime
         """
         if self.insights_enabled:
-            self.worker_start_up_time[self.worker_id] = (datetime.now() - start_time).total_seconds()
+            self.worker_start_up_time[worker_id] = (datetime.now() - start_time).total_seconds()
 
-    def update_n_completed_tasks(self) -> None:
+    def update_n_completed_tasks(self, worker_id: int) -> None:
         """
         Increment the number of completed tasks for this worker
+
+        :param worker_id: Worker ID
         """
         if self.insights_enabled:
-            self.worker_n_completed_tasks[self.worker_id] += 1
+            self.worker_n_completed_tasks[worker_id] += 1
 
-    def update_task_insights_once_in_a_while(self) -> None:
+    def update_task_insights(self, worker_id: int, max_task_duration_last_updated: datetime,
+                             max_task_duration_list: Optional[List[Tuple[float, str]]],
+                             force_update: bool = False) -> datetime:
         """
-        Calls update_task_insights every once in a while (> 2 seconds)
-        """
-        if self.insights_enabled and (datetime.now() - self.max_task_duration_last_updated).total_seconds() > 2:
-            self.update_task_insights()
+        Update synced containers with new top 5 max task duration + args. Updates every 2 seconds.
 
-    def update_task_insights(self) -> None:
+        :param worker_id: Worker ID
+        :param max_task_duration_last_updated: Last updated datetime
+        :param max_task_duration_list: Local worker insights container that holds (task duration, task args) tuples,
+            sorted for heapq
+        :param force_update: Whether to force the update
+        :return: Last updated datetime
         """
-        Update synced containers with new top 5 max task duration + args
-        """
-        if self.insights_enabled:
-            task_durations, task_args = zip(*self.max_task_duration_list)
-            self.max_task_duration[self.worker_id * 5:(self.worker_id + 1) * 5] = task_durations
+        now = datetime.now()
+        if self.insights_enabled and (force_update or (now - max_task_duration_last_updated).total_seconds() > 2):
+            task_durations, task_args = zip(*max_task_duration_list)
+            self.max_task_duration[worker_id * 5:(worker_id + 1) * 5] = task_durations
             with self.insights_manager_lock:
-                self.max_task_args[self.worker_id * 5:(self.worker_id + 1) * 5] = task_args
-            self.max_task_duration_last_updated = datetime.now()
+                self.max_task_args[worker_id * 5:(worker_id + 1) * 5] = task_args
+            max_task_duration_last_updated = now
+
+        return max_task_duration_last_updated
 
     def get_insights(self) -> Dict:
         """
@@ -156,13 +153,29 @@ class WorkerInsights:
 
         :return: dictionary containing worker insights
         """
+        def argsort(seq):
+            """
+            argsort, as to not be dependent on numpy, by
+            https://stackoverflow.com/questions/3382352/equivalent-of-numpy-argsort-in-basic-python/3382369#3382369
+            """
+            return sorted(range(len(seq)), key=seq.__getitem__)
+
+        def mean_std(seq):
+            """
+            Calculates mean and standard deviation, as to not be dependent on numpy
+            """
+            _mean = sum(seq) / len(seq)
+            _var = sum(pow(x - _mean, 2) for x in seq) / len(seq)
+            _std = math.sqrt(_var)
+            return _mean, _std
+
         if not self.insights_enabled:
             return {}
 
         format_seconds_func = partial(format_seconds, with_milliseconds=True)
 
         # Determine max 5 tasks based on duration, exclude zero values and args that haven't been synced yet (empty str)
-        sorted_idx = np.argsort(self.max_task_duration)[-5:][::-1]
+        sorted_idx = argsort(self.max_task_duration)[-5:][::-1]
         top_5_max_task_durations, top_5_max_task_args = [], []
         for idx in sorted_idx:
             if self.max_task_duration[idx] == 0:
@@ -201,9 +214,10 @@ class WorkerInsights:
                             ('waiting', total_waiting_time),
                             ('working', total_working_time),
                             ('exit', total_exit_time)):
+            mean, std = mean_std(getattr(self, f'worker_{part}_time'))
             insights[f'{part}_ratio'] = total / (total_time + 1e-8)
-            insights[f'{part}_time_mean'] = format_seconds_func(np.mean(getattr(self, f'worker_{part}_time')))
-            insights[f'{part}_time_std'] = format_seconds_func(np.std(getattr(self, f'worker_{part}_time')))
+            insights[f'{part}_time_mean'] = format_seconds_func(mean)
+            insights[f'{part}_time_std'] = format_seconds_func(std)
 
         return insights
 

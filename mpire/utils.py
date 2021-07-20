@@ -3,14 +3,20 @@ import itertools
 import math
 from datetime import datetime, timedelta
 from multiprocessing import Array, cpu_count
+
 from typing import Callable, Generator, Iterable, List, Optional, Tuple, Union
 
-import numpy as np
+try:
+    import numpy as np
+    NUMPY_INSTALLED = True
+except ImportError:
+    np = None
+    NUMPY_INSTALLED = False
 
 
-def chunk_tasks(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int] = None,
+def chunk_tasks(iterable_of_args: Iterable, iterable_len: Optional[int] = None,
                 chunk_size: Optional[Union[int, float]] = None, n_splits: Optional[int] = None) \
-        -> Generator[Union[Tuple, np.ndarray], None, None]:
+        -> Generator[Iterable, None, None]:
     """
     Chunks tasks such that individual workers will receive chunks of tasks rather than individual ones, which can
     speed up processing drastically.
@@ -47,7 +53,7 @@ def chunk_tasks(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Opt
     n_elements_returned = 0
     while True:
         # Use numpy slicing if available. We use max(1, ...) to always at least get one element
-        if isinstance(iterable_of_args, np.ndarray):
+        if NUMPY_INSTALLED and isinstance(iterable_of_args, np.ndarray):
             chunk = iterable_of_args[n_elements_returned:n_elements_returned + max(1, math.ceil(current_chunk_size))]
         else:
             chunk = tuple(itertools.islice(args_iter, max(1, math.ceil(current_chunk_size))))
@@ -68,7 +74,7 @@ def chunk_tasks(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Opt
         n_elements_returned += len(chunk)
 
 
-def apply_numpy_chunking(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int] = None,
+def apply_numpy_chunking(iterable_of_args: Iterable, iterable_len: Optional[int] = None,
                          chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                          n_jobs: Optional[int] = None) -> Tuple[Iterable, int, int, None]:
     """
@@ -95,8 +101,8 @@ def apply_numpy_chunking(iterable_of_args: Union[Iterable, np.ndarray], iterable
     return iterable_of_args, iterable_len, chunk_size, n_splits
 
 
-def get_n_chunks(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Optional[int] = None,
-                 chunk_size: Optional[int] = None, n_splits: Optional[int] = None, n_jobs: Optional[int] = None) -> int:
+def get_n_chunks(iterable_of_args: Iterable, iterable_len: Optional[int] = None, chunk_size: Optional[int] = None,
+                 n_splits: Optional[int] = None, n_jobs: Optional[int] = None) -> int:
     """
     Get number of chunks
 
@@ -126,8 +132,7 @@ def get_n_chunks(iterable_of_args: Union[Iterable, np.ndarray], iterable_len: Op
     return min(n_tasks, math.ceil(n_tasks / chunk_size))
 
 
-def make_single_arguments(iterable_of_args: Union[Iterable, np.ndarray], generator: bool = True) \
-        -> Union[List, Generator]:
+def make_single_arguments(iterable_of_args: Iterable, generator: bool = True) -> Union[List, Generator]:
     """
     Converts an iterable of single arguments to an iterable of single argument tuples
 

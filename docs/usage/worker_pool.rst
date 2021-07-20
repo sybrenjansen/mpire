@@ -84,6 +84,10 @@ Do make sure all your non-daemon processes are terminated correctly. If a nested
 example, a user that triggered a ``KeyboardInterrupt``, the process will remain active and will have to be terminated
 manually.
 
+.. note::
+
+    Nested pools aren't supported when using threading.
+
 
 CPU pinning
 -----------
@@ -115,6 +119,10 @@ constructor:
 
 CPU IDs have to be positive integers, not exceeding the number of CPUs available (which can be retrieved by using
 ``mpire.cpu_count()``). Use ``None`` to disable CPU pinning (which is the default).
+
+.. note::
+
+    Pinning processes to CPU IDs doesn't work when using threading.
 
 
 .. _workerID:
@@ -368,6 +376,27 @@ Instead of passing the flag to the :obj:`mpire.WorkerPool` constructor you can a
         pool.map_unordered(square_sum, range(100))
 
 
+Dill
+----
+
+For some functions or tasks it can be useful to not rely on pickle, but on some more powerful serialization backends
+like dill_. ``dill`` isn't installed by default. See :ref:`dilldep` for more information on installing the dependencies.
+
+For all benefits of ``dill``, please refer to the `dill documentation`_.
+
+Once the dependencies have been installed, you can enable it using the ``use_dill`` flag:
+
+.. code-block:: python
+
+    with WorkerPool(n_jobs=4, use_dill=True) as pool:
+        ...
+
+.. note::
+
+    When using ``dill`` it can potentially slow down processing. This is the cost of having a more reliable and
+    powerful serialization backend.
+
 .. _documentation: https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
 .. _caveats: https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods
 .. _dill: https://pypi.org/project/dill/
+.. _dill documentation: https://github.com/uqfoundation/dill

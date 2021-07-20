@@ -3,7 +3,6 @@ import multiprocessing as mp
 import warnings
 from typing import Any, Callable, Iterable, List, Optional, Sized, Tuple, Union
 
-import numpy as np
 from tqdm import tqdm
 
 # Typedefs
@@ -18,7 +17,7 @@ class WorkerPoolParams:
 
     def __init__(self, n_jobs: Optional[int] = None, daemon: bool = True, cpu_ids: CPUList = None,
                  shared_objects: Any = None, pass_worker_id: bool = False, use_worker_state: bool = False,
-                 start_method: str = 'fork', keep_alive: bool = False) -> None:
+                 start_method: str = 'fork', keep_alive: bool = False, use_dill: bool = False) -> None:
         """
         See ``WorkerPool.__init__`` docstring.
         """
@@ -30,6 +29,7 @@ class WorkerPoolParams:
         self.use_worker_state = use_worker_state
         self.start_method = start_method
         self.keep_alive = keep_alive
+        self.use_dill = use_dill
 
         # Number of (chunks of) jobs a child process can process before requesting a restart
         self.worker_lifespan = None
@@ -90,7 +90,7 @@ class WorkerPoolParams:
 
         return converted_cpu_ids
 
-    def check_map_parameters(self, iterable_of_args: Union[Sized, Iterable, np.ndarray], iterable_len: Optional[int],
+    def check_map_parameters(self, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int],
                              max_tasks_active: Optional[int], chunk_size: Optional[Union[int, float]],
                              n_splits: Optional[int], worker_lifespan: Optional[int], progress_bar: bool,
                              progress_bar_position: int) \

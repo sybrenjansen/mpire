@@ -52,6 +52,7 @@ class ExceptionHandler:
         if not self.worker_comms.exception_caught():
             self.worker_comms.add_exception_poison_pill()
         self.thread.join()
+        logger.debug("Exception handler joined")
 
     def _exception_handler(self) -> None:
         """
@@ -68,17 +69,19 @@ class ExceptionHandler:
             logger.debug(f"Exception caught: {err}")
             self.worker_comms.set_exception_caught()
 
-            # Kill processes
-            self.terminate()
+            # Wait until terminate is done
+            logger.debug("Waiting until terminate is done")
+            self.worker_comms.wait_for_terminate_done()
 
             # Pass error to main process so it can be raised there (exceptions raised from threads or child processes
             # cannot be caught directly). Pass another error in case we have a progress bar
+            logger.debug("Passing on exception to main process")
             self.worker_comms.add_exception(err, traceback_str)
             if self.has_progress_bar:
                 self.worker_comms.add_exception(err, traceback_str)
 
         self.worker_comms.task_done_exception()
-        logger.debug("Terminating exception handler")
+        logger.debug("Exception handler done")
 
     def raise_on_exception(self) -> None:
         """
@@ -87,6 +90,7 @@ class ExceptionHandler:
         # If we know an exception will come through from a worker process, wait for the exception to be obtained in the
         # main process
         if self.worker_comms.exception_thrown():
+            logger.debug("Waiting until exception is caught")
             self.worker_comms.wait_until_exception_is_caught()
 
         if self.worker_comms.exception_caught():
@@ -94,6 +98,7 @@ class ExceptionHandler:
             self.worker_comms.clear_keep_order()
 
             # Get exception and raise here
+            logger.debug("Obtaining caught exception")
             err, traceback_str = self.worker_comms.get_exception()
             self.worker_comms.task_done_exception()
             logger.debug("Raising caught exception")
