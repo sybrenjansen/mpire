@@ -85,3 +85,13 @@ The only way I could remedy this problem in MPIRE would be to manually pickle ob
 quit gracefully when encountering a pickle error. However, this would mean objects would always be pickled twice. This
 would add a heavy performance penalty and is therefore not an acceptable solution. Instead, the user should make sure
 their tasks and results are always picklable (which in most cases won't be a problem).
+
+
+Windows
+-------
+
+This package has been tested only on Linux-based systems. So I'm not sure if everything works on Windows. You can submit
+an issue on GitHub if you encounter issues.
+
+Windows doesn't support forking, so you will need to manually switch to spawn as start method. See :ref:`start_methods`
+for more information on start methods.

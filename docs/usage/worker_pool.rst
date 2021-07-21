@@ -281,6 +281,7 @@ Instead of passing the flag to the :obj:`mpire.WorkerPool` constructor you can a
         pool.set_use_worker_state()
         results = pool.map(model_predict, data, worker_init=load_big_model)
 
+.. _start_methods:
 
 Process start method
 --------------------
