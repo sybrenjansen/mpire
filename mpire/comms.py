@@ -459,7 +459,9 @@ class WorkerComms:
         [q.join() for q in self._exit_results_queues]
         if not keep_alive:
             self._results_queue.close()
+            self._results_queue.join_thread()
             [q.close() for q in self._exit_results_queues]
+            [q.join_thread() for q in self._exit_results_queues]
 
     def join_tasks_queues(self, keep_alive: bool = False) -> None:
         """
@@ -470,6 +472,7 @@ class WorkerComms:
         [q.join() for q in self._task_queues]
         if not keep_alive:
             [q.close() for q in self._task_queues]
+            [q.join_thread() for q in self._task_queues]
 
     def join_progress_bar_task_completed_queue(self, keep_alive: bool = False) -> None:
         """
@@ -480,6 +483,7 @@ class WorkerComms:
         self._task_completed_queue.join()
         if not keep_alive:
             self._task_completed_queue.close()
+            self._task_completed_queue.join_thread()
 
     def join_exception_queue(self, keep_alive: bool = False) -> None:
         """
@@ -490,6 +494,7 @@ class WorkerComms:
         self._exception_queue.join()
         if not keep_alive:
             self._exception_queue.close()
+            self._exception_queue.join_thread()
 
     def drain_queues_terminate_worker(self, worker_id: int, dont_wait_event: threading.Event) -> None:
         """
@@ -600,5 +605,6 @@ class WorkerComms:
             try:
                 q.join()
                 q.close()
+                q.join_thread()
             except OSError:
                 pass
