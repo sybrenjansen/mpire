@@ -733,7 +733,7 @@ class CPUPinningTest(unittest.TestCase):
                 self.assertListEqual(mask, expected_mask)
 
         # This won't work for threading
-        with self.assertRaises(AttributeError), WorkerPool(n_jobs=3, cpu_ids=[2, 0, 1],
+        with self.assertRaises(AttributeError), WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids,
                                                            start_method='threading') as pool:
             pool.map(square, self.test_data)
 
