@@ -197,7 +197,9 @@ class WorkerCommsTest(unittest.TestCase):
         comms.get_tasks_completed_progress_bar()
         comms.task_done_progress_bar()
         comms.join_progress_bar_task_completed_queue(keep_alive=False)
-        with self.assertRaises(AssertionError):
+
+        # Depending on Python version it either throws AssertionError or ValueError
+        with self.assertRaises((AssertionError, ValueError)):
             comms.task_completed_progress_bar(force_update=True)
 
     def test_keep_order(self):
@@ -300,7 +302,9 @@ class WorkerCommsTest(unittest.TestCase):
         comms.add_results(0, 12)
         comms.get_results()
         comms.join_results_queues(keep_alive=False)
-        with self.assertRaises(AssertionError):
+
+        # Depending on Python version it either throws AssertionError or ValueError
+        with self.assertRaises((AssertionError, ValueError)):
             comms.add_results(0, 12)
 
     def test_exit_results(self):
@@ -333,8 +337,10 @@ class WorkerCommsTest(unittest.TestCase):
             comms.add_exit_results(worker_id, 'hello world')
             comms.get_exit_results(worker_id)
         comms.join_results_queues(keep_alive=False)
+
+        # Depending on Python version it either throws AssertionError or ValueError
         for worker_id in range(3):
-            with self.assertRaises(AssertionError):
+            with self.assertRaises((AssertionError, ValueError)):
                 comms.add_exit_results(worker_id, 'hello world')
 
     def test_exit_results_all_workers(self):
@@ -406,7 +412,9 @@ class WorkerCommsTest(unittest.TestCase):
         comms.get_exception()
         comms.task_done_exception()
         comms.join_exception_queue(keep_alive=False)
-        with self.assertRaises(AssertionError):
+
+        # Depending on Python version it either throws AssertionError or ValueError
+        with self.assertRaises((AssertionError, ValueError)):
             comms.add_exception(TypeError, 'TypeError')
 
     def test_exception_thrown(self):
@@ -631,5 +639,7 @@ class WorkerCommsTest(unittest.TestCase):
 
         # Drain queue. It should now be closed
         comms._drain_and_join_queue(q)
-        with self.assertRaises(OSError):
+
+        # Depending on Python version it either throws OSError or ValueError
+        with self.assertRaises((OSError, ValueError)):
             q.get(block=False)
