@@ -711,9 +711,15 @@ class CPUPinningTest(unittest.TestCase):
         """
         Test for different start methods
         """
+        # This test will fail if there are less CPUs available than specified.
+        if cpu_count() >= 2:
+            n_jobs, cpu_ids, expected_mask = 2, [1, 0], [[1], [0]]
+        else:
+            n_jobs, cpu_ids, expected_mask = 1, [0], [[0]]
+
         for start_method in ['fork', 'forkserver', 'spawn']:
             with self.subTest(start_method=start_method), patch('os.sched_setaffinity') as p, \
-                    WorkerPool(n_jobs=3, cpu_ids=[2, 0, 1], start_method=start_method,
+                    WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
                 # Verify results
                 results_list = pool.map(square, self.test_data)
@@ -724,7 +730,7 @@ class CPUPinningTest(unittest.TestCase):
                 # ID
                 self.assertEqual(p.call_count, pool.params.n_jobs)
                 mask = [call[0][1] for call in p.call_args_list]
-                self.assertListEqual(mask, [[2], [0], [1]])
+                self.assertListEqual(mask, expected_mask)
 
         # This won't work for threading
         with self.assertRaises(AttributeError), WorkerPool(n_jobs=3, cpu_ids=[2, 0, 1],
