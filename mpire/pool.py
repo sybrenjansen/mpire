@@ -238,8 +238,11 @@ class WorkerPool:
             # Join queues and workers
             self._worker_comms.join_results_queues(keep_alive)
             if not keep_alive:
-                for w in self._workers:
-                    w.join()
+                for worker_process in self._workers:
+                    worker_process.join()
+                    # Added since Python 3.7
+                    if hasattr(worker_process, 'close'):
+                        worker_process.close()
                 self._workers = []
                 logger.debug("Cleaning up workers done")
 
@@ -329,6 +332,10 @@ class WorkerPool:
         if worker_process.is_alive():
             worker_process.terminate()
             worker_process.join()
+
+        # Added since Python 3.7
+        if hasattr(worker_process, 'close'):
+            worker_process.close()
 
     def __enter__(self) -> 'WorkerPool':
         """

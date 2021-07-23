@@ -173,24 +173,24 @@ class MapTest(unittest.TestCase):
         """
         print()
         for start_method in tqdm(['fork', 'forkserver', 'spawn', 'threading']):
-            with self.subTest(start_method=start_method, map='map'), WorkerPool(3, start_method=start_method) as pool:
+            with self.subTest(start_method=start_method, map='map'), WorkerPool(2, start_method=start_method) as pool:
                 results_list = pool.map(square, self.test_data)
                 self.assertIsInstance(results_list, list)
                 self.assertEqual(self.test_desired_output, results_list)
 
             with self.subTest(start_method=start_method, map='map_unordered'), \
-                    WorkerPool(3, start_method=start_method) as pool:
+                    WorkerPool(2, start_method=start_method) as pool:
                 results_list = pool.map_unordered(square, self.test_data)
                 self.assertIsInstance(results_list, list)
                 self.assertEqual(self.test_desired_output, sorted(results_list, key=lambda tup: tup[0]))
 
-            with self.subTest(start_method=start_method, map='imap'), WorkerPool(3, start_method=start_method) as pool:
+            with self.subTest(start_method=start_method, map='imap'), WorkerPool(2, start_method=start_method) as pool:
                 results_list = pool.imap(square, self.test_data)
                 self.assertIsInstance(results_list, types.GeneratorType)
                 self.assertListEqual(list(results_list), self.test_desired_output)
 
             with self.subTest(start_method=start_method, map='imap_unordered'), \
-                    WorkerPool(3, start_method=start_method) as pool:
+                    WorkerPool(2, start_method=start_method) as pool:
                 results_list = pool.imap_unordered(square, self.test_data)
                 self.assertIsInstance(results_list, types.GeneratorType)
                 self.assertEqual(self.test_desired_output, sorted(results_list, key=lambda tup: tup[0]))
@@ -234,7 +234,7 @@ class WorkerIDTest(unittest.TestCase):
         """
         for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
             with self.subTest(start_method=start_method), \
-                    WorkerPool(n_jobs=3, pass_worker_id=True, start_method=start_method,
+                    WorkerPool(n_jobs=2, pass_worker_id=True, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
                 self.assertListEqual(pool.map(self._f1, ((2,) for _ in range(10)), iterable_len=10), [True] * 10)
 
@@ -297,7 +297,7 @@ class SharedObjectsTest(unittest.TestCase):
         """
         for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
             with self.subTest(start_method=start_method), \
-                    WorkerPool(n_jobs=3, shared_objects=({'1', '2', '3'}), start_method=start_method,
+                    WorkerPool(n_jobs=2, shared_objects=({'1', '2', '3'}), start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
                 self.assertListEqual(pool.map(self._f1, (({'1', '2', '3'},) for _ in range(10)), iterable_len=10),
                                      [True] * 10)
@@ -367,7 +367,7 @@ class WorkerStateTest(unittest.TestCase):
         """
         for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
             with self.subTest(start_method=start_method), \
-                    WorkerPool(n_jobs=3, pass_worker_id=True, use_worker_state=True, start_method=start_method,
+                    WorkerPool(n_jobs=2, pass_worker_id=True, use_worker_state=True, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
                 results = pool.map(self._f1, range(10), chunk_size=2)
                 n_processed_per_worker = [0, 0, 0]
@@ -456,13 +456,13 @@ class InitFuncTest(unittest.TestCase):
         """
         for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
             with self.subTest(start_method=start_method), \
-                    WorkerPool(n_jobs=3, use_worker_state=True, start_method=start_method,
+                    WorkerPool(n_jobs=2, use_worker_state=True, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
-                shared_objects = pool.ctx.Barrier(3), pool.ctx.Value('i', 0)
+                shared_objects = pool.ctx.Barrier(2), pool.ctx.Value('i', 0)
                 pool.set_shared_objects(shared_objects)
                 results = pool.map(self._f, self.test_data, worker_init=self._init, chunk_size=1)
                 self.assertListEqual(results, self.test_desired_output)
-                self.assertEqual(shared_objects[1].value, 3)
+                self.assertEqual(shared_objects[1].value, 2)
 
     @staticmethod
     def _init(shared_objects, worker_state):
@@ -567,14 +567,14 @@ class ExitFuncTest(unittest.TestCase):
         """
         for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
             with self.subTest(start_method=start_method), \
-                    WorkerPool(n_jobs=3, use_worker_state=True, start_method=start_method,
+                    WorkerPool(n_jobs=2, use_worker_state=True, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
-                shared_objects = pool.ctx.Barrier(3), pool.ctx.Value('i', 0)
+                shared_objects = pool.ctx.Barrier(2), pool.ctx.Value('i', 0)
                 pool.set_shared_objects(shared_objects)
                 results = pool.map(self._f1, self.test_data, worker_init=self._init, worker_exit=self._exit)
                 self.assertListEqual(results, self.test_desired_output)
-                self.assertEqual(shared_objects[1].value, 3)
-                self.assertEqual(len(pool.get_exit_results()), 3)
+                self.assertEqual(shared_objects[1].value, 2)
+                self.assertEqual(len(pool.get_exit_results()), 2)
                 self.assertEqual(sum(pool.get_exit_results()), sum(range(10)))
 
     @staticmethod
@@ -647,7 +647,7 @@ class DaemonTest(unittest.TestCase):
         """
         for start_method in ['fork', 'forkserver', 'spawn']:
             with self.subTest(start_method=start_method), \
-                    WorkerPool(n_jobs=3, daemon=False, start_method=start_method,
+                    WorkerPool(n_jobs=2, daemon=False, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
                 pool.map(self._square_daemon, ((X,) for X in repeat(self.test_data, 3)), chunk_size=1)
 
@@ -810,7 +810,7 @@ class ProgressBarTest(unittest.TestCase):
         print()
         for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
             with self.subTest(start_method=start_method), \
-                    WorkerPool(n_jobs=3, start_method=start_method,
+                    WorkerPool(n_jobs=2, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
                 results_list = pool.map(square, self.test_data, progress_bar=True)
                 self.assertIsInstance(results_list, list)
@@ -1024,25 +1024,25 @@ class KeepAliveTest(unittest.TestCase):
         """
         for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
             with self.subTest(start_method=start_method), \
-                    WorkerPool(n_jobs=3, use_worker_state=True, keep_alive=True, start_method=start_method,
+                    WorkerPool(n_jobs=2, use_worker_state=True, keep_alive=True, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
 
-                barrier = pool.ctx.Barrier(3)
+                barrier = pool.ctx.Barrier(2)
                 counter = pool.ctx.Value('i', 0)
                 pool.set_shared_objects((barrier, counter))
                 self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
                                      self.test_desired_output_f1)
-                self.assertEqual(counter.value, 3)
+                self.assertEqual(counter.value, 2)
                 barrier.reset()
 
                 self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_init=self._init1)),
                                      self.test_desired_output_f1)
-                self.assertEqual(counter.value, 3)
+                self.assertEqual(counter.value, 2)
                 barrier.reset()
 
                 self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
                                      self.test_desired_output_f1)
-                self.assertEqual(counter.value, 3)
+                self.assertEqual(counter.value, 2)
 
     @staticmethod
     def _init1(_, worker_state):
@@ -1146,7 +1146,7 @@ class ExceptionTest(unittest.TestCase):
         print()
         for start_method, progress_bar in product(['fork', 'forkserver', 'spawn', 'threading'], [False, True]):
             with self.subTest(start_method=start_method, progress_bar=progress_bar), \
-                    WorkerPool(n_jobs=3, start_method=start_method,
+                    WorkerPool(n_jobs=2, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
                 # Should work for map like functions
                 with self.subTest(function='square_raises', map='map'), self.assertRaises(ValueError):
