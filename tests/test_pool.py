@@ -1,3 +1,4 @@
+import logging
 import types
 import unittest
 from itertools import product, repeat
@@ -1144,6 +1145,13 @@ class ExceptionTest(unittest.TestCase):
         self.test_desired_output = list(map(lambda _args: square(*_args), self.test_data))
         self.test_data_len = len(self.test_data)
 
+        # Setup logger for debug purposes
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.DEBUG)
+
+    def tearDown(self):
+        self.logger.setLevel(logging.NOTSET)
+
     def test_exceptions(self):
         """
         Tests if MPIRE can handle exceptions well
@@ -1152,9 +1160,12 @@ class ExceptionTest(unittest.TestCase):
         print()
         for n_jobs, n_tasks_max_active, worker_lifespan, progress_bar in product([1, 20], [None, 1], [None, 1],
                                                                                  [False, True]):
+            self.logger.debug(f"========== {n_jobs}, {n_tasks_max_active}, {worker_lifespan}, {progress_bar} "
+                              f"==========")
             with WorkerPool(n_jobs=n_jobs) as pool:
 
                 # Should work for map like functions
+                self.logger.debug("----- square_raises, map -----")
                 with self.subTest(n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                   progress_bar=progress_bar, function='square_raises', map='map'), \
                      self.assertRaises(ValueError):
@@ -1162,6 +1173,7 @@ class ExceptionTest(unittest.TestCase):
                              worker_lifespan=worker_lifespan, progress_bar=progress_bar)
 
                 # Should work for imap like functions
+                self.logger.debug("----- square_raises, imap -----")
                 with self.subTest(n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                   progress_bar=progress_bar, function='square_raises', map='imap'), \
                      self.assertRaises(ValueError):
@@ -1169,6 +1181,7 @@ class ExceptionTest(unittest.TestCase):
                                              worker_lifespan=worker_lifespan, progress_bar=progress_bar))
 
                 # Should work for map like functions
+                self.logger.debug("----- square_raises_on_idx, map -----")
                 with self.subTest(n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                   progress_bar=progress_bar, function='square_raises_on_idx', map='map'), \
                      self.assertRaises(ValueError):
@@ -1176,6 +1189,7 @@ class ExceptionTest(unittest.TestCase):
                              worker_lifespan=worker_lifespan, progress_bar=progress_bar)
 
                 # Should work for imap like functions
+                self.logger.debug("----- square_raises_on_idx, imap -----")
                 with self.subTest(n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                   progress_bar=progress_bar, function='square_raises_on_idx', map='imap'), \
                      self.assertRaises(ValueError):
@@ -1189,22 +1203,27 @@ class ExceptionTest(unittest.TestCase):
         """
         print()
         for start_method, progress_bar in product(TEST_START_METHODS, [False, True]):
+            self.logger.debug(f"========== {start_method}, {progress_bar} ==========")
             with self.subTest(start_method=start_method, progress_bar=progress_bar), \
                     WorkerPool(n_jobs=2, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
                 # Should work for map like functions
+                self.logger.debug("----- square_raises, map -----")
                 with self.subTest(function='square_raises', map='map'), self.assertRaises(ValueError):
                     pool.map(self._square_raises, self.test_data, progress_bar=progress_bar)
 
                 # Should work for imap like functions
+                self.logger.debug("----- square_raises, imap -----")
                 with self.subTest(function='square_raises', map='imap'), self.assertRaises(ValueError):
                     list(pool.imap_unordered(self._square_raises, self.test_data, progress_bar=progress_bar))
 
                 # Should work for map like functions
+                self.logger.debug("----- square_raises_on_idx, map -----")
                 with self.subTest(function='square_raises_on_idx', map='map'), self.assertRaises(ValueError):
                     pool.map(self._square_raises_on_idx, self.test_data, progress_bar=progress_bar)
 
                 # Should work for imap like functions
+                self.logger.debug("----- square_raises_on_idx, imap -----")
                 with self.subTest(function='square_raises_on_idx', map='imap'), self.assertRaises(ValueError):
                     list(pool.imap_unordered(self._square_raises_on_idx, self.test_data, progress_bar=progress_bar))
 

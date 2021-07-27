@@ -40,4 +40,4 @@ jobs:
     - name: Test with pytest
       timeout-minutes: 10
       run: |
-        pytest -v
+        pytest -v -o log_cli=true
