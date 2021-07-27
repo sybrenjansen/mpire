@@ -10,6 +10,10 @@ from tqdm import tqdm
 from mpire import cpu_count, WorkerPool
 
 
+# We skip forkserver in the tests, because it doesn't work nicely with unittesting.
+TEST_START_METHODS = ['fork', 'spawn', 'threading']
+
+
 def square(idx, x):
     return idx, x * x
 
@@ -172,7 +176,7 @@ class MapTest(unittest.TestCase):
         Test different start methods. All should work just fine
         """
         print()
-        for start_method in tqdm(['fork', 'forkserver', 'spawn', 'threading']):
+        for start_method in tqdm(TEST_START_METHODS):
             with self.subTest(start_method=start_method, map='map'), WorkerPool(2, start_method=start_method) as pool:
                 results_list = pool.map(square, self.test_data)
                 self.assertIsInstance(results_list, list)
@@ -232,7 +236,7 @@ class WorkerIDTest(unittest.TestCase):
         """
         Test for different start methods
         """
-        for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
+        for start_method in TEST_START_METHODS:
             with self.subTest(start_method=start_method), \
                     WorkerPool(n_jobs=2, pass_worker_id=True, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
@@ -295,7 +299,7 @@ class SharedObjectsTest(unittest.TestCase):
         """
         Tests for different start methods
         """
-        for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
+        for start_method in TEST_START_METHODS:
             with self.subTest(start_method=start_method), \
                     WorkerPool(n_jobs=2, shared_objects=({'1', '2', '3'}), start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
@@ -365,7 +369,7 @@ class WorkerStateTest(unittest.TestCase):
         """
         Test for different start methods
         """
-        for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
+        for start_method in TEST_START_METHODS:
             with self.subTest(start_method=start_method), \
                     WorkerPool(n_jobs=2, pass_worker_id=True, use_worker_state=True, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
@@ -454,7 +458,7 @@ class InitFuncTest(unittest.TestCase):
         """
         Test for different start methods
         """
-        for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
+        for start_method in TEST_START_METHODS:
             with self.subTest(start_method=start_method), \
                     WorkerPool(n_jobs=2, use_worker_state=True, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
@@ -565,7 +569,7 @@ class ExitFuncTest(unittest.TestCase):
         """
         Test for different start methods
         """
-        for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
+        for start_method in TEST_START_METHODS:
             with self.subTest(start_method=start_method), \
                     WorkerPool(n_jobs=2, use_worker_state=True, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
@@ -645,7 +649,9 @@ class DaemonTest(unittest.TestCase):
         """
         Test for different start methods
         """
-        for start_method in ['fork', 'forkserver', 'spawn']:
+        for start_method in TEST_START_METHODS:
+            if start_method == 'threading':
+                continue
             with self.subTest(start_method=start_method), \
                     WorkerPool(n_jobs=2, daemon=False, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
@@ -717,7 +723,9 @@ class CPUPinningTest(unittest.TestCase):
         else:
             n_jobs, cpu_ids, expected_mask = 1, [0], [[0]]
 
-        for start_method in ['fork', 'forkserver', 'spawn']:
+        for start_method in TEST_START_METHODS:
+            if start_method == 'threading':
+                continue
             with self.subTest(start_method=start_method), patch('os.sched_setaffinity') as p, \
                     WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
@@ -808,7 +816,7 @@ class ProgressBarTest(unittest.TestCase):
         Test for different start methods
         """
         print()
-        for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
+        for start_method in TEST_START_METHODS:
             with self.subTest(start_method=start_method), \
                     WorkerPool(n_jobs=2, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
@@ -1022,7 +1030,7 @@ class KeepAliveTest(unittest.TestCase):
         """
         Test for different start methods
         """
-        for start_method in ['fork', 'forkserver', 'spawn', 'threading']:
+        for start_method in TEST_START_METHODS:
             with self.subTest(start_method=start_method), \
                     WorkerPool(n_jobs=2, use_worker_state=True, keep_alive=True, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
@@ -1144,7 +1152,7 @@ class ExceptionTest(unittest.TestCase):
         Test for different start methods
         """
         print()
-        for start_method, progress_bar in product(['fork', 'forkserver', 'spawn', 'threading'], [False, True]):
+        for start_method, progress_bar in product(TEST_START_METHODS, [False, True]):
             with self.subTest(start_method=start_method, progress_bar=progress_bar), \
                     WorkerPool(n_jobs=2, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:

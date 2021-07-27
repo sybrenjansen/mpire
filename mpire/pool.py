@@ -172,19 +172,10 @@ class WorkerPool:
         """
         # Disable the interrupt signal. We let the process die gracefully if it needs to
         with DisableKeyboardInterruptSignal():
-            # Create worker. We try 3 times in case a process fails to start. I've only seen this happen in Python 3.9,
-            # during the unittests when creating many different WorkerPools with forkserver as start method. In that
-            # scenario the forkserver could trigger OSError: [Errno 98] Address already in use. Trying again fixes it.
-            # In real world settings, it shouldn't be triggered.
-            n_tries = 0
-            while n_tries < 3:
-                try:
-                    w = self.Worker(worker_id, self.params, self._worker_comms, self._worker_insights, datetime.now())
-                    w.daemon = self.params.daemon
-                    w.start()
-                    break
-                except OSError:
-                    n_tries += 1
+            # Create worker
+            w = self.Worker(worker_id, self.params, self._worker_comms, self._worker_insights, datetime.now())
+            w.daemon = self.params.daemon
+            w.start()
 
             # Pin CPU if desired
             if self.params.cpu_ids:
