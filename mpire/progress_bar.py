@@ -81,20 +81,14 @@ class ProgressBarHandler:
             # Disable the interrupt signal. We let the process die gracefully
             with DisableKeyboardInterruptSignal():
 
-                # For some reason, when using forkserver as backend, starting the progress bar process fails 1 out of
-                # 1000 times. Therefore, we try a few times
-                while True:
-                    # We start a new process because updating the progress bar in a thread can slow down processing
-                    # of results and can fail to show real-time updates
-                    self.process = Process(target=self._progress_bar_handler,
-                                           args=(self.progress_bar_total, self.progress_bar_position))
+                # We start a new process because updating the progress bar in a thread can slow down processing
+                # of results and can fail to show real-time updates
+                logger.debug("Starting progress bar handler")
+                self.process = Process(target=self._progress_bar_handler,
+                                       args=(self.progress_bar_total, self.progress_bar_position))
 
-                    self.process.start()
-                    if self.process_started.wait(timeout=1.0):
-                        break
-                    self.process.terminate()
-                    self.process.join()
-                    self.process_started.clear()
+                self.process.start()
+                self.process_started.wait()
 
         return self
 
@@ -105,6 +99,7 @@ class ProgressBarHandler:
         if self.show_progress_bar:
 
             # Insert poison pill and close the handling process
+            logger.debug("Joining progress bar handler")
             if not self.worker_comms.exception_caught():
                 self.worker_comms.add_progress_bar_poison_pill()
             self.process.join()

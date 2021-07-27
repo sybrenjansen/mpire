@@ -1,5 +1,5 @@
 import logging
-from threading import Thread
+from threading import Event, Thread
 from typing import Any, Callable
 
 from mpire.comms import POISON_PILL, WorkerComms
@@ -29,6 +29,7 @@ class ExceptionHandler:
         self.worker_comms = worker_comms
         self.has_progress_bar = has_progress_bar
         self.thread = None
+        self.thread_started = Event()
 
     def __enter__(self) -> 'ExceptionHandler':
         """
@@ -38,8 +39,10 @@ class ExceptionHandler:
         """
         # Start a thread that handles exceptions. We start a thread, and not a process, because we need to be able to
         # raise an exception from here such that the main process will shutdown
+        logger.debug("Starting exception handler")
         self.thread = Thread(target=self._exception_handler)
         self.thread.start()
+        self.thread_started.wait()
 
         return self
 
@@ -49,6 +52,7 @@ class ExceptionHandler:
         """
         # Shutdown the exception handling thread. Insert a poison pill when no exception was raised by the workers.
         # If there was an exception, the exception handling thread would already be joinable.
+        logger.debug("Joining exception handler")
         if not self.worker_comms.exception_caught():
             self.worker_comms.add_exception_poison_pill()
         self.thread.join()
@@ -59,6 +63,7 @@ class ExceptionHandler:
         Keeps an eye on any exceptions being passed on by workers
         """
         logger.debug("Exception handler started")
+        self.thread_started.set()
 
         # Wait for an exception to occur
         err, traceback_str = self.worker_comms.get_exception(in_thread=True)
