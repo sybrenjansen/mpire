@@ -30,6 +30,8 @@ class ExceptionHandler:
         self.has_progress_bar = has_progress_bar
         self.thread = None
         self.thread_started = Event()
+        self.thread_done = Event()
+        self.err, self.traceback_str = None, None
 
     def __enter__(self) -> 'ExceptionHandler':
         """
@@ -67,28 +69,26 @@ class ExceptionHandler:
         self.thread_started.set()
 
         # Wait for an exception to occur
-        err, traceback_str = self.worker_comms.get_exception(in_thread=True)
+        self.err, self.traceback_str = self.worker_comms.get_exception(in_thread=True)
 
         # If we received a poison pill, we should just quit quietly
-        if err is not POISON_PILL:
+        if self.err is not POISON_PILL:
             # Let main process know we can stop working
-            logger.debug(f"Exception caught: {err}")
+            logger.debug(f"Exception caught: {self.err}")
             self.worker_comms.set_exception_caught()
 
             # Wait until terminate is done
             logger.debug("Waiting until terminate is done")
             self.worker_comms.wait_for_terminate_done()
 
-            # Pass error to main process so it can be raised there (exceptions raised from threads or child processes
-            # cannot be caught directly). Pass another error in case we have a progress bar
-            logger.debug("Passing on exception to main process")
-            self.worker_comms.add_exception(err, traceback_str)
+            # Pass error to progress bar, in case we have one
             if self.has_progress_bar:
                 logger.debug("Passing on exception to progress bar handler")
-                self.worker_comms.add_exception(err, traceback_str)
+                self.worker_comms.add_exception(self.err, self.traceback_str)
 
         self.worker_comms.task_done_exception()
         logger.debug("Exception handler done")
+        self.thread_done.set()
 
     def raise_on_exception(self) -> None:
         """
@@ -99,16 +99,15 @@ class ExceptionHandler:
         if self.worker_comms.exception_thrown():
             logger.debug("Waiting until exception is caught")
             self.worker_comms.wait_until_exception_is_caught()
+            logger.debug("Waiting until exception handler is done")
+            self.thread_done.wait()
 
         if self.worker_comms.exception_caught():
             # Clear keep order event so we can safely reuse the WorkerPool and use (i)map_unordered after an (i)map call
             self.worker_comms.clear_keep_order()
 
-            # Get exception and raise here
-            logger.debug("Obtaining caught exception")
-            err, traceback_str = self.worker_comms.get_exception()
-            self.worker_comms.task_done_exception()
+            # Raise here
             logger.debug("Joining exception queue")
             self.worker_comms.join_exception_queue()
             logger.debug("Exception queue joined. Raising caught exception")
-            raise err(traceback_str)
+            raise self.err(self.traceback_str)
