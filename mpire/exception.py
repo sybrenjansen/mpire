@@ -54,6 +54,7 @@ class ExceptionHandler:
         # If there was an exception, the exception handling thread would already be joinable.
         logger.debug("Joining exception handler")
         if not self.worker_comms.exception_caught():
+            logger.debug("Adding poison pill to exception handler")
             self.worker_comms.add_exception_poison_pill()
         self.thread.join()
         logger.debug("Exception handler joined")
@@ -83,6 +84,7 @@ class ExceptionHandler:
             logger.debug("Passing on exception to main process")
             self.worker_comms.add_exception(err, traceback_str)
             if self.has_progress_bar:
+                logger.debug("Passing on exception to progress bar handler")
                 self.worker_comms.add_exception(err, traceback_str)
 
         self.worker_comms.task_done_exception()
@@ -106,6 +108,7 @@ class ExceptionHandler:
             logger.debug("Obtaining caught exception")
             err, traceback_str = self.worker_comms.get_exception()
             self.worker_comms.task_done_exception()
+            logger.debug("Joining exception queue")
             self.worker_comms.join_exception_queue()
-            logger.debug("Raising caught exception")
+            logger.debug("Exception queue joined. Raising caught exception")
             raise err(traceback_str)
