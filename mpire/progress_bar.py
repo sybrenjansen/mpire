@@ -149,6 +149,8 @@ class ProgressBarHandler:
                 if progress_bar.n != progress_bar.total:
                     logger.debug("Sending final progress bar update")
                     self._send_update(progress_bar, failed=True)
+                else:
+                    logger.debug("No exception detected")
                 break
 
             # Register progress bar to dashboard in case a dashboard is started after the progress bar was created

@@ -322,7 +322,11 @@ class WorkerComms:
         :return: Tuple containing the type of the exception and the traceback string
         """
         with DelayedKeyboardInterrupt(in_thread):
-            return self._exception_queue.get(block=True)
+            while True:
+                try:
+                    return self._exception_queue.get(block=True, timeout=0.1)
+                except queue.Empty:
+                    pass
 
     def task_done_exception(self) -> None:
         """
