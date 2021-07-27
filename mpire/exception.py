@@ -81,11 +81,6 @@ class ExceptionHandler:
             logger.debug("Waiting until terminate is done")
             self.worker_comms.wait_for_terminate_done()
 
-            # Pass error to progress bar, in case we have one
-            if self.has_progress_bar:
-                logger.debug("Passing on exception to progress bar handler")
-                self.worker_comms.add_exception(self.err, self.traceback_str)
-
         self.worker_comms.task_done_exception()
         logger.debug("Exception handler done")
         self.thread_done.set()
@@ -99,6 +94,12 @@ class ExceptionHandler:
         if self.worker_comms.exception_thrown():
             logger.debug("Waiting until exception is caught")
             self.worker_comms.wait_until_exception_is_caught()
+
+            # Pass error to progress bar, in case we have one
+            if self.has_progress_bar:
+                logger.debug("Passing on exception to progress bar handler")
+                self.worker_comms.add_exception(self.err, self.traceback_str)
+
             logger.debug("Waiting until exception handler is done")
             self.thread_done.wait()
 
