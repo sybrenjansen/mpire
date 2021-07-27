@@ -147,6 +147,7 @@ class ProgressBarHandler:
                 # If, at this point, the progress bar is not at 100% it means we had a failure. We send the failure to
                 # the dashboard in the case a dashboard is started
                 if progress_bar.n != progress_bar.total:
+                    logger.debug("Sending final progress bar update")
                     self._send_update(progress_bar, failed=True)
                 break
 
@@ -205,8 +206,10 @@ class ProgressBarHandler:
         # In case we have a failure and are not using a dashboard we need to remove the additional error put in the
         # exception queue by the exception handler. We won't be using it
         elif failed and self.worker_comms.exception_caught():
+            logger.debug("Obtaining and throwing away exception (no dashboard)")
             self.worker_comms.get_exception()
             self.worker_comms.task_done_exception()
+            logger.debug("Done with exception")
 
     def _get_progress_bar_update_dict(self, progress_bar: tqdm, failed: bool) -> Dict[str, Any]:
         """
@@ -228,9 +231,11 @@ class ProgressBarHandler:
         # available in the exception_queue. Otherwise, it will be a KeyboardInterrupt
         if failed:
             if self.worker_comms.exception_caught():
+                logger.debug("Obtaining exception for dashboard")
                 _, traceback_str = self.worker_comms.get_exception()
                 traceback_str = traceback_str.strip()
                 self.worker_comms.task_done_exception()
+                logger.debug("Done with exception")
             else:
                 traceback_str = 'KeyboardInterrupt'
         else:
