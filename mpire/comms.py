@@ -326,6 +326,8 @@ class WorkerComms:
                 try:
                     return self._exception_queue.get(block=True, timeout=0.1)
                 except queue.Empty:
+                    if not in_thread:  # TODO: remove later
+                        logger.debug("Exception queue empty, trying again")
                     pass
 
     def task_done_exception(self) -> None:

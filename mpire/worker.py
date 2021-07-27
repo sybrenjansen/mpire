@@ -3,6 +3,7 @@ try:
     import dill as pickle
 except ImportError:
     import pickle
+import logging
 import multiprocessing as mp
 import signal
 import traceback
@@ -29,6 +30,8 @@ from mpire.exception import CannotPickleExceptionError, StopWorker
 from mpire.insights import WorkerInsights
 from mpire.params import WorkerPoolParams
 from mpire.utils import TimeIt
+
+logger = logging.getLogger(__name__)
 
 
 class AbstractWorker:
@@ -312,6 +315,7 @@ class AbstractWorker:
                     err = CannotPickleExceptionError()
 
                 # Add exception
+                logger.debug(f"Exception occurred in Worker-{self.worker_id}")
                 self.worker_comms.add_exception(type(err), traceback_str)
 
     def _format_args(self, args: Any, no_args: bool = False, separator: str = '\n') -> str:
