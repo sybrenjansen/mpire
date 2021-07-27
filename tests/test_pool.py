@@ -900,7 +900,7 @@ class KeepAliveTest(unittest.TestCase):
     def test_keep_alive_func_changes(self):
         """
         When keep_alive is set to True it should reuse existing workers between map calls, but only when the called
-        function is kept constant
+        function, amongst others, is kept constant
         """
         for n_jobs in [1, 2, 4]:
             barrier = Barrier(n_jobs)
@@ -930,8 +930,8 @@ class KeepAliveTest(unittest.TestCase):
 
     def test_keep_alive_worker_lifespan_changes(self):
         """
-        When keep_alive is set to True it should reuse existing workers between map calls, but only when the called
-        function is kept constant
+        When keep_alive is set to True it should reuse existing workers between map calls, but only when the worker
+        lifespan, amongst others, is kept constant
         """
         for n_jobs in [1, 2, 4]:
             barrier = Barrier(n_jobs)
@@ -967,7 +967,7 @@ class KeepAliveTest(unittest.TestCase):
     def test_keep_alive_worker_init_changes(self):
         """
         When keep_alive is set to True it should reuse existing workers between map calls, but only when the worker init
-        function is kept constant
+        function, amongst others, is kept constant
         """
         for n_jobs in [1, 2, 4]:
             barrier = Barrier(n_jobs)
@@ -998,7 +998,7 @@ class KeepAliveTest(unittest.TestCase):
     def test_keep_alive_worker_exit_changes(self):
         """
         When keep_alive is set to True it should reuse existing workers between map calls, but only when the worker exit
-        function is kept constant
+        function, amongst others, is kept constant
         """
         for n_jobs in [1, 2, 4]:
             barrier = Barrier(n_jobs)
@@ -1024,6 +1024,42 @@ class KeepAliveTest(unittest.TestCase):
 
                 self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1,
                                               worker_exit=self._exit1), self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs * 3)
+
+    def test_keep_alive_enable_insights_changes(self):
+        """
+        When keep_alive is set to True it should reuse existing workers between map calls, but only when
+        enable_insights, amongst others, is kept constant
+        """
+        for n_jobs in [1, 2, 4]:
+            barrier = Barrier(n_jobs)
+            counter = Value('i', 0)
+            shared = barrier, counter
+            with self.subTest(n_jobs=n_jobs), \
+                    WorkerPool(n_jobs=n_jobs, shared_objects=shared, use_worker_state=True, keep_alive=True) as pool:
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1, enable_insights=False),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs)
+                barrier.reset()
+
+                self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_init=self._init1,
+                                                    enable_insights=False)), self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs)
+                barrier.reset()
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1, enable_insights=True),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs * 2)
+                barrier.reset()
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1, enable_insights=True),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs * 2)
+                barrier.reset()
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1, enable_insights=False),
+                                     self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs * 3)
 
     def test_start_methods(self):

@@ -265,18 +265,21 @@ class WorkerPoolParamsTest(unittest.TestCase):
         self.assertIsNone(params.worker_init)
         self.assertIsNone(params.worker_exit)
         self.assertIsNone(params.worker_lifespan)
+        self.assertIsNone(params.enable_insights)
 
-        params.set_map_params(self._f1, self._init1, self._exit1, 100)
+        params.set_map_params(self._f1, self._init1, self._exit1, 100, True)
         self.assertEqual(params.func, self._f1)
         self.assertEqual(params.worker_init, self._init1)
         self.assertEqual(params.worker_exit, self._exit1)
         self.assertEqual(params.worker_lifespan, 100)
+        self.assertTrue(params.enable_insights)
 
-        params.set_map_params(self._f2, self._init2, self._exit2, None)
+        params.set_map_params(self._f2, self._init2, self._exit2, None, False)
         self.assertEqual(params.func, self._f2)
         self.assertEqual(params.worker_init, self._init2)
         self.assertEqual(params.worker_exit, self._exit2)
         self.assertIsNone(params.worker_lifespan)
+        self.assertFalse(params.enable_insights)
 
     def test_workers_need_restart(self):
         """
@@ -285,22 +288,27 @@ class WorkerPoolParamsTest(unittest.TestCase):
         params = WorkerPoolParams()
 
         with self.subTest('not initialized'):
-            for func, worker_init, worker_exit, worker_lifespan in product([self._f1, self._f2],
-                                                                           [None, self._init1, self._init2],
-                                                                           [None, self._exit1, self._exit2],
-                                                                           [None, 42, 1337]):
-                self.assertTrue(params.workers_need_restart(func, worker_init, worker_exit, worker_lifespan))
+            for func, worker_init, worker_exit, worker_lifespan, enable_insights in product(
+                    [self._f1, self._f2],
+                    [None, self._init1, self._init2],
+                    [None, self._exit1, self._exit2],
+                    [None, 42, 1337],
+                    [False, True]
+            ):
+                self.assertTrue(params.workers_need_restart(func, worker_init, worker_exit, worker_lifespan,
+                                                            enable_insights))
 
-        params.set_map_params(self._f1, self._init1, self._exit1, 42)
+        params.set_map_params(self._f1, self._init1, self._exit1, 42, True)
 
         with self.subTest('initialized and nothing changed'):
-            self.assertFalse(params.workers_need_restart(self._f1, self._init1, self._exit1, 42))
+            self.assertFalse(params.workers_need_restart(self._f1, self._init1, self._exit1, 42, True))
 
         with self.subTest('initialized and a parameter changed'):
-            self.assertTrue(params.workers_need_restart(self._f2, self._init1, self._exit1, 42))
-            self.assertTrue(params.workers_need_restart(self._f1, self._init2, self._exit1, 42))
-            self.assertTrue(params.workers_need_restart(self._f1, self._init1, self._exit2, 42))
-            self.assertTrue(params.workers_need_restart(self._f1, self._init1, self._exit1, 1337))
+            self.assertTrue(params.workers_need_restart(self._f2, self._init1, self._exit1, 42, True))
+            self.assertTrue(params.workers_need_restart(self._f1, self._init2, self._exit1, 42, True))
+            self.assertTrue(params.workers_need_restart(self._f1, self._init1, self._exit2, 42, True))
+            self.assertTrue(params.workers_need_restart(self._f1, self._init1, self._exit1, 1337, True))
+            self.assertTrue(params.workers_need_restart(self._f1, self._init1, self._exit1, 42, False))
 
     @staticmethod
     def _init1():

@@ -38,6 +38,7 @@ class WorkerPoolParams:
         self.func = None
         self.worker_init = None
         self.worker_exit = None
+        self.enable_insights = None
 
     def _check_cpu_ids(self, cpu_ids: CPUList) -> List[List[int]]:
         """
@@ -168,7 +169,7 @@ class WorkerPoolParams:
         return n_tasks, max_tasks_active, chunk_size, progress_bar
 
     def set_map_params(self, func: Callable, worker_init: Optional[Callable], worker_exit: Optional[Callable],
-                       worker_lifespan: int) -> None:
+                       worker_lifespan: int, enable_insights: bool) -> None:
         """
         Set map specific parameters
 
@@ -176,14 +177,16 @@ class WorkerPoolParams:
         :param worker_init: Function to call each time a new worker starts
         :param worker_exit: Function to call each time a worker exits
         :param worker_lifespan: Number of chunks a worker can handle before it is restarted
+        :param enable_insights: Whether to enable worker insights
         """
         self.func = func
         self.worker_init = worker_init
         self.worker_exit = worker_exit
         self.worker_lifespan = worker_lifespan
+        self.enable_insights = enable_insights
 
     def workers_need_restart(self, func: Callable, worker_init: Optional[Callable], worker_exit: Optional[Callable],
-                             worker_lifespan: int) -> bool:
+                             worker_lifespan: int, enable_insights: bool) -> bool:
         """
         Checks if workers need to be restarted based on some key parameters
 
@@ -191,9 +194,11 @@ class WorkerPoolParams:
         :param worker_init: Function to call each time a new worker starts
         :param worker_exit: Function to call each time a worker exits
         :param worker_lifespan: Number of chunks a worker can handle before it is restarted
+        :param enable_insights: Whether to enable worker insights
         :return: Whether the workers need to be restarted
         """
         return (func != self.func or
                 worker_init != self.worker_init or
                 worker_exit != self.worker_exit or
-                worker_lifespan != self.worker_lifespan)
+                worker_lifespan != self.worker_lifespan or
+                enable_insights != self.enable_insights)

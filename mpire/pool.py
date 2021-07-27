@@ -122,27 +122,21 @@ class WorkerPool:
         """
         self.params.keep_alive = keep_alive
 
-    def _start_workers(self, func: Callable, worker_init: Optional[Callable], worker_exit: Optional[Callable],
-                       worker_lifespan: Optional[int], progress_bar: bool) -> None:
+    def _start_workers(self, progress_bar: bool, enable_insights: bool) -> None:
         """
         Spawns the workers and starts them so they're ready to start reading from the tasks queue.
 
-        :param func: Function to call each time new task arguments become available
-        :param worker_init: Function to call each time a new worker starts
-        :param worker_exit: Function to call each time a worker exits. Return values will be fetched and made available
-            through `WorkerPool.get_exit_results`.
-        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
-            stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: Whether there's a progress bar
+        :param enable_insights: Whether to enable worker insights
         """
         logger.debug("Spinning up workers")
 
-        # Save params for later reference (for example, when restarting workers)
-        self.params.set_map_params(func, worker_init, worker_exit, worker_lifespan)
+        # Init communication primitives
+        self._worker_comms.init_comms(self.params.worker_exit is not None, progress_bar)
+        self._worker_insights.reset_insights(enable_insights)
+        self._exit_results = []
 
         # Start new workers
-        self._worker_comms.init_comms(self.params.worker_exit is not None, progress_bar)
-        self._exit_results = []
         for worker_id in range(self.params.n_jobs):
             self._workers.append(self._start_worker(worker_id))
 
@@ -610,15 +604,14 @@ class WorkerPool:
             iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size,
                                                    n_splits or self.params.n_jobs * 64)
 
-        # Reset profiling stats
-        self._worker_insights.reset_insights(enable_insights)
-
-        # Start workers if there aren't any. If they already exist they must be restarted when either the function to
-        # execute or the worker lifespan changes
-        if self._workers and self.params.workers_need_restart(func, worker_init, worker_exit, worker_lifespan):
+        # Start workers if there aren't any. If they already exist they must be restarted when either the function(s) to
+        # execute, worker_lifespan, or enable_insights changes
+        if self._workers and self.params.workers_need_restart(func, worker_init, worker_exit, worker_lifespan,
+                                                              enable_insights):
             self.stop_and_join(keep_alive=False)
         if not self._workers:
-            self._start_workers(func, worker_init, worker_exit, worker_lifespan, bool(progress_bar))
+            self.params.set_map_params(func, worker_init, worker_exit, worker_lifespan, enable_insights)
+            self._start_workers(bool(progress_bar), enable_insights)
 
         # Create exception, exit results, and progress bar handlers. The exception handler receives any exceptions
         # thrown by the workers, terminates everything and re-raise an exception in the main process. The exit results
