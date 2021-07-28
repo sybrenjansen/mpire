@@ -95,3 +95,13 @@ an issue on GitHub if you encounter issues.
 
 Windows doesn't support forking, so you will need to manually switch to spawn as start method. See :ref:`start_methods`
 for more information on start methods.
+
+Disclaimer: it could be that MPIRE can't be imported on systems without fork. If so, let me know by submitting an issue
+on GitHub.
+
+
+Fork-server & spawn
+-------------------
+
+Both these start methods should work fine on most occassions. However, they're not fully stress tested for situations
+where an exception occurs or a keyboard interrupt is issued. In normal operation, they should work as intended.

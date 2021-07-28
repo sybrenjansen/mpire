@@ -29,6 +29,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 DATETIME_FORMAT = "%Y-%m-%d, %H:%M:%S"
+TQDM_LOCK = mp.RLock()
+tqdm.set_lock(TQDM_LOCK)
 
 
 class ProgressBarHandler:
@@ -64,9 +66,6 @@ class ProgressBarHandler:
             self.function_details['n_jobs'] = n_jobs
         else:
             self.function_details = None
-
-        # Set lock for TQDM such that racing conditions are avoided when using multiple progress bars
-        self.tqdm_lock = self.ctx.Lock()
 
         self.process = None
         self.process_started = self.ctx.Event()
@@ -107,7 +106,6 @@ class ProgressBarHandler:
             if not self.worker_comms.exception_caught():
                 self.worker_comms.add_progress_bar_poison_pill()
             self.process.join()
-            self.worker_comms.join_progress_bar_task_completed_queue(self.keep_alive)
             logger.debug("Progress bar handler joined")
 
     def _progress_bar_handler(self) -> None:
@@ -123,7 +121,6 @@ class ProgressBarHandler:
             print(' ', end='', flush=True)
 
         # Create progress bar and register the start time
-        tqdm.set_lock(self.tqdm_lock)
         progress_bar = tqdm(total=self.progress_bar_total, position=self.progress_bar_position, dynamic_ncols=True,
                             leave=True)
         self.start_t = datetime.fromtimestamp(progress_bar.start_t)

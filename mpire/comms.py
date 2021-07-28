@@ -535,7 +535,7 @@ class WorkerComms:
                 self.get_results(block=False, in_thread=True)
                 dont_wait_event.clear()
                 got_results = True
-        except queue.Empty:
+        except (queue.Empty, OSError):
             if got_results:
                 dont_wait_event.set()
 
@@ -547,7 +547,7 @@ class WorkerComms:
                 self.get_exit_results(worker_id, block=False, in_thread=True)
                 dont_wait_event.clear()
                 got_results = True
-            except queue.Empty:
+            except (queue.Empty, OSError):
                 if got_results:
                     dont_wait_event.set()
 
@@ -561,7 +561,7 @@ class WorkerComms:
                     self._task_completed_queue.task_done()
                     dont_wait_event.clear()
                     got_results = True
-            except queue.Empty:
+            except (queue.Empty, OSError):
                 if got_results:
                     dont_wait_event.set()
 

@@ -397,6 +397,12 @@ the main WorkerPool (which is the default).
     notebook session. It'll work but you'll get some additional new lines in your output and it could be that your main
     progress bar won't update as you would expect. Note that you can always use the MPIRE dashboard.
 
+.. warning::
+
+    Output from multiple progress bars can get a little glitchy and sometimes additional cloned progress bars may
+    be visible. This happens when setting ``leave=True`` on tqdm progress bars, which is the default in MPIRE. This
+    part is still being worked on, but you can safely ignore them in the mean time.
+
 
 .. _worker_init_exit:
 
