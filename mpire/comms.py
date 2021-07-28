@@ -34,6 +34,7 @@ class WorkerComms:
         """
         self.ctx = ctx
         self.n_jobs = n_jobs
+        self.using_threading = using_threading
 
         # Whether or not to inform the child processes to keep order in mind (for the map functions)
         self._keep_order = self.ctx.Event()
@@ -55,9 +56,6 @@ class WorkerComms:
         # List of Event objects to indicate whether workers are alive
         self._workers_dead = None
 
-        # Queue related to the progress bar. Child processes signal whenever they are finished with a task
-        self._task_completed_queue = None
-
         # Queue where the child processes can pass on an encountered exception
         self._exception_queue = None
 
@@ -73,31 +71,49 @@ class WorkerComms:
         # Whether the terminate function has completed
         self._terminate_done = self.ctx.Event()
 
+        # Queue related to the progress bar. Child processes signal whenever they are finished with a task
+        self._task_completed_queue = None
+
     ################
     # Initialization
     ################
 
     def init_comms(self, has_worker_exit: bool, has_progress_bar: bool) -> None:
         """
-        Initialize/Reset comms containers
+        Initialize/Reset comms containers.
+
+        Threading doesn't have a JoinableQueue, so the threading context returns a multiprocessing.JoinableQueue
+        instead. However, in the (unlikely) scenario that threading does get one, we explicitly switch to a
+        multiprocessing.JoinableQueue for both the exception queue and progress bar tasks completed queue, because the
+        progress bar handler needs process-aware objects.
 
         :param has_worker_exit: Whether there's a worker_exit function provided
         :param has_progress_bar: Whether there's a progress bar
         """
+        # Task related
         self._task_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
         self._task_idx = 0
         self._last_completed_task_worker_id = None
+
+        # Results related
         self._results_queue = self.ctx.JoinableQueue()
         self._exit_results_queues = [self.ctx.JoinableQueue()
                                      for _ in range(self.n_jobs)] if has_worker_exit else []
+
+        # Worker status
         self._worker_done_array = self.ctx.Array('b', self.n_jobs, lock=False)
         self._workers_dead = [self.ctx.Event() for _ in range(self.n_jobs)]
         [worker_dead.set() for worker_dead in self._workers_dead]
-        self._exception_queue = self.ctx.JoinableQueue()
+
+        # Exception related
+        self._exception_queue = mp.JoinableQueue() if self.using_threading else self.ctx.JoinableQueue()
         self._exception_thrown.clear()
         self._exception_caught.clear()
-        self._task_completed_queue = self.ctx.JoinableQueue() if has_progress_bar else None
         self._terminate_done.clear()
+
+        # Progress bar related
+        self._task_completed_queue = ((mp.JoinableQueue() if self.using_threading else self.ctx.JoinableQueue())
+                                      if has_progress_bar else None)
 
     ################
     # Progress bar

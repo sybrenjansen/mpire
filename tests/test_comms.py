@@ -20,17 +20,19 @@ class WorkerCommsTest(unittest.TestCase):
         Test if initializing/resetting the comms is done properly
         """
         for n_jobs, (ctx, using_threading) in product([1, 2, 4], [(MP_CONTEXTS['mp']['fork'], False),
+                                                                  (MP_CONTEXTS['mp']['forkserver'], False),
+                                                                  (MP_CONTEXTS['mp']['spawn'], False),
                                                                   (MP_CONTEXTS['threading'], True)]):
             comms = WorkerComms(ctx, n_jobs, using_threading)
             self.assertEqual(comms.ctx, ctx)
             self.assertEqual(comms.n_jobs, n_jobs)
+            self.assertEqual(comms.using_threading, using_threading)
 
             with self.subTest('__init__ called', n_jobs=n_jobs, using_threading=using_threading):
                 self.assertIsInstance(comms._keep_order, type(comms.ctx.Event()))
                 self.assertFalse(comms._keep_order.is_set())
                 self.assertIsNone(comms._task_queues)
                 self.assertIsNone(comms._task_idx)
-                self.assertIsNone(comms._last_completed_task_worker_id)
                 self.assertIsNone(comms._results_queue)
                 self.assertListEqual(comms._exit_results_queues, [])
                 self.assertIsNone(comms._worker_done_array)
@@ -45,6 +47,7 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertFalse(comms._exception_caught.is_set())
                 self.assertIsInstance(comms._terminate_done, type(comms.ctx.Event()))
                 self.assertFalse(comms._terminate_done.is_set())
+                self.assertIsNone(comms._last_completed_task_worker_id)
 
             with self.subTest('without initial values', n_jobs=n_jobs, using_threading=using_threading,
                               has_worker_exit=False, has_progress_bar=False):
@@ -54,7 +57,6 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertEqual(len(comms._task_queues), n_jobs)
                 for q in comms._task_queues:
                     self.assertIsInstance(q, mp.queues.JoinableQueue)
-                self.assertIsNone(comms._last_completed_task_worker_id)
                 self.assertIsInstance(comms._results_queue, mp.queues.JoinableQueue)
                 self.assertListEqual(comms._exit_results_queues, [])
                 self.assertIsInstance(comms._worker_done_array, ctypes.Array)
@@ -68,6 +70,7 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertFalse(comms._exception_caught.is_set())
                 self.assertIsInstance(comms._terminate_done, type(comms.ctx.Event()))
                 self.assertFalse(comms._terminate_done.is_set())
+                self.assertIsNone(comms._last_completed_task_worker_id)
 
                 # Basic sanity checks for the values
                 self.assertEqual(comms._task_idx, 0)
@@ -91,6 +94,7 @@ class WorkerCommsTest(unittest.TestCase):
             comms._exception_caught.set()
             comms._terminate_done.set()
 
+            # Note that threading doesn't have a JoinableQueue, so they're taken from multiprocessing
             with self.subTest('with initial values', n_jobs=n_jobs, using_threading=using_threading,
                               has_worker_exit=False, has_progress_bar=False):
                 comms.init_comms(has_worker_exit=False, has_progress_bar=False)

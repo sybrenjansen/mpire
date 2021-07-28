@@ -424,7 +424,7 @@ if DILL_INSTALLED:
         pass
 
 
-def worker_factory(start_method: str, use_dill: bool) -> Type[Union[mp.Process, Thread]]:
+def worker_factory(start_method: str, use_dill: bool) -> Type[Union[AbstractWorker, mp.Process, Thread]]:
     """
     Returns the appropriate worker class given the start method
 

@@ -618,8 +618,9 @@ class WorkerPool:
         # handler fetches results from the exit function, if provided. The progress bar handler receives progress
         # updates from the workers and updates the progress bar accordingly
         with ExceptionHandler(self.terminate, self._worker_comms, bool(progress_bar)) as exception_handler, \
-             ProgressBarHandler(func, self.params.n_jobs, progress_bar, n_tasks, progress_bar_position,
-                                self._worker_comms, self._worker_insights, self.params.keep_alive):
+             ProgressBarHandler(self.ctx, self.params.start_method == 'threading', func, self.params.n_jobs,
+                                progress_bar, n_tasks, progress_bar_position, self._worker_comms, self._worker_insights,
+                                self.params.keep_alive):
 
             # Process all args in the iterable
             n_active = 0

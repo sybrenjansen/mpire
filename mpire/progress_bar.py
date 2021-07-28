@@ -1,7 +1,8 @@
 import logging
+import multiprocessing as mp
+import multiprocessing.context
 import sys
 from datetime import datetime, timedelta
-from multiprocessing import Event, Lock, Process
 from typing import Any, Callable, Dict
 
 from tqdm.auto import tqdm
@@ -29,17 +30,15 @@ logger = logging.getLogger(__name__)
 
 DATETIME_FORMAT = "%Y-%m-%d, %H:%M:%S"
 
-# Set lock for TQDM such that racing conditions are avoided when using multiple progress bars
-TQDM_LOCK = Lock()
-tqdm.set_lock(TQDM_LOCK)
-
 
 class ProgressBarHandler:
 
-    def __init__(self, func: Callable, n_jobs: int, show_progress_bar: bool, progress_bar_total: int,
-                 progress_bar_position: int, worker_comms: WorkerComms, worker_insights: WorkerInsights,
-                 keep_alive: bool) -> None:
+    def __init__(self, ctx: multiprocessing.context.BaseContext, using_threading: bool, func: Callable, n_jobs: int,
+                 show_progress_bar: bool, progress_bar_total: int, progress_bar_position: int,
+                 worker_comms: WorkerComms, worker_insights: WorkerInsights, keep_alive: bool) -> None:
         """
+        :param ctx: Multiprocessing context
+        :param using_threading: Whether threading is used as backend
         :param func: Function passed on to a WorkerPool map function
         :param n_jobs: Number of workers that are used
         :param show_progress_bar: When ``True`` will display a progress bar
@@ -50,6 +49,10 @@ class ProgressBarHandler:
         :param worker_insights: WorkerInsights object which stores the worker insights
         :param keep_alive: Whether to keep the progress bar queue alive after we're done here
         """
+        # When the threading backend is used we switch to a multiprocessing context, because the progress bar handler
+        # needs to be a process, not a thread. This is because when using threading, the progress bar updates will
+        # interfere too much with the main process.
+        self.ctx = mp if using_threading else ctx
         self.show_progress_bar = show_progress_bar
         self.progress_bar_total = progress_bar_total
         self.progress_bar_position = progress_bar_position
@@ -62,8 +65,11 @@ class ProgressBarHandler:
         else:
             self.function_details = None
 
+        # Set lock for TQDM such that racing conditions are avoided when using multiple progress bars
+        self.tqdm_lock = self.ctx.Lock()
+
         self.process = None
-        self.process_started = Event()
+        self.process_started = self.ctx.Event()
         self.progress_bar_id = None
         self.dashboard_dict = None
         self.dashboard_details_dict = None
@@ -84,9 +90,7 @@ class ProgressBarHandler:
                 # We start a new process because updating the progress bar in a thread can slow down processing
                 # of results and can fail to show real-time updates
                 logger.debug("Starting progress bar handler")
-                self.process = Process(target=self._progress_bar_handler,
-                                       args=(self.progress_bar_total, self.progress_bar_position))
-
+                self.process = self.ctx.Process(target=self._progress_bar_handler)
                 self.process.start()
                 self.process_started.wait()
 
@@ -106,13 +110,9 @@ class ProgressBarHandler:
             self.worker_comms.join_progress_bar_task_completed_queue(self.keep_alive)
             logger.debug("Progress bar handler joined")
 
-    def _progress_bar_handler(self, progress_bar_total: int, progress_bar_position: int) -> None:
+    def _progress_bar_handler(self) -> None:
         """
         Keeps track of the progress made by the workers and updates the progress bar accordingly
-
-        :param progress_bar_total: Total number of tasks that will be processed
-        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time
         """
         logger.debug("Progress bar handler started")
         self.process_started.set()
@@ -123,7 +123,9 @@ class ProgressBarHandler:
             print(' ', end='', flush=True)
 
         # Create progress bar and register the start time
-        progress_bar = tqdm(total=progress_bar_total, position=progress_bar_position, dynamic_ncols=True, leave=True)
+        tqdm.set_lock(self.tqdm_lock)
+        progress_bar = tqdm(total=self.progress_bar_total, position=self.progress_bar_position, dynamic_ncols=True,
+                            leave=True)
         self.start_t = datetime.fromtimestamp(progress_bar.start_t)
 
         # Register progress bar to dashboard in case a dashboard is started
