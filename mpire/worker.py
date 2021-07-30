@@ -129,8 +129,10 @@ class AbstractWorker:
                 with TimeIt(self.worker_insights.worker_waiting_time, self.worker_id):
                     next_chunked_args = self.worker_comms.get_task(self.worker_id)
 
-                # Force update task insights and progress bar when we got a (non-lethal) poison pill. In case of a
-                # lethal pill we additionally run the worker exit function and stop. Otherwise, we simply continue
+                # Force update task insights and progress bar when we got a (non-lethal) poison pill. At this point, we
+                # know for sure that all results have been processed. In case of a lethal pill we additionally run the
+                # worker exit function, wait for all the exit results to be obtained, wait for the progress bar to be
+                # done, and stop. Otherwise, we simply continue
                 if next_chunked_args == POISON_PILL or next_chunked_args == NON_LETHAL_POISON_PILL:
                     self._update_task_insights(force_update=True)
                     self._update_progress_bar(force_update=True)
@@ -138,6 +140,9 @@ class AbstractWorker:
                     if next_chunked_args == POISON_PILL:
                         if self.params.worker_exit:
                             self._run_exit_func(additional_args)
+                            self.worker_comms.wait_until_all_exit_results_obtained()
+                        if self.worker_comms.has_progress_bar():
+                            self.worker_comms.wait_until_progress_bar_is_complete()
                         return
                     else:
                         continue
@@ -297,6 +302,9 @@ class AbstractWorker:
             # empty when the first one arrives.
             if not self.worker_comms.exception_thrown():
 
+                # Let others know we need to stop
+                self.worker_comms.set_exception_thrown()
+
                 # Create traceback string
                 traceback_str = "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % (
                     self.worker_id, self._format_args(args, no_args), traceback.format_exc()
@@ -311,8 +319,10 @@ class AbstractWorker:
                 except pickle.PicklingError:
                     err = CannotPickleExceptionError()
 
-                # Add exception
+                # Add exception. When we have a progress bar, we add an additional one
                 self.worker_comms.add_exception(type(err), traceback_str)
+                if self.worker_comms.has_progress_bar():
+                    self.worker_comms.add_exception(type(err), traceback_str)
 
     def _format_args(self, args: Any, no_args: bool = False, separator: str = '\n') -> str:
         """

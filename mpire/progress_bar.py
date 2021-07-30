@@ -3,7 +3,7 @@ import multiprocessing as mp
 import multiprocessing.context
 import sys
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 from tqdm.auto import tqdm
 
@@ -29,15 +29,13 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 DATETIME_FORMAT = "%Y-%m-%d, %H:%M:%S"
-TQDM_LOCK = mp.RLock()
-tqdm.set_lock(TQDM_LOCK)
 
 
 class ProgressBarHandler:
 
     def __init__(self, ctx: multiprocessing.context.BaseContext, using_threading: bool, func: Callable, n_jobs: int,
                  show_progress_bar: bool, progress_bar_total: int, progress_bar_position: int,
-                 worker_comms: WorkerComms, worker_insights: WorkerInsights, keep_alive: bool) -> None:
+                 worker_comms: WorkerComms, worker_insights: WorkerInsights) -> None:
         """
         :param ctx: Multiprocessing context
         :param using_threading: Whether threading is used as backend
@@ -49,7 +47,6 @@ class ProgressBarHandler:
             multiple progress bars at the same time
         :param worker_comms: Worker communication objects (queues, locks, events, ...)
         :param worker_insights: WorkerInsights object which stores the worker insights
-        :param keep_alive: Whether to keep the progress bar queue alive after we're done here
         """
         # When the threading backend is used we switch to a multiprocessing context, because the progress bar handler
         # needs to be a process, not a thread. This is because when using threading, the progress bar updates will
@@ -60,7 +57,6 @@ class ProgressBarHandler:
         self.progress_bar_position = progress_bar_position
         self.worker_comms = worker_comms
         self.worker_insights = worker_insights
-        self.keep_alive = keep_alive
         if show_progress_bar and DASHBOARD_STARTED_EVENT is not None:
             self.function_details = get_function_details(func)
             self.function_details['n_jobs'] = n_jobs
@@ -99,12 +95,13 @@ class ProgressBarHandler:
         """
         Enables the use of the ``with`` statement. Terminates the progress handler process if there is one
         """
-        if self.show_progress_bar:
+        if self.show_progress_bar and self.process.is_alive():
 
             # Insert poison pill and close the handling process
-            logger.debug("Joining progress bar handler")
-            if not self.worker_comms.exception_caught():
+            if not self.worker_comms.exception_thrown():
+                logger.debug("Adding poison pill to progress bar")
                 self.worker_comms.add_progress_bar_poison_pill()
+            logger.debug("Joining progress bar handler")
             self.process.join()
             logger.debug("Progress bar handler joined")
 
@@ -136,20 +133,21 @@ class ProgressBarHandler:
             # to show the latest status
             if tasks_completed is POISON_PILL:
                 logger.debug("Terminating progress bar handler")
-                if from_queue:
-                    self.worker_comms.task_done_progress_bar()
-                if progress_bar.n != progress_bar.total:
+
+                # Check if we got a poison pill because there was an error. If so, we obtain the exception information
+                # and send it to the dashboard, if available.
+                if self.worker_comms.exception_thrown():
                     progress_bar.set_description('Exception occurred, terminating ... ')
+                    _, traceback_str = self.worker_comms.get_exception()
+                    self._send_update(progress_bar, failed=True, traceback_str=traceback_str)
+                    self.worker_comms.task_done_exception()
+
+                # Final update of the progress bar
                 progress_bar.refresh()
                 progress_bar.close()
 
-                # If, at this point, the progress bar is not at 100% it means we had a failure. We send the failure to
-                # the dashboard in the case a dashboard is started
-                if progress_bar.n != progress_bar.total:
-                    logger.debug("Sending final progress bar update")
-                    self._send_update(progress_bar, failed=True)
-                else:
-                    logger.debug("No exception detected")
+                if from_queue:
+                    self.worker_comms.task_done_progress_bar()
                 break
 
             # Register progress bar to dashboard in case a dashboard is started after the progress bar was created
@@ -164,6 +162,7 @@ class ProgressBarHandler:
             # don't like eachother that much)
             if progress_bar.n == progress_bar.total:
                 progress_bar.refresh()
+                self.worker_comms.set_progress_bar_complete()
                 self._send_update(progress_bar)
 
             # Send update to dashboard in case a dashboard is started, but only when tqdm updated its view as well. This
@@ -192,32 +191,27 @@ class ProgressBarHandler:
             self._send_update(progress_bar)
             dashboard_tqdm_lock.release()
 
-    def _send_update(self, progress_bar: tqdm, failed: bool = False) -> None:
+    def _send_update(self, progress_bar: tqdm, failed: bool = False, traceback_str: Optional[str] = None) -> None:
         """
         Adds a progress bar update to the shared dict so the dashboard process can use it, only when a dashboard has
         started
 
         :param progress_bar: tqdm progress bar instance
         :param failed: Whether or not the operation failed or not
+        :param traceback_str: Traceback string, if an exception was raised
         """
         if self.progress_bar_id is not None:
             self.dashboard_dict.update([(self.progress_bar_id,
-                                         self._get_progress_bar_update_dict(progress_bar, failed))])
+                                         self._get_progress_bar_update_dict(progress_bar, failed, traceback_str))])
 
-        # In case we have a failure and are not using a dashboard we need to remove the additional error put in the
-        # exception queue by the exception handler. We won't be using it
-        elif failed and self.worker_comms.exception_caught():
-            logger.debug("Obtaining and throwing away exception (no dashboard)")
-            self.worker_comms.get_exception()
-            self.worker_comms.task_done_exception()
-            logger.debug("Done with exception")
-
-    def _get_progress_bar_update_dict(self, progress_bar: tqdm, failed: bool) -> Dict[str, Any]:
+    def _get_progress_bar_update_dict(self, progress_bar: tqdm, failed: bool,
+                                      traceback_str: Optional[str] = None) -> Dict[str, Any]:
         """
         Obtain update dictionary with all the information needed for displaying on the dashboard
 
         :param progress_bar: tqdm progress bar instance
         :param failed: Whether or not the operation failed or not
+        :param traceback_str: Traceback string, if an exception was raised
         :return: Update dictionary
         """
         # Save some variables first so we can use them consistently with the same value
@@ -227,20 +221,6 @@ class ProgressBarHandler:
         avg_time = progress_bar.avg_time
         now = datetime.now()
         remaining_time = ((total - n) * avg_time) if avg_time else None
-
-        # Obtain traceback string in case of failure. If an exception was caught an additional traceback string will be
-        # available in the exception_queue. Otherwise, it will be a KeyboardInterrupt
-        if failed:
-            if self.worker_comms.exception_caught():
-                logger.debug("Obtaining exception for dashboard")
-                _, traceback_str = self.worker_comms.get_exception()
-                traceback_str = traceback_str.strip()
-                self.worker_comms.task_done_exception()
-                logger.debug("Done with exception")
-            else:
-                traceback_str = 'KeyboardInterrupt'
-        else:
-            traceback_str = None
 
         return {"id": self.progress_bar_id,
                 "success": not failed,
@@ -254,5 +234,5 @@ class ProgressBarHandler:
                 "finished_raw": now + timedelta(seconds=remaining_time) if remaining_time is not None else None,
                 "finished": ((now + timedelta(seconds=remaining_time)).strftime(DATETIME_FORMAT)
                              if remaining_time is not None else ''),
-                "traceback": traceback_str,
+                "traceback": traceback_str.strip() if traceback_str is not None else None,
                 "insights": self.worker_insights.get_insights()}

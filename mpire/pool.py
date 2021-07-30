@@ -15,11 +15,10 @@ except ImportError:
     NUMPY_INSTALLED = False
 
 from mpire.comms import WorkerComms
-from mpire.exception import ExceptionHandler
 from mpire.insights import WorkerInsights
 from mpire.params import CPUList, WorkerPoolParams
 from mpire.progress_bar import ProgressBarHandler
-from mpire.signal import DelayedKeyboardInterrupt, DisableKeyboardInterruptSignal
+from mpire.signal import DisableKeyboardInterruptSignal
 from mpire.utils import apply_numpy_chunking, chunk_tasks
 from mpire.worker import MP_CONTEXTS, worker_factory
 
@@ -74,7 +73,7 @@ class WorkerPool:
 
         # Container of the child processes and corresponding communication objects
         self._workers = []
-        self._worker_comms = WorkerComms(self.ctx, self.params.n_jobs, start_method == 'threading')
+        self._worker_comms = WorkerComms(self.ctx, self.params.n_jobs, use_dill, start_method == 'threading')
         self._exit_results = None
 
         # Worker insights, used for profiling
@@ -129,16 +128,17 @@ class WorkerPool:
         :param progress_bar: Whether there's a progress bar
         :param enable_insights: Whether to enable worker insights
         """
-        logger.debug("Spinning up workers")
-
         # Init communication primitives
+        logger.debug("Initializing comms")
         self._worker_comms.init_comms(self.params.worker_exit is not None, progress_bar)
         self._worker_insights.reset_insights(enable_insights)
         self._exit_results = []
 
         # Start new workers
+        logger.debug("Spinning up workers")
         for worker_id in range(self.params.n_jobs):
             self._workers.append(self._start_worker(worker_id))
+        logger.debug("Workers created")
 
     def _restart_workers(self) -> None:
         """
@@ -147,8 +147,7 @@ class WorkerPool:
         for worker_id in self._worker_comms.get_worker_restarts():
             # Obtain results from exit results queue (should be done before joining the worker)
             if self.params.worker_exit:
-                with DelayedKeyboardInterrupt():
-                    self._exit_results.append(self._worker_comms.get_exit_results(worker_id))
+                self._exit_results.append(self._worker_comms.get_exit_results(worker_id))
 
             # Join worker
             self._worker_comms.reset_worker_restart(worker_id)
@@ -184,152 +183,6 @@ class WorkerPool:
         :return: Exit results list
         """
         return self._exit_results
-
-    def stop_and_join(self, keep_alive: bool = False) -> None:
-        """
-        When ``keep_alive=False``: inserts a poison pill, grabs the exit results, waits until the tasks/results queues
-        are done, and wait until all workers are finished.
-        When ``keep_alive=True``: inserts a non-lethal poison pill, and waits until the tasks/results queues are done.
-
-        Note that the results queue should be drained first before joining the workers, otherwise we can get a deadlock.
-        For more information, see the warnings at:
-        https://docs.python.org/3.4/library/multiprocessing.html#pipes-and-queues.
-        """
-        if self._workers:
-            # Insert poison pill
-            if keep_alive:
-                self._worker_comms.insert_non_lethal_poison_pill()
-            else:
-                logger.debug("Cleaning up workers")
-                self._worker_comms.insert_poison_pill()
-
-            # It can occur that some processes requested a restart while all tasks are already complete. This means that
-            # processes won't get restarted anymore, although a poison pill is just added (at the time they we're still
-            # barely alive). This results in a tasks queue never being empty which can lead to BrokenPipeErrors or
-            # deadlocks. We can also not simply drain the tasks queue because workers could still be busy. To remedy
-            # this problem we start a thread which waits for the tasks queue (including poison pills) to be empty. If
-            # this thread isn't done that means that some tasks/poison pills are still there, meaning that there are
-            # child processes which could/should be restarted, but aren't.
-            t = threading.Thread(target=self._worker_comms.join_tasks_queues, args=(keep_alive,))
-            t.start()
-            while True:
-                t.join(timeout=0.1)
-                if not t.is_alive():
-                    break
-                self._restart_workers()
-
-            # Obtain results from the exit results queues (should be done before joining the workers)
-            if not keep_alive and self.params.worker_exit:
-                self._exit_results.extend(self._worker_comms.get_exit_results_all_workers())
-
-            # If an exception occurred in the exit function, we should know about it here. We wait until the exception
-            # is caught by the exception handler, and terminate after that.
-            if self._worker_comms.exception_thrown():
-                self._worker_comms.wait_until_exception_is_caught()
-                self.terminate()
-                return
-
-            # Join queues and workers
-            self._worker_comms.join_results_queues(keep_alive)
-            if not keep_alive:
-                for worker_process in self._workers:
-                    worker_process.join()
-                    # Added since Python 3.7
-                    if hasattr(worker_process, 'close'):
-                        worker_process.close()
-                self._workers = []
-                logger.debug("Cleaning up workers done")
-
-    def terminate(self) -> None:
-        """
-        Tries to do a graceful shutdown of the workers, by interrupting them. In the case processes deadlock it will
-        send a sigkill.
-        """
-        logger.debug("Terminating workers")
-
-        # Set exception thrown so workers know to stop fetching new tasks
-        self._worker_comms.set_exception()
-
-        # When we're working with threads we have to wait for them to join. We can't kill threads in Python
-        if self.params.start_method == 'threading':
-            threads = self._workers
-        else:
-            # Create cleanup threads such that processes can get killed simultaneously, which can save quite some time
-            threads = []
-            dont_wait_event = threading.Event()
-            dont_wait_event.set()
-            for worker_id, worker_process in enumerate(self._workers):
-                t = threading.Thread(target=self._terminate_worker, args=(worker_id, worker_process, dont_wait_event))
-                t.start()
-                threads.append(t)
-
-        # Wait until cleanup threads are done
-        for t in threads:
-            t.join()
-        logger.debug("Terminating workers done")
-
-        # Drain and join the queues
-        logger.debug("Draining queues")
-        self._worker_comms.drain_queues()
-        logger.debug("Draining queues done")
-
-        # Reset workers and signal we're done with this function
-        self._workers = []
-        self._worker_comms.terminate_done()
-
-    def _terminate_worker(self, worker_id: int, worker_process: mp.context.Process,
-                          dont_wait_event: threading.Event) -> None:
-        """
-        Terminates a single worker process
-
-        :param worker_id: Worker ID
-        :param worker_process: Worker instance
-        :param dont_wait_event: Event object to indicate whether other termination threads should continue. I.e., when
-            we set it to False, threads should wait.
-        """
-        # We wait until workers are done terminating. However, we don't have all the patience in the world. When the
-        # patience runs out we terminate them.
-        try_count = 10
-        while try_count > 0:
-            try:
-                os.kill(worker_process.pid, signal.SIGUSR1)
-            except ProcessLookupError:
-                pass
-
-            self._worker_comms.wait_for_dead_worker(worker_id, timeout=0.1)
-            if not self._worker_comms.is_worker_alive(worker_id):
-                break
-
-            # For properly joining, it can help if we try to get some results here. Workers can still be busy putting
-            # items in queues under the hood
-            self._worker_comms.drain_queues_terminate_worker(worker_id, dont_wait_event)
-            try_count -= 1
-            if not dont_wait_event.is_set():
-                dont_wait_event.wait()
-
-        # Join the worker process
-        try_count = 10
-        while try_count > 0:
-            worker_process.join(timeout=0.1)
-            if not worker_process.is_alive():
-                break
-
-            # For properly joining, it can help if we try to get some results here. Workers can still be busy putting
-            # items in queues under the hood, even at this point.
-            self._worker_comms.drain_queues_terminate_worker(worker_id, dont_wait_event)
-            try_count -= 1
-            if not dont_wait_event.is_set():
-                dont_wait_event.wait()
-
-        # If, after all this, the worker is still alive, we terminate it with a brutal kill signal. This shouldn't
-        # really happen. But, better safe than sorry
-        if worker_process.is_alive():
-            worker_process.terminate()
-            worker_process.join()
-
-        # Added since Python 3.7
-        if hasattr(worker_process, 'close'):
-            worker_process.close()
 
     def __enter__(self) -> 'WorkerPool':
         """
@@ -608,68 +461,272 @@ class WorkerPool:
         # execute, worker_lifespan, or enable_insights changes
         if self._workers and self.params.workers_need_restart(func, worker_init, worker_exit, worker_lifespan,
                                                               enable_insights):
-            self.stop_and_join(keep_alive=False)
+            self.stop_and_join(None, keep_alive=False)
         if not self._workers:
             self.params.set_map_params(func, worker_init, worker_exit, worker_lifespan, enable_insights)
             self._start_workers(bool(progress_bar), enable_insights)
 
-        # Create exception, exit results, and progress bar handlers. The exception handler receives any exceptions
-        # thrown by the workers, terminates everything and re-raise an exception in the main process. The exit results
-        # handler fetches results from the exit function, if provided. The progress bar handler receives progress
-        # updates from the workers and updates the progress bar accordingly
-        with ExceptionHandler(self.terminate, self._worker_comms, bool(progress_bar)) as exception_handler, \
-             ProgressBarHandler(self.ctx, self.params.start_method == 'threading', func, self.params.n_jobs,
-                                progress_bar, n_tasks, progress_bar_position, self._worker_comms, self._worker_insights,
-                                self.params.keep_alive):
+        # Create progress bar handler, which receives progress updates from the workers and updates the progress bar
+        # accordingly
+        with ProgressBarHandler(self.ctx, self.params.start_method == 'threading', func, self.params.n_jobs,
+                                progress_bar, n_tasks, progress_bar_position, self._worker_comms,
+                                self._worker_insights) as progress_bar_handler:
+            try:
+                # Process all args in the iterable
+                n_active = 0
+                while not self._worker_comms.exception_thrown():
+                    # Add task, only if allowed and if there are any
+                    if n_active < max_tasks_active:
+                        try:
+                            self._worker_comms.add_task(next(iterator_of_chunked_args))
+                            n_active += 1
+                        except StopIteration:
+                            break
 
-            # Process all args in the iterable
-            n_active = 0
-            while not self._worker_comms.exception_caught():
-                # Add task, only if allowed and if there are any
-                if n_active < max_tasks_active:
+                    # Check if new results are available, but don't wait for it
                     try:
-                        self._worker_comms.add_task(next(iterator_of_chunked_args))
-                        n_active += 1
-                    except StopIteration:
-                        break
+                        yield from self._worker_comms.get_results(block=False)
+                        n_active -= 1
+                    except queue.Empty:
+                        pass
 
-                # Check if new results are available, but don't wait for it
-                try:
-                    yield from self._worker_comms.get_results(block=False)
-                    n_active -= 1
-                except queue.Empty:
-                    pass
+                    # Restart workers if necessary
+                    self._restart_workers()
 
-                # Restart workers if necessary
-                self._restart_workers()
+                # Obtain the results not yet obtained
+                while not self._worker_comms.exception_thrown() and n_active != 0:
+                    try:
+                        yield from self._worker_comms.get_results(block=True, timeout=0.01)
+                        n_active -= 1
+                    except queue.Empty:
+                        pass
 
-            # Obtain the results not yet obtained
-            while not self._worker_comms.exception_caught() and n_active != 0:
-                try:
-                    yield from self._worker_comms.get_results(block=True, timeout=0.1)
-                    n_active -= 1
-                except queue.Empty:
-                    pass
+                    # Restart workers if necessary
+                    self._restart_workers()
 
-                # Restart workers if necessary
-                self._restart_workers()
+                # Terminate if exception has been thrown at this point
+                if self._worker_comms.exception_thrown():
+                    self._handle_exception(progress_bar_handler)
 
-            # Terminate if exception has been caught
-            if self._worker_comms.exception_caught():
-                self.terminate()
+                # All results are in: it's clean up time
+                self.stop_and_join(progress_bar_handler, keep_alive=self.params.keep_alive)
 
-            # Clean up time. During the stop_and_join call an error can occur as well, so we have to check once again
-            # whether an exception occurred and raise if it did
-            exception_handler.raise_on_exception()
-            self.stop_and_join(keep_alive=self.params.keep_alive)
-            exception_handler.raise_on_exception()
+            except KeyboardInterrupt:
+                self._handle_exception(progress_bar_handler)
 
         # Join exception queue, if it hasn't already
+        logger.debug("Joining exception queue")
         self._worker_comms.join_exception_queue(self.params.keep_alive)
+        logger.debug("Done joining exception queue, now joining progress bar queue")
+        self._worker_comms.join_progress_bar_task_completed_queue(self.params.keep_alive)
+        logger.debug("Done joining progress bar queue")
 
         # Log insights
         if enable_insights:
             logger.debug(self._worker_insights.get_insights_string())
+
+    def _handle_exception(self, progress_bar_handler: Optional[ProgressBarHandler] = None) -> None:
+        """
+        Handles exceptions thrown by workers and KeyboardInterrupts
+
+        :param progress_bar_handler: Progress bar handler
+        """
+        logger.debug("Exception occurred")
+
+        # If we have a progress bar and this function is called because there was a KeyboardInterrupt (i.e., no
+        # exception thrown), we pass the KeyboardInterrupt to the progress bar handler (using the exception queue)
+        keyboard_interrupt = False
+        with self._worker_comms.exception_lock:
+            if not self._worker_comms.exception_thrown():
+                keyboard_interrupt = True
+                self._worker_comms.set_exception_thrown()
+                if self._worker_comms.has_progress_bar() and progress_bar_handler is not None:
+                    self._worker_comms.add_exception(KeyboardInterrupt, "KeyboardInterrupt")
+
+        # When we're not dealing with a KeyboardInterrupt, obtain the exception thrown by a worker
+        if keyboard_interrupt:
+            err, traceback_str = KeyboardInterrupt, ""
+        else:
+            err, traceback_str = self._worker_comms.get_exception()
+            self._worker_comms.task_done_exception()
+        logger.debug(f"Exception obtained: {err}")
+
+        # Join exception queue and progress bar, and terminate workers
+        logger.debug("Joining exception queue")
+        self._worker_comms.join_exception_queue()
+        logger.debug("Exception queue joined")
+        if progress_bar_handler and progress_bar_handler.process is not None:
+            logger.debug("Joining progress bar handler")
+            progress_bar_handler.process.join()
+            logger.debug("Progress bar handler joined")
+        self.terminate()
+
+        # Clear keep order event so we can safely reuse the WorkerPool and use (i)map_unordered after an (i)map call
+        self._worker_comms.clear_keep_order()
+
+        # Raise
+        logger.debug("Re-raising obtained exception")
+        raise err(traceback_str)
+
+    def stop_and_join(self, progress_bar_handler: Optional[ProgressBarHandler] = None,
+                      keep_alive: bool = False) -> None:
+        """
+        When ``keep_alive=False``: inserts a poison pill, grabs the exit results, waits until the tasks/results queues
+        are done, and wait until all workers are finished.
+        When ``keep_alive=True``: inserts a non-lethal poison pill, and waits until the tasks/results queues are done.
+
+        Note that the results queue should be drained first before joining the workers, otherwise we can get a deadlock.
+        For more information, see the warnings at:
+        https://docs.python.org/3.4/library/multiprocessing.html#pipes-and-queues.
+
+        :param progress_bar_handler: Progress bar handler
+        :param keep_alive: Whether to keep the workers alive
+        """
+        if self._workers:
+            logger.debug(f"Cleaning up workers (keep_alive={keep_alive})")
+
+            # All tasks have been processed and results are in. Insert (non-lethal) poison pill
+            if keep_alive:
+                self._worker_comms.insert_non_lethal_poison_pill()
+            else:
+                self._worker_comms.insert_poison_pill()
+
+            # Wait until all (non-lethal) poison pills have been consumed. When a worker's lifetime has been reached
+            # just before consuming the poison pill, we need to restart them
+            logger.debug("Joining task queues")
+            t = threading.Thread(target=self._worker_comms.join_task_queues, args=(keep_alive,))
+            t.daemon = True
+            t.start()
+            while not self._worker_comms.exception_thrown():
+                t.join(timeout=0.01)
+                if not t.is_alive():
+                    break
+                self._restart_workers()
+            logger.debug("Done joining task queues")
+
+            # When an exception occurred in the above process (i.e., the worker init function raises), we need to handle
+            # the exception (i.e., terminate and raise)
+            if self._worker_comms.exception_thrown():
+                self._handle_exception(progress_bar_handler)
+
+            # Obtain results from the exit results queues (should be done before joining the workers)
+            if not keep_alive and self.params.worker_exit:
+                logger.debug("Obtaining exit results")
+                self._exit_results.extend(self._worker_comms.get_exit_results_all_workers())
+                self._worker_comms.set_all_exit_results_obtained()
+                logger.debug("Done obtaining exit results")
+
+            # If an exception occurred in the exit function, we need to handle the exception (i.e., terminate and raise)
+            if self._worker_comms.exception_thrown():
+                self._handle_exception(progress_bar_handler)
+
+            # Join (exit) results queue (should be done immediately, as all (exit) results have been processed)
+            logger.debug("Joining results queues")
+            self._worker_comms.join_results_queues(keep_alive)
+            logger.debug("Done joining results queues")
+
+            # Join workers
+            if not keep_alive:
+                logger.debug("Joining workers")
+                for worker_process in self._workers:
+                    worker_process.join()
+                    # Added since Python 3.7
+                    if hasattr(worker_process, 'close'):
+                        worker_process.close()
+                self._workers = []
+                logger.debug("Done joining workers")
+
+            logger.debug("Cleaning up workers done")
+
+    def terminate(self) -> None:
+        """
+        Tries to do a graceful shutdown of the workers, by interrupting them. In the case processes deadlock it will
+        send a sigkill.
+        """
+        logger.debug("Terminating workers")
+
+        # Set exception thrown so workers know to stop fetching new tasks
+        self._worker_comms.set_exception_thrown()
+
+        # When we're working with threads we have to wait for them to join. We can't kill threads in Python
+        if self.params.start_method == 'threading':
+            threads = self._workers
+        else:
+            # Create cleanup threads such that processes can get killed simultaneously, which can save quite some time
+            threads = []
+            dont_wait_event = threading.Event()
+            dont_wait_event.set()
+            for worker_id, worker_process in enumerate(self._workers):
+                t = threading.Thread(target=self._terminate_worker, args=(worker_id, worker_process, dont_wait_event))
+                t.start()
+                threads.append(t)
+
+        # Wait until cleanup threads are done
+        for t in threads:
+            t.join()
+        logger.debug("Terminating workers done")
+
+        # Drain and join the queues
+        logger.debug("Draining queues")
+        self._worker_comms.drain_queues()
+        logger.debug("Draining queues done")
+
+        # Reset workers
+        self._workers = []
+
+    def _terminate_worker(self, worker_id: int, worker_process: mp.context.Process,
+                          dont_wait_event: threading.Event) -> None:
+        """
+        Terminates a single worker process
+
+        :param worker_id: Worker ID
+        :param worker_process: Worker instance
+        :param dont_wait_event: Event object to indicate whether other termination threads should continue. I.e., when
+            we set it to False, threads should wait.
+        """
+        # We wait until workers are done terminating. However, we don't have all the patience in the world. When the
+        # patience runs out we terminate them.
+        try_count = 10
+        while try_count > 0:
+            try:
+                os.kill(worker_process.pid, signal.SIGUSR1)
+            except ProcessLookupError:
+                pass
+
+            self._worker_comms.wait_for_dead_worker(worker_id, timeout=0.1)
+            if not self._worker_comms.is_worker_alive(worker_id):
+                break
+
+            # For properly joining, it can help if we try to get some results here. Workers can still be busy putting
+            # items in queues under the hood
+            self._worker_comms.drain_queues_terminate_worker(worker_id, dont_wait_event)
+            try_count -= 1
+            if not dont_wait_event.is_set():
+                dont_wait_event.wait()
+
+        # Join the worker process
+        try_count = 10
+        while try_count > 0:
+            worker_process.join(timeout=0.1)
+            if not worker_process.is_alive():
+                break
+
+            # For properly joining, it can help if we try to get some results here. Workers can still be busy putting
+            # items in queues under the hood, even at this point.
+            self._worker_comms.drain_queues_terminate_worker(worker_id, dont_wait_event)
+            try_count -= 1
+            if not dont_wait_event.is_set():
+                dont_wait_event.wait()
+
+        # If, after all this, the worker is still alive, we terminate it with a brutal kill signal. This shouldn't
+        # really happen. But, better safe than sorry
+        if worker_process.is_alive():
+            worker_process.terminate()
+            worker_process.join()
+
+        # Added since Python 3.7
+        if hasattr(worker_process, 'close'):
+            worker_process.close()
 
     def print_insights(self) -> None:
         """
