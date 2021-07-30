@@ -1,6 +1,7 @@
 import logging
 import types
 import unittest
+import sys
 from itertools import product, repeat
 from multiprocessing import Barrier, Value
 from unittest.mock import patch
@@ -11,8 +12,13 @@ from tqdm import tqdm
 from mpire import cpu_count, WorkerPool
 
 
-# We skip forkserver in the tests, because it doesn't work nicely with unittesting.
-TEST_START_METHODS = ['fork', 'spawn', 'threading']
+# For Python 3.9 we skip forkserver in the tests. This is because in Python 3.9 it doesn't work nicely with unittesting.
+# Not sure if it's because of the many times we start a forkserver or if there's another cause. I haven't been able to
+# find the root cause.
+if sys.version_info[0] == 3 and sys.version_info[1] >= 9:
+    TEST_START_METHODS = ['fork', 'spawn', 'threading']
+else:
+    TEST_START_METHODS = ['fork', 'forkserver', 'spawn', 'threading']
 
 
 def square(idx, x):
@@ -1203,17 +1209,11 @@ class ExceptionTest(unittest.TestCase):
         """
         print()
         for start_method, progress_bar in product(TEST_START_METHODS, [False, True]):
-
-            # We skip the spawn method for now as it's still in beta. Once in a blue moon this test will hang for
-            # spawn, and I have no idea why. Logging also doesn't work out of the box in spawned processes. So until
-            # then, it's being skipped
-            if start_method == 'spawn':
-                continue
-
             self.logger.debug(f"========== {start_method}, {progress_bar} ==========")
             with self.subTest(start_method=start_method, progress_bar=progress_bar), \
                     WorkerPool(n_jobs=2, start_method=start_method,
                                use_dill=start_method in {'forkserver', 'spawn'}) as pool:
+
                 # Should work for map like functions
                 self.logger.debug("----- square_raises, map -----")
                 with self.subTest(function='square_raises', map='map'), self.assertRaises(ValueError):
