@@ -88,6 +88,7 @@ class AbstractWorker:
         # exception first, it depends on who obtains the lock first. If `run` obtains it, it will set `running` to
         # False, meaning we won't raise and `run` will return. If this function obtains it first it will throw, which
         # again is caught by the `run` function, which will return.
+        self.worker_comms.set_kill_signal_received()
         with self.is_running_lock:
             if self.is_running:
                 self.is_running = False

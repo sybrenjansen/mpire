@@ -51,7 +51,9 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertIsInstance(comms.exception_lock,
                                       _thread.LockType if using_threading else expected_mp.synchronize.Lock)
                 self.assertIsInstance(comms._exception_thrown, expected_mp.synchronize.Event)
+                self.assertIsInstance(comms._kill_signal_received, expected_mp.synchronize.Event)
                 self.assertFalse(comms._exception_thrown.is_set())
+                self.assertFalse(comms._kill_signal_received.is_set())
                 self.assertIsNone(comms._task_completed_queue)
                 self.assertIsNone(comms._all_exit_results_obtained)
 
@@ -73,6 +75,7 @@ class WorkerCommsTest(unittest.TestCase):
                     self.assertTrue(worker_dead.is_set())
                 self.assertIsInstance(comms._exception_queue, expected_mp.queues.JoinableQueue)
                 self.assertFalse(comms._exception_thrown.is_set())
+                self.assertFalse(comms._kill_signal_received.is_set())
                 self.assertIsNone(comms._task_completed_queue)
                 self.assertIsNone(comms._progress_bar_complete)
 
@@ -100,6 +103,7 @@ class WorkerCommsTest(unittest.TestCase):
             comms._worker_done_array[:] = [False, True, False, True][:n_jobs]
             [worker_dead.clear() for worker_dead in comms._workers_dead]
             comms._exception_thrown.set()
+            comms._kill_signal_received.set()
 
             # Note that threading doesn't have a JoinableQueue, so they're taken from multiprocessing
             with self.subTest('with initial values', n_jobs=n_jobs, using_threading=using_threading,
@@ -119,6 +123,7 @@ class WorkerCommsTest(unittest.TestCase):
                     self.assertTrue(worker_dead.is_set())
                 self.assertIsInstance(comms._exception_queue, expected_mp.queues.JoinableQueue)
                 self.assertFalse(comms._exception_thrown.is_set())
+                self.assertFalse(comms._kill_signal_received.is_set())
                 self.assertIsNone(comms._task_completed_queue)
 
                 # Some variables are not reset by this function, but are reset otherwise
@@ -200,6 +205,11 @@ class WorkerCommsTest(unittest.TestCase):
         comms.set_exception_thrown()
         self.assertEqual(comms.get_tasks_completed_progress_bar(), (POISON_PILL, False))
         comms._exception_thrown.clear()
+
+        # Set kill signal received
+        comms.set_kill_signal_received()
+        self.assertEqual(comms.get_tasks_completed_progress_bar(), (POISON_PILL, False))
+        comms._kill_signal_received.clear()
 
         # Should be joinable. When using keep_alive, it should still be open
         comms.join_progress_bar_task_completed_queue(keep_alive=True)
@@ -482,6 +492,18 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertTrue(comms.exception_thrown())
         comms._exception_thrown.clear()
         self.assertFalse(comms.exception_thrown())
+
+    def test_kill_signal_received(self):
+        """
+        Test kill signal received related functions
+        """
+        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 2, False, False)
+
+        self.assertFalse(comms.kill_signal_received())
+        comms.set_kill_signal_received()
+        self.assertTrue(comms.kill_signal_received())
+        comms._kill_signal_received.clear()
+        self.assertFalse(comms.kill_signal_received())
 
     def test_worker_poison_pill(self):
         """

@@ -3,7 +3,7 @@ import multiprocessing as mp
 import multiprocessing.context
 import sys
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Type
 
 from tqdm.auto import tqdm
 
@@ -91,12 +91,16 @@ class ProgressBarHandler:
 
         return self
 
-    def __exit__(self, *_: Any) -> None:
+    def __exit__(self, exc_type: Type, *_) -> None:
         """
         Enables the use of the ``with`` statement. Terminates the progress handler process if there is one
         """
         if self.show_progress_bar and self.process.is_alive():
 
+            # If this exit is called with an exception, then we assume an external kill signal was received (this is,
+            # for example, necessary in nested pools when an error occurs)
+            if exc_type is not None:
+                self.worker_comms.set_kill_signal_received()
             # Insert poison pill and close the handling process
             if not self.worker_comms.exception_thrown():
                 logger.debug("Adding poison pill to progress bar")
@@ -141,6 +145,9 @@ class ProgressBarHandler:
                     _, traceback_str = self.worker_comms.get_exception()
                     self._send_update(progress_bar, failed=True, traceback_str=traceback_str)
                     self.worker_comms.task_done_exception()
+                elif self.worker_comms.kill_signal_received():
+                    progress_bar.set_description('Exception occurred, terminating ... ')
+                    self._send_update(progress_bar, failed=True, traceback_str='Kill signal received')
 
                 # Final update of the progress bar
                 progress_bar.refresh()

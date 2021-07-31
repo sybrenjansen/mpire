@@ -68,6 +68,7 @@ class WorkerComms:
         # progress bar handler needs a process-aware object
         self.exception_lock = self.ctx.Lock()
         self._exception_thrown = self.ctx_for_threading.Event() if using_threading else self.ctx.Event()
+        self._kill_signal_received = self.ctx_for_threading.Event() if using_threading else self.ctx.Event()
 
         # Queue related to the progress bar. Child processes signal whenever they are finished with a task
         self._task_completed_queue = None
@@ -112,6 +113,7 @@ class WorkerComms:
         self._exception_queue = (self.ctx_for_threading.JoinableQueue() if self.using_threading else
                                  self.ctx.JoinableQueue())
         self._exception_thrown.clear()
+        self._kill_signal_received.clear()
 
         # Progress bar related
         if has_progress_bar:
@@ -171,7 +173,7 @@ class WorkerComms:
         :return: Tuple containing the number of tasks done or a poison pill, and a boolean indicating if the result
             came from the queue or not
         """
-        while not self.exception_thrown():
+        while not self.exception_thrown() and not self.kill_signal_received():
             try:
                 return self._task_completed_queue.get(block=True, timeout=0.01), True
             except queue.Empty:
@@ -404,6 +406,18 @@ class WorkerComms:
         :return: Whether an exception was thrown by one of the workers
         """
         return self._exception_thrown.is_set()
+
+    def set_kill_signal_received(self) -> None:
+        """
+        Set the kill signal received event
+        """
+        self._kill_signal_received.set()
+
+    def kill_signal_received(self) -> bool:
+        """
+        :return: Whether a kill signal was received in one of the workers
+        """
+        return self._kill_signal_received.is_set()
 
     ################
     # Terminating & restarting
