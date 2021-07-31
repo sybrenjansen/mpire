@@ -15,6 +15,7 @@ except ImportError:
     NUMPY_INSTALLED = False
 
 from mpire.comms import WorkerComms
+from mpire.dashboard.connection_utils import get_dashboard_connection_details
 from mpire.insights import WorkerInsights
 from mpire.params import CPUList, WorkerPoolParams
 from mpire.progress_bar import ProgressBarHandler
@@ -166,7 +167,8 @@ class WorkerPool:
         # Disable the interrupt signal. We let the process die gracefully if it needs to
         with DisableKeyboardInterruptSignal():
             # Create worker
-            w = self.Worker(worker_id, self.params, self._worker_comms, self._worker_insights, datetime.now())
+            w = self.Worker(worker_id, self.params, self._worker_comms, self._worker_insights,
+                            get_dashboard_connection_details(), datetime.now())
             w.daemon = self.params.daemon
             w.start()
 

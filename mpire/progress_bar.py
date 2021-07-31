@@ -8,6 +8,8 @@ from typing import Any, Callable, Dict, Optional, Type
 from tqdm.auto import tqdm
 
 from mpire.comms import WorkerComms, POISON_PILL
+from mpire.dashboard.connection_utils import (DashboardConnectionDetails, get_dashboard_connection_details,
+                                              set_dashboard_connection)
 from mpire.insights import WorkerInsights
 from mpire.signal import DisableKeyboardInterruptSignal
 from mpire.utils import format_seconds
@@ -85,7 +87,8 @@ class ProgressBarHandler:
                 # We start a new process because updating the progress bar in a thread can slow down processing
                 # of results and can fail to show real-time updates
                 logger.debug("Starting progress bar handler")
-                self.process = self.ctx.Process(target=self._progress_bar_handler)
+                self.process = self.ctx.Process(target=self._progress_bar_handler,
+                                                args=(get_dashboard_connection_details(),))
                 self.process.start()
                 self.process_started.wait()
 
@@ -109,12 +112,18 @@ class ProgressBarHandler:
             self.process.join()
             logger.debug("Progress bar handler joined")
 
-    def _progress_bar_handler(self) -> None:
+    def _progress_bar_handler(self, dashboard_connection_details: DashboardConnectionDetails) -> None:
         """
         Keeps track of the progress made by the workers and updates the progress bar accordingly
+
+        :params dashboard_connection_details: Dashboard manager host, port_nr and whether a dashboard is
+            started/connected
         """
         logger.debug("Progress bar handler started")
         self.process_started.set()
+
+        # Set dashboard connection details. This is needed when either forkserver of spawn is used as start method
+        set_dashboard_connection(dashboard_connection_details)
 
         # In case we're running tqdm in a notebook we need to apply a dirty hack to get progress bars working.
         # Solution adapted from https://github.com/tqdm/tqdm/issues/485#issuecomment-473338308
@@ -156,9 +165,6 @@ class ProgressBarHandler:
                 if from_queue:
                     self.worker_comms.task_done_progress_bar()
                 break
-
-            # Register progress bar to dashboard in case a dashboard is started after the progress bar was created
-            self._register_progress_bar(progress_bar)
 
             # Update progress bar
             progress_bar.update(tasks_completed)
