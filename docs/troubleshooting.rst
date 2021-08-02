@@ -81,10 +81,13 @@ Sometimes you can encounter deadlocks in your code when using MPIRE. When you en
 results from your script can't be pickled. MPIRE makes use of multiprocessing queues for inter-process communication and
 if your function returns unpicklable results the queue will unfortunately deadlock.
 
-The only way I could remedy this problem in MPIRE would be to manually pickle objects before sending it to a queue and
-quit gracefully when encountering a pickle error. However, this would mean objects would always be pickled twice. This
-would add a heavy performance penalty and is therefore not an acceptable solution. Instead, the user should make sure
-their tasks and results are always picklable (which in most cases won't be a problem).
+The only way to remedy this problem in MPIRE would be to manually pickle objects before sending it to a queue and quit
+gracefully when encountering a pickle error. However, this would mean objects would always be pickled twice. This would
+add a heavy performance penalty and is therefore not an acceptable solution.
+
+Instead, the user should make sure their tasks and results are always picklable (which in most cases won't be a
+problem), or resort to setting ``use_dill=True``. The latter is capable of pickling a lot more exotic types. See
+:ref:`use_dill` for more information.
 
 
 Windows
@@ -98,10 +101,3 @@ for more information on start methods.
 
 Disclaimer: it could be that MPIRE can't be imported on systems without fork. If so, let me know by submitting an issue
 on GitHub.
-
-
-Fork-server & spawn
--------------------
-
-Both these start methods should work fine on most occassions. However, they're not fully stress tested for situations
-where an exception occurs or a keyboard interrupt is issued. In normal operation, they should work as intended.

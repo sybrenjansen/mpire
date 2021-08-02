@@ -39,6 +39,7 @@ The other way is to do it manually:
     # Do some processing here
     pass
 
+    # Only needed when keep_alive=True:
     # Clean up pool (this will block until all processing has completed)
     pool.stop_and_join()
 
@@ -50,9 +51,9 @@ than you have CPUs is, of course, possible as well.
 
 .. warning::
 
-    The results queue should be drained first before joining the workers, otherwise you can get a deadlock. If you want
-    to join either way, use :meth:`mpire.WorkerPool.terminate`. For more information, see the warnings in the Python
-    docs here_.
+    In the manual approach, the results queue should be drained first before joining the workers, otherwise you can get
+    a deadlock. If you want to join either way, use :meth:`mpire.WorkerPool.terminate`. For more information, see the
+    warnings in the Python docs here_.
 
 .. _here: https://docs.python.org/3/library/multiprocessing.html#pipes-and-queues
 
@@ -80,13 +81,22 @@ structures:
         # This will work just fine
         pool.map(job, ...)
 
-Do make sure all your non-daemon processes are terminated correctly. If a nested child process is interrupted by, for
-example, a user that triggered a ``KeyboardInterrupt``, the process will remain active and will have to be terminated
-manually.
-
 .. note::
 
     Nested pools aren't supported when using threading.
+
+.. note::
+
+    Due to a strange bug in Python, using ``forkserver`` as start method in a nested pool is not allowed when the
+    outer pool is using ``fork``, as the forkserver will not have been started there. For it to work your outer pool
+    will have to have either ``spawn`` or ``forkserver`` as start method.
+
+.. warning::
+
+    Nested pools aren't production ready. Error handling and keyboard interrupts when using nested pools can, on some
+    rare occassions (~1% of the time), still cause deadlocks. Use at your own risk.
+
+    When a function is guaranteed to finish successfully, using nested pools is absolutely fine.
 
 
 CPU pinning
@@ -294,8 +304,8 @@ contexts, please refer to the multiprocessing documentation_ and caveats_ sectio
   includes copying everything currently in memory. This is sometimes useful, but other times useless or even a serious
   bottleneck.
 - ``'spawn'`` starts a fresh python interpreter where only those resources necessary are inherited.
-- ``'forkserver'`` first starts a server process. Whenever a new process is needed the parent process requests the
-  server to fork a new process.
+- ``'forkserver'`` first starts a server process (using spawn). Whenever a new process is needed the parent process
+  requests the server to fork a new process.
 - ``'threading'`` starts child threads.
 
 Be aware that global variables (constants are fine) might have a different value than you might expect. You also have to
@@ -322,6 +332,8 @@ import packages within the called function:
     with WorkerPool(n_jobs=2, start_method='spawn') as pool:
         pool.map(working_job, [('folder', '0.p3'), ('folder', '1.p3')])
 
+A lot of effort has been put into making the progress bar, dashboard, and nested pools (with multiple progress bars)
+work well with ``spawn`` and ``forkserver``. So, everything should work fine.
 
 Keep alive
 ----------
@@ -376,6 +388,8 @@ Instead of passing the flag to the :obj:`mpire.WorkerPool` constructor you can a
         pool.set_keep_alive()
         pool.map_unordered(square_sum, range(100))
 
+
+.. _use_dill:
 
 Dill
 ----

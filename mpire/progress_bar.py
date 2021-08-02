@@ -12,6 +12,7 @@ from mpire.dashboard.connection_utils import (DashboardConnectionDetails, get_da
                                               set_dashboard_connection)
 from mpire.insights import WorkerInsights
 from mpire.signal import DisableKeyboardInterruptSignal
+from mpire.tqdm_utils import TqdmConnectionDetails, TqdmManager
 from mpire.utils import format_seconds
 
 # If a user has not installed the dashboard dependencies than the imports below will fail
@@ -88,7 +89,8 @@ class ProgressBarHandler:
                 # of results and can fail to show real-time updates
                 logger.debug("Starting progress bar handler")
                 self.process = self.ctx.Process(target=self._progress_bar_handler,
-                                                args=(get_dashboard_connection_details(),))
+                                                args=(TqdmManager.get_connection_details(),
+                                                      get_dashboard_connection_details(),))
                 self.process.start()
                 self.process_started.wait()
 
@@ -104,6 +106,7 @@ class ProgressBarHandler:
             # for example, necessary in nested pools when an error occurs)
             if exc_type is not None:
                 self.worker_comms.set_kill_signal_received()
+
             # Insert poison pill and close the handling process
             if not self.worker_comms.exception_thrown():
                 logger.debug("Adding poison pill to progress bar")
@@ -112,22 +115,33 @@ class ProgressBarHandler:
             self.process.join()
             logger.debug("Progress bar handler joined")
 
-    def _progress_bar_handler(self, dashboard_connection_details: DashboardConnectionDetails) -> None:
+    def _progress_bar_handler(self, tqdm_connection_details: TqdmConnectionDetails,
+                              dashboard_connection_details: DashboardConnectionDetails) -> None:
         """
         Keeps track of the progress made by the workers and updates the progress bar accordingly
 
-        :params dashboard_connection_details: Dashboard manager host, port_nr and whether a dashboard is
+        :param tqdm_connection_details: Tqdm manager host, and whether the manager is started/connected
+        :param dashboard_connection_details: Dashboard manager host, port_nr and whether a dashboard is
             started/connected
         """
         logger.debug("Progress bar handler started")
         self.process_started.set()
 
-        # Set dashboard connection details. This is needed when either forkserver of spawn is used as start method
+        # Set tqdm and dashboard connection details. This is needed for nested pools and in the case forkserver or
+        # spawn is used as start method
+        TqdmManager.set_connection_details(tqdm_connection_details)
         set_dashboard_connection(dashboard_connection_details)
+
+        # Connect to the tqdm manager
+        tqdm_manager = TqdmManager()
+        tqdm_lock, tqdm_position_register = tqdm_manager.get_lock_and_position_register()
+        tqdm.set_lock(tqdm_lock)
+        main_progress_bar = tqdm_position_register.register_progress_bar_position(self.progress_bar_position)
 
         # In case we're running tqdm in a notebook we need to apply a dirty hack to get progress bars working.
         # Solution adapted from https://github.com/tqdm/tqdm/issues/485#issuecomment-473338308
-        if 'IPython' in sys.modules and 'IPKernelApp' in sys.modules['IPython'].get_ipython().config:
+        in_notebook = 'IPython' in sys.modules and 'IPKernelApp' in sys.modules['IPython'].get_ipython().config
+        if in_notebook:
             print(' ', end='', flush=True)
 
         # Create progress bar and register the start time
@@ -148,20 +162,24 @@ class ProgressBarHandler:
                 logger.debug("Terminating progress bar handler")
 
                 # Check if we got a poison pill because there was an error. If so, we obtain the exception information
-                # and send it to the dashboard, if available.
-                if self.worker_comms.exception_thrown():
+                # and send it to the dashboard, if available.)
+                if self.worker_comms.exception_thrown() or self.worker_comms.kill_signal_received():
                     progress_bar.set_description('Exception occurred, terminating ... ')
-                    _, traceback_str = self.worker_comms.get_exception()
-                    self._send_update(progress_bar, failed=True, traceback_str=traceback_str)
-                    self.worker_comms.task_done_exception()
-                elif self.worker_comms.kill_signal_received():
-                    progress_bar.set_description('Exception occurred, terminating ... ')
-                    self._send_update(progress_bar, failed=True, traceback_str='Kill signal received')
+                    if in_notebook:
+                        progress_bar.sp(bar_style='danger')
+                    if self.worker_comms.exception_thrown():
+                        _, traceback_str = self.worker_comms.get_exception()
+                        self._send_update(progress_bar, failed=True, traceback_str=traceback_str)
+                        self.worker_comms.task_done_exception()
+                    elif self.worker_comms.kill_signal_received():
+                        self._send_update(progress_bar, failed=True, traceback_str='Kill signal received')
 
-                # Final update of the progress bar
+                # Final update of the progress bar. When this is the main progress bar we add as many newlines as the
+                # highest progress bar position, such that new output is added after the progress bars.
                 progress_bar.refresh()
-                progress_bar.close()
-
+                progress_bar.disable = True
+                if main_progress_bar and not in_notebook:
+                    progress_bar.fp.write('\n' * (tqdm_position_register.get_highest_progress_bar_position() + 1))
                 if from_queue:
                     self.worker_comms.task_done_progress_bar()
                 break
@@ -170,12 +188,13 @@ class ProgressBarHandler:
             progress_bar.update(tasks_completed)
             self.worker_comms.task_done_progress_bar()
 
-            # Force a refresh when we're at 100%. Tqdm doesn't always show the last update. It does when we close the
-            # progress bar, but because that happens in the main process it won't show it properly (tqdm and pickle
-            # don't like eachother that much)
+            # Force a refresh when we're at 100%
             if progress_bar.n == progress_bar.total:
+                if in_notebook:
+                    progress_bar.sp(bar_style='success')
                 progress_bar.refresh()
                 self.worker_comms.set_progress_bar_complete()
+                self.worker_comms.wait_until_progress_bar_is_complete()
                 self._send_update(progress_bar)
 
             # Send update to dashboard in case a dashboard is started, but only when tqdm updated its view as well. This

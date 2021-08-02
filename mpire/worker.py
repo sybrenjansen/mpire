@@ -30,6 +30,7 @@ from mpire.dashboard.connection_utils import (DashboardConnectionDetails, get_da
 from mpire.exception import CannotPickleExceptionError, StopWorker
 from mpire.insights import WorkerInsights
 from mpire.params import WorkerPoolParams
+from mpire.tqdm_utils import TqdmConnectionDetails, TqdmManager
 from mpire.utils import TimeIt
 
 
@@ -39,14 +40,15 @@ class AbstractWorker:
     """
 
     def __init__(self, worker_id: int, params: WorkerPoolParams, worker_comms: WorkerComms,
-                 worker_insights: WorkerInsights, dashboard_connection_details: DashboardConnectionDetails,
-                 start_time: datetime) -> None:
+                 worker_insights: WorkerInsights, tqdm_connection_details: TqdmConnectionDetails,
+                 dashboard_connection_details: DashboardConnectionDetails, start_time: datetime) -> None:
         """
         :param worker_id: Worker ID
         :param params: WorkerPool parameters
         :param worker_comms: Worker communication objects (queues, locks, events, ...)
         :param worker_insights: WorkerInsights object which stores the worker insights
-        :params dashboard_connection_details: Dashboard manager host, port_nr and whether a dashboard is
+        :param tqdm_connection_details: Tqdm manager host, and whether the manager is started/connected
+        :param dashboard_connection_details: Dashboard manager host, port_nr and whether a dashboard is
             started/connected
         :param start_time: `datetime` object indicating at what time the Worker instance was created and started
         """
@@ -57,6 +59,7 @@ class AbstractWorker:
         self.params = params
         self.worker_comms = worker_comms
         self.worker_insights = worker_insights
+        self.tqdm_connection_details = tqdm_connection_details
         self.dashboard_connection_details = dashboard_connection_details
         self.start_time = start_time
 
@@ -107,8 +110,9 @@ class AbstractWorker:
         """
         self.worker_comms.set_worker_alive(self.worker_id)
 
-        # Set dashboard connection details. This is needed for nested pools and in the case forkserver or spawn is
-        # used as start method
+        # Set tqdm and dashboard connection details. This is needed for nested pools and in the case forkserver or
+        # spawn is used as start method
+        TqdmManager.set_connection_details(self.tqdm_connection_details)
         set_dashboard_connection(self.dashboard_connection_details, auto_connect=False)
 
         try:

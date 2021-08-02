@@ -20,6 +20,7 @@ from mpire.insights import WorkerInsights
 from mpire.params import CPUList, WorkerPoolParams
 from mpire.progress_bar import ProgressBarHandler
 from mpire.signal import DisableKeyboardInterruptSignal
+from mpire.tqdm_utils import TqdmManager
 from mpire.utils import apply_numpy_chunking, chunk_tasks
 from mpire.worker import MP_CONTEXTS, worker_factory
 
@@ -168,7 +169,7 @@ class WorkerPool:
         with DisableKeyboardInterruptSignal():
             # Create worker
             w = self.Worker(worker_id, self.params, self._worker_comms, self._worker_insights,
-                            get_dashboard_connection_details(), datetime.now())
+                            TqdmManager.get_connection_details(), get_dashboard_connection_details(), datetime.now())
             w.daemon = self.params.daemon
             w.start()
 
@@ -454,6 +455,10 @@ class WorkerPool:
             progress_bar_position
         )
 
+        # Start tqdm manager if a progress bar is desired. Will only start one when not already started. This has to be
+        # done before starting the workers in case nested pools are used
+        tqdm_manager_owner = TqdmManager.start_manager() if progress_bar else False
+
         # Chunk the function arguments. Make single arguments when we're not dealing with numpy arrays
         if not numpy_chunking:
             iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size,
@@ -466,62 +471,67 @@ class WorkerPool:
             self.stop_and_join(None, keep_alive=False)
         if not self._workers:
             self.params.set_map_params(func, worker_init, worker_exit, worker_lifespan, enable_insights)
-            self._start_workers(bool(progress_bar), enable_insights)
+            self._start_workers(progress_bar, enable_insights)
 
         # Create progress bar handler, which receives progress updates from the workers and updates the progress bar
         # accordingly
-        with ProgressBarHandler(self.ctx, self.params.start_method == 'threading', func, self.params.n_jobs,
-                                progress_bar, n_tasks, progress_bar_position, self._worker_comms,
-                                self._worker_insights) as progress_bar_handler:
-            try:
-                # Process all args in the iterable
-                n_active = 0
-                while not self._worker_comms.exception_thrown():
-                    # Add task, only if allowed and if there are any
-                    if n_active < max_tasks_active:
+        try:
+            with ProgressBarHandler(self.ctx, self.params.start_method == 'threading', func, self.params.n_jobs,
+                                    progress_bar, n_tasks, progress_bar_position, self._worker_comms,
+                                    self._worker_insights) as progress_bar_handler:
+                try:
+                    # Process all args in the iterable
+                    n_active = 0
+                    while not self._worker_comms.exception_thrown():
+                        # Add task, only if allowed and if there are any
+                        if n_active < max_tasks_active:
+                            try:
+                                self._worker_comms.add_task(next(iterator_of_chunked_args))
+                                n_active += 1
+                            except StopIteration:
+                                break
+
+                        # Check if new results are available, but don't wait for it
                         try:
-                            self._worker_comms.add_task(next(iterator_of_chunked_args))
-                            n_active += 1
-                        except StopIteration:
-                            break
+                            yield from self._worker_comms.get_results(block=False)
+                            n_active -= 1
+                        except queue.Empty:
+                            pass
 
-                    # Check if new results are available, but don't wait for it
-                    try:
-                        yield from self._worker_comms.get_results(block=False)
-                        n_active -= 1
-                    except queue.Empty:
-                        pass
+                        # Restart workers if necessary
+                        self._restart_workers()
 
-                    # Restart workers if necessary
-                    self._restart_workers()
+                    # Obtain the results not yet obtained
+                    while not self._worker_comms.exception_thrown() and n_active != 0:
+                        try:
+                            yield from self._worker_comms.get_results(block=True, timeout=0.01)
+                            n_active -= 1
+                        except queue.Empty:
+                            pass
 
-                # Obtain the results not yet obtained
-                while not self._worker_comms.exception_thrown() and n_active != 0:
-                    try:
-                        yield from self._worker_comms.get_results(block=True, timeout=0.01)
-                        n_active -= 1
-                    except queue.Empty:
-                        pass
+                        # Restart workers if necessary
+                        self._restart_workers()
 
-                    # Restart workers if necessary
-                    self._restart_workers()
+                    # Terminate if exception has been thrown at this point
+                    if self._worker_comms.exception_thrown():
+                        self._handle_exception(progress_bar_handler)
 
-                # Terminate if exception has been thrown at this point
-                if self._worker_comms.exception_thrown():
+                    # All results are in: it's clean up time
+                    self.stop_and_join(progress_bar_handler, keep_alive=self.params.keep_alive)
+
+                except KeyboardInterrupt:
                     self._handle_exception(progress_bar_handler)
 
-                # All results are in: it's clean up time
-                self.stop_and_join(progress_bar_handler, keep_alive=self.params.keep_alive)
+            # Join exception queue, if it hasn't already
+            logger.debug("Joining exception queue")
+            self._worker_comms.join_exception_queue(self.params.keep_alive)
+            logger.debug("Done joining exception queue, now joining progress bar queue")
+            self._worker_comms.join_progress_bar_task_completed_queue(self.params.keep_alive)
+            logger.debug("Done joining progress bar queue")
 
-            except KeyboardInterrupt:
-                self._handle_exception(progress_bar_handler)
-
-        # Join exception queue, if it hasn't already
-        logger.debug("Joining exception queue")
-        self._worker_comms.join_exception_queue(self.params.keep_alive)
-        logger.debug("Done joining exception queue, now joining progress bar queue")
-        self._worker_comms.join_progress_bar_task_completed_queue(self.params.keep_alive)
-        logger.debug("Done joining progress bar queue")
+        finally:
+            if tqdm_manager_owner:
+                TqdmManager.stop_manager()
 
         # Log insights
         if enable_insights:
