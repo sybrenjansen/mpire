@@ -1,6 +1,8 @@
 from ctypes import c_char
 from multiprocessing import Array, Event, Lock
 from multiprocessing.managers import SyncManager
+
+import sys
 from typing import Optional, Tuple
 
 from mpire.signal import DisableKeyboardInterruptSignal
@@ -109,8 +111,13 @@ class TqdmManager:
             cls.MANAGER.start()
         cls.MANAGER_STARTED.set()
 
-        # Set host so other processes know where to connect to
-        cls.MANAGER_HOST.value = cls.MANAGER.address.encode()
+        # Set host so other processes know where to connect to. Since Python 3.9 address is a bytes object and is
+        # prefixed by a null byte which needs to be removed (null byte doesn't work with Array). Before 3.9 it was a
+        # string, which we need to transform to bytes
+        if sys.version_info[0] == 3 and sys.version_info[1] < 9:
+            cls.MANAGER_HOST.value = cls.MANAGER.address.encode()
+        else:
+            cls.MANAGER_HOST.value = cls.MANAGER.address[1:]
 
         return True
 
@@ -118,9 +125,13 @@ class TqdmManager:
         """
         Connect to the tqdm manager
         """
-        # Connect to a server
-        # print("trying to connect to ", self.MANAGER_HOST.value.decode())
-        self.MANAGER = SyncManager(address=self.MANAGER_HOST.value.decode(), authkey=b'mpire_tqdm')
+        # Connect to a server. Since Python 3.9 the address is prefixed by a null byte (which was stripped when setting
+        # the host value, due to restrictions in Array). Address needs to be a string.
+        if sys.version_info[0] == 3 and sys.version_info[1] < 9:
+            address = self.MANAGER_HOST.value.decode()
+        else:
+            address = f"\x00{self.MANAGER_HOST.value.decode()}"
+        self.MANAGER = SyncManager(address=address, authkey=b'mpire_tqdm')
         self.MANAGER.register('get_tqdm_lock')
         self.MANAGER.register('get_tqdm_position_register')
         self.MANAGER.connect()
