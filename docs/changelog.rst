@@ -4,7 +4,7 @@ Changelog
 2.1.0
 -----
 
-*(2021-08-02)*
+*(2021-08-06)*
 
 * Workers now have their own task queue, which speeds up tasks with bigger payloads
 * Fixed progress bar showing error information when completed without error

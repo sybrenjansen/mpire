@@ -106,8 +106,8 @@ class TqdmManager:
         # Create manager
         with DisableKeyboardInterruptSignal():
             cls.MANAGER = SyncManager(authkey=b'mpire_tqdm')
-            cls.MANAGER.register('get_tqdm_lock', cls.get_tqdm_lock)
-            cls.MANAGER.register('get_tqdm_position_register', cls.get_tqdm_position_register)
+            cls.MANAGER.register('get_tqdm_lock', cls._get_tqdm_lock)
+            cls.MANAGER.register('get_tqdm_position_register', cls._get_tqdm_position_register)
             cls.MANAGER.start()
         cls.MANAGER_STARTED.set()
 
@@ -147,16 +147,16 @@ class TqdmManager:
         cls.MANAGER_STARTED.clear()
 
     @staticmethod
-    def get_tqdm_lock() -> TqdmLock:
+    def _get_tqdm_lock() -> Lock:
         """
         This function needs to be static, because a manager doesn't pass arguments to registered functions
 
         :return: Lock object for tqdm
         """
-        return TqdmLock(TqdmManager.LOCK)
+        return TqdmManager.LOCK
 
     @staticmethod
-    def get_tqdm_position_register() -> TqdmPositionRegister:
+    def _get_tqdm_position_register() -> TqdmPositionRegister:
         """
         This function needs to be static, because a manager doesn't pass arguments to registered functions
 

@@ -25,8 +25,7 @@ except ImportError:
 
 from mpire.comms import NON_LETHAL_POISON_PILL, POISON_PILL, WorkerComms
 from mpire.context import MP_CONTEXTS
-from mpire.dashboard.connection_utils import (DashboardConnectionDetails, get_dashboard_connection_details,
-                                              set_dashboard_connection)
+from mpire.dashboard.connection_utils import DashboardConnectionDetails, set_dashboard_connection
 from mpire.exception import CannotPickleExceptionError, StopWorker
 from mpire.insights import WorkerInsights
 from mpire.params import WorkerPoolParams

@@ -5,7 +5,7 @@ try:
     from mpire.dashboard import connect_to_dashboard
     from mpire.dashboard.dashboard import DASHBOARD_STARTED_EVENT
     from mpire.dashboard.manager import DASHBOARD_MANAGER_HOST, DASHBOARD_MANAGER_PORT
-except ImportError:
+except (ImportError, ModuleNotFoundError):
     DASHBOARD_MANAGER_HOST = None
     DASHBOARD_MANAGER_PORT = None
     DASHBOARD_STARTED_EVENT = None
