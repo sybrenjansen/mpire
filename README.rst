@@ -31,7 +31,8 @@ Features
 - Automatic restarting of workers after a specified number of tasks to reduce memory footprint
 - Nested pool of workers are allowed when setting the ``daemon`` option
 - Child processes can be pinned to specific or a range of CPUs
-- Uses dill_ as serialization backend through multiprocess_, enabling parallelizing functions in iPython (notebooks)
+- Optionally uses dill_ as serialization backend through multiprocess_, enabling parallelizing more exotic functions
+  and objects
 
 .. _multiprocess: https://github.com/uqfoundation/multiprocess
 .. _dill: https://pypi.org/project/dill/

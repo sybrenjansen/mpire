@@ -58,7 +58,7 @@ It's as simple as setting the ``progress_bar`` parameter to ``True``:
         results = pool.map(time_consuming_function, range(10), progress_bar=True)
 
 And it will output a nicely formatted tqdm_ progress bar. In case you're running your code inside a notebook it will
-automatically switch to a widget, or you can pass on your own custom tqdm progress bar, for more finegrained control.
+automatically switch to a widget.
 
 MPIRE also offers a dashboard, for which you need to install additional :ref:`dependencies <dashboarddep>`. See
 :ref:`Dashboard` for more information.

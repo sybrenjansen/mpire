@@ -131,7 +131,7 @@ def start_dashboard(port_range: Sequence = range(8080, 8100)) -> Dict[str, Union
         raise RuntimeError("You already have a running dashboard")
 
 
-def connect_to_dashboard(manager_port_nr: int, manager_host: Optional[str] = None) -> None:
+def connect_to_dashboard(manager_port_nr: int, manager_host: Optional[Union[bytes, str]] = None) -> None:
     """
     Connects to an existing MPIRE dashboard
 

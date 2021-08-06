@@ -363,7 +363,7 @@ When inside a Jupyter/IPython notebook, the progress bar will change automatical
 .. note::
 
     Please keep in mind that to show real-time progress information MPIRE starts an additional child process, which
-    could consume a bit of the available compute power of your machine.
+    could consume a bit of the available compute power of your machine. However, this is often negligible.
 
 
 Multiple progress bars with nested WorkerPools
@@ -379,7 +379,8 @@ progress bars using nested WorkerPools:
 
     def dispatcher(worker_id, X):
         with WorkerPool(n_jobs=4) as nested_pool:
-            return nested_pool.map(square, X, progress_bar=True, progress_bar_position=worker_id + 1)
+            return nested_pool.map(square, X, progress_bar=True,
+                                   progress_bar_position=worker_id + 1)
 
     def main():
         with WorkerPool(n_jobs=4, daemon=False, pass_worker_id=True) as pool:
@@ -391,11 +392,12 @@ progress bars using nested WorkerPools:
 We use ``worker_id + 1`` here because the worker IDs start at zero, and we reserve position 0 for the progress bar of
 the main WorkerPool (which is the default).
 
+It goes without saying that you shouldn't specify the same progress bar position multiple times.
+
 .. note::
 
-    Unfortunately, multiple ``tqdm`` progress bars from child processes don't play that nicely within a Jupyter/IPython
-    notebook session. It'll work but you'll get some additional new lines in your output and it could be that your main
-    progress bar won't update as you would expect. Note that you can always use the MPIRE dashboard.
+    The progress bar position is completely ignored when in a Jupyter/IPython notebook session or in the MPIRE
+    dashboard.
 
 
 .. _worker_init_exit:

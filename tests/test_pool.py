@@ -1,12 +1,24 @@
+import logging
 import types
 import unittest
+import sys
 from itertools import product, repeat
 from multiprocessing import Barrier, Value
 from unittest.mock import patch
 
 import numpy as np
+from tqdm import tqdm
 
 from mpire import cpu_count, WorkerPool
+
+
+# For Python 3.9 we skip forkserver in the tests. This is because in Python 3.9 it doesn't work nicely with unittesting.
+# Not sure if it's because of the many times we start a forkserver or if there's another cause. I haven't been able to
+# find the root cause.
+if sys.version_info[0] == 3 and sys.version_info[1] >= 9:
+    TEST_START_METHODS = ['fork', 'spawn', 'threading']
+else:
+    TEST_START_METHODS = ['fork', 'forkserver', 'spawn', 'threading']
 
 
 def square(idx, x):
@@ -41,8 +53,12 @@ class MapTest(unittest.TestCase):
 
         # Test results for different number of jobs to run in parallel and the maximum number of active tasks in the
         # queue
+        print()
         for n_jobs, n_tasks_max_active, worker_lifespan, chunk_size, n_splits in \
-                product([1, 2, None], [None, 2], [None, 2], [None, 3], [None, 3]):
+                tqdm(product([1, 2, None], [None, 2], [None, 2], [None, 3], [None, 3]), total=3*2*2*2*2):
+
+            if n_jobs is not None:
+                continue
 
             with WorkerPool(n_jobs=n_jobs) as pool:
 
@@ -58,7 +74,7 @@ class MapTest(unittest.TestCase):
                         # generators and iterators. Also check if an empty list works as desired.
                         results_list = map_func(square, self.test_data, max_tasks_active=n_tasks_max_active,
                                                 worker_lifespan=worker_lifespan)
-                        self.assertTrue(isinstance(results_list, result_type))
+                        self.assertIsInstance(results_list, result_type)
                         self.assertEqual(self.test_desired_output,
                                          sorted(results_list, key=lambda tup: tup[0]) if sort else list(results_list))
 
@@ -68,7 +84,7 @@ class MapTest(unittest.TestCase):
 
                         results_list = map_func(square, get_generator(self.test_data), iterable_len=self.test_data_len,
                                                 max_tasks_active=n_tasks_max_active, worker_lifespan=worker_lifespan)
-                        self.assertTrue(isinstance(results_list, result_type))
+                        self.assertIsInstance(results_list, result_type)
                         self.assertEqual(self.test_desired_output,
                                          sorted(results_list, key=lambda tup: tup[0]) if sort else list(results_list))
 
@@ -78,15 +94,16 @@ class MapTest(unittest.TestCase):
 
                         results_list = map_func(square, [], max_tasks_active=n_tasks_max_active,
                                                 worker_lifespan=worker_lifespan)
-                        self.assertTrue(isinstance(results_list, result_type))
+                        self.assertIsInstance(results_list, result_type)
                         self.assertEqual([], list(results_list))
 
     def test_numpy_input(self):
         """
         Test map with numpy input
         """
+        print()
         for n_jobs, n_tasks_max_active, worker_lifespan, chunk_size, n_splits in \
-                product([1, 2, None], [None, 2], [None, 2], [None, 3], [None, 3]):
+                tqdm(product([1, 2, None], [None, 2], [None, 2], [None, 3], [None, 3]), total=3*2*2*2*2):
 
             with WorkerPool(n_jobs=n_jobs) as pool:
 
@@ -97,7 +114,7 @@ class MapTest(unittest.TestCase):
                                   chunk_size=chunk_size, n_splits=n_splits):
                     results = pool.map(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
                                        worker_lifespan=worker_lifespan, concatenate_numpy_output=True)
-                    self.assertTrue(isinstance(results, np.ndarray))
+                    self.assertIsInstance(results, np.ndarray)
                     np.testing.assert_array_equal(results, self.test_desired_output_numpy)
 
                 # If we disable it we should get back chunks of the original array
@@ -106,7 +123,7 @@ class MapTest(unittest.TestCase):
                                   chunk_size=chunk_size, n_splits=n_splits):
                     results = pool.map(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
                                        worker_lifespan=worker_lifespan, concatenate_numpy_output=False)
-                    self.assertTrue(isinstance(results, list))
+                    self.assertIsInstance(results, list)
                     np.testing.assert_array_equal(np.concatenate(results), self.test_desired_output_numpy)
 
                 # Numpy concatenation doesn't exist for the other functions
@@ -114,7 +131,7 @@ class MapTest(unittest.TestCase):
                                   worker_lifespan=worker_lifespan, chunk_size=chunk_size, n_splits=n_splits):
                     results = pool.imap(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
                                         worker_lifespan=worker_lifespan)
-                    self.assertTrue(isinstance(results, types.GeneratorType))
+                    self.assertIsInstance(results, types.GeneratorType)
                     np.testing.assert_array_equal(np.concatenate(list(results)), self.test_desired_output_numpy)
 
                 # map_unordered and imap_unordered cannot be checked for correctness as we don't know the order of the
@@ -127,7 +144,7 @@ class MapTest(unittest.TestCase):
 
                         results = map_func(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
                                            worker_lifespan=worker_lifespan)
-                        self.assertTrue(isinstance(results, result_type))
+                        self.assertIsInstance(results, result_type)
                         concattenated_results = np.concatenate(list(results))
                         if n_jobs == 1:
                             np.testing.assert_array_equal(concattenated_results, self.test_desired_output_numpy)
@@ -161,6 +178,34 @@ class MapTest(unittest.TestCase):
             with self.subTest("unknown parameter 'z'"), self.assertRaises(TypeError):
                 pool.map(subtract, [{'x': 5, 'y': 2, 'z': 2}])
 
+    def test_start_methods(self):
+        """
+        Test different start methods. All should work just fine
+        """
+        print()
+        for start_method in tqdm(TEST_START_METHODS):
+            with self.subTest(start_method=start_method, map='map'), WorkerPool(2, start_method=start_method) as pool:
+                results_list = pool.map(square, self.test_data)
+                self.assertIsInstance(results_list, list)
+                self.assertEqual(self.test_desired_output, results_list)
+
+            with self.subTest(start_method=start_method, map='map_unordered'), \
+                    WorkerPool(2, start_method=start_method) as pool:
+                results_list = pool.map_unordered(square, self.test_data)
+                self.assertIsInstance(results_list, list)
+                self.assertEqual(self.test_desired_output, sorted(results_list, key=lambda tup: tup[0]))
+
+            with self.subTest(start_method=start_method, map='imap'), WorkerPool(2, start_method=start_method) as pool:
+                results_list = pool.imap(square, self.test_data)
+                self.assertIsInstance(results_list, types.GeneratorType)
+                self.assertListEqual(list(results_list), self.test_desired_output)
+
+            with self.subTest(start_method=start_method, map='imap_unordered'), \
+                    WorkerPool(2, start_method=start_method) as pool:
+                results_list = pool.imap_unordered(square, self.test_data)
+                self.assertIsInstance(results_list, types.GeneratorType)
+                self.assertEqual(self.test_desired_output, sorted(results_list, key=lambda tup: tup[0]))
+
 
 class WorkerIDTest(unittest.TestCase):
 
@@ -178,7 +223,7 @@ class WorkerIDTest(unittest.TestCase):
                 # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
                 # or when the shared objects are not equal to the given arguments
                 f = self._f1 if pass_worker_id else self._f2
-                pool.map(f, ((n_jobs,) for _ in range(10)), iterable_len=10)
+                self.assertListEqual(pool.map(f, ((n_jobs,) for _ in range(10)), iterable_len=10), [True] * 10)
 
     def test_by_constructor(self):
         """
@@ -192,21 +237,35 @@ class WorkerIDTest(unittest.TestCase):
                 # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
                 # or when the shared objects are not equal to the given arguments
                 f = self._f1 if pass_worker_id else self._f2
-                pool.map(f, ((n_jobs,) for _ in range(10)), iterable_len=10)
+                self.assertListEqual(pool.map(f, ((n_jobs,) for _ in range(10)), iterable_len=10), [True] * 10)
 
-    def _f1(self, _wid, _n_jobs):
+    def test_start_methods(self):
+        """
+        Test for different start methods
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, pass_worker_id=True, start_method=start_method,
+                               use_dill=start_method in {'forkserver', 'spawn'}) as pool:
+                self.assertListEqual(pool.map(self._f1, ((2,) for _ in range(10)), iterable_len=10), [True] * 10)
+
+    @staticmethod
+    def _f1(_wid, _n_jobs):
         """
         Function with worker ID
         """
-        self.assertIsInstance(_wid, int)
-        self.assertGreaterEqual(_wid, 0)
-        self.assertLessEqual(_wid, _n_jobs)
+        tests_succeed = True
+        tests_succeed &= isinstance(_wid, int)
+        tests_succeed &= _wid >= 0
+        tests_succeed &= _wid <= _n_jobs
+        return tests_succeed
 
-    def _f2(self, _n_jobs):
+    @staticmethod
+    def _f2(_n_jobs):
         """
         Function without worker ID (simply tests if WorkerPool correctly handles pass_worker_id=False)
         """
-        pass
+        return True
 
 
 class SharedObjectsTest(unittest.TestCase):
@@ -226,7 +285,7 @@ class SharedObjectsTest(unittest.TestCase):
                 # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
                 # or when the shared objects are not equal to the given arguments
                 f = self._f1 if shared_objects else self._f2
-                pool.map(f, ((shared_objects, n_jobs) for _ in range(10)), iterable_len=10)
+                self.assertListEqual(pool.map(f, ((shared_objects,) for _ in range(10)), iterable_len=10), [True] * 10)
 
     def test_by_constructor(self):
         """
@@ -241,19 +300,32 @@ class SharedObjectsTest(unittest.TestCase):
                 # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
                 # or when the shared objects are not equal to the given arguments
                 f = self._f1 if shared_objects else self._f2
-                pool.map(f, ((shared_objects, n_jobs) for _ in range(10)), iterable_len=10)
+                self.assertListEqual(pool.map(f, ((shared_objects,) for _ in range(10)), iterable_len=10), [True] * 10)
 
-    def _f1(self, _sobjects, _args, _n_jobs):
+    def test_start_methods(self):
+        """
+        Tests for different start methods
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, shared_objects=({'1', '2', '3'}), start_method=start_method,
+                               use_dill=start_method in {'forkserver', 'spawn'}) as pool:
+                self.assertListEqual(pool.map(self._f1, (({'1', '2', '3'},) for _ in range(10)), iterable_len=10),
+                                     [True] * 10)
+
+    @staticmethod
+    def _f1(_sobjects, _args):
         """
         Function with shared objects
         """
-        self.assertEqual(_sobjects, _args, _n_jobs)
+        return _sobjects == _args
 
-    def _f2(self, _args, _n_jobs):
+    @staticmethod
+    def _f2(_args):
         """
         Function without shared objects (simply tests if WorkerPool correctly handles shared_objects=None)
         """
-        pass
+        return True
 
 
 class WorkerStateTest(unittest.TestCase):
@@ -275,8 +347,9 @@ class WorkerStateTest(unittest.TestCase):
                 results = pool.map(f, range(n_tasks), chunk_size=2)
                 if use_worker_state:
                     n_processed_per_worker = [0] * n_jobs
-                    for wid, n_processed in results:
+                    for wid, n_processed, tests_succeed in results:
                         n_processed_per_worker[wid] = n_processed
+                        self.assertTrue(tests_succeed)
                     self.assertEqual(sum(n_processed_per_worker), n_tasks)
 
     def test_by_constructor(self):
@@ -294,25 +367,44 @@ class WorkerStateTest(unittest.TestCase):
                 results = pool.map(f, range(n_tasks), chunk_size=2)
                 if use_worker_state:
                     n_processed_per_worker = [0] * n_jobs
-                    for wid, n_processed in results:
+                    for wid, n_processed, tests_succeed in results:
                         n_processed_per_worker[wid] = n_processed
+                        self.assertTrue(tests_succeed)
                     self.assertEqual(sum(n_processed_per_worker), n_tasks)
 
-    def _f1(self, _wid, _wstate, _arg):
+    def test_start_methods(self):
+        """
+        Test for different start methods
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, pass_worker_id=True, use_worker_state=True, start_method=start_method,
+                               use_dill=start_method in {'forkserver', 'spawn'}) as pool:
+                results = pool.map(self._f1, range(10), chunk_size=2)
+                n_processed_per_worker = [0, 0, 0]
+                for wid, n_processed, tests_succeed in results:
+                    n_processed_per_worker[wid] = n_processed
+                    self.assertTrue(tests_succeed)
+                self.assertEqual(sum(n_processed_per_worker), 10)
+
+    @staticmethod
+    def _f1(_wid, _wstate, _arg):
         """
         Function with worker ID and worker state
         """
-        self.assertTrue(isinstance(_wstate, dict))
+        tests_succeed = True
+        tests_succeed &= isinstance(_wstate, dict)
 
         # Worker id should always be the same
         _wstate.setdefault('worker_id', set()).add(_wid)
-        self.assertEqual(_wstate['worker_id'], {_wid})
+        tests_succeed &= _wstate['worker_id'] == {_wid}
 
         # Should contain previous args
         _wstate.setdefault('args', []).append(_arg)
-        return _wid, len(_wstate['args'])
+        return _wid, len(_wstate['args']), tests_succeed
 
-    def _f2(self, _wid, _):
+    @staticmethod
+    def _f2(_wid, _):
         """
         Function with worker ID (simply tests if WorkerPool correctly handles use_worker_state=False)
         """
@@ -368,6 +460,20 @@ class InitFuncTest(unittest.TestCase):
         """
         with self.assertRaises(ValueError), WorkerPool(n_jobs=4, shared_objects=(None,), use_worker_state=True) as pool:
             pool.map(self._f, self.test_data, worker_init=self._init_error)
+
+    def test_start_methods(self):
+        """
+        Test for different start methods
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, use_worker_state=True, start_method=start_method,
+                               use_dill=start_method in {'forkserver', 'spawn'}) as pool:
+                shared_objects = pool.ctx.Barrier(2), pool.ctx.Value('i', 0)
+                pool.set_shared_objects(shared_objects)
+                results = pool.map(self._f, self.test_data, worker_init=self._init, chunk_size=1)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertEqual(shared_objects[1].value, 2)
 
     @staticmethod
     def _init(shared_objects, worker_state):
@@ -466,6 +572,22 @@ class ExitFuncTest(unittest.TestCase):
                     WorkerPool(n_jobs=4) as pool:
                 pool.map(self._f2, range(10), worker_lifespan=worker_lifespan, worker_exit=self._exit_error)
 
+    def test_start_methods(self):
+        """
+        Test for different start methods
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, use_worker_state=True, start_method=start_method,
+                               use_dill=start_method in {'forkserver', 'spawn'}) as pool:
+                shared_objects = pool.ctx.Barrier(2), pool.ctx.Value('i', 0)
+                pool.set_shared_objects(shared_objects)
+                results = pool.map(self._f1, self.test_data, worker_init=self._init, worker_exit=self._exit)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertEqual(shared_objects[1].value, 2)
+                self.assertEqual(len(pool.get_exit_results()), 2)
+                self.assertEqual(sum(pool.get_exit_results()), sum(range(10)))
+
     @staticmethod
     def _init(shared_objects, worker_state):
         barrier, call_count = shared_objects
@@ -520,7 +642,7 @@ class DaemonTest(unittest.TestCase):
 
             # Each of the results should match
             for results_list in results:
-                self.assertTrue(isinstance(results_list, list))
+                self.assertIsInstance(results_list, list)
                 self.assertEqual(self.test_desired_output, results_list)
 
     def test_deamon_nested_workerpool(self):
@@ -529,6 +651,22 @@ class DaemonTest(unittest.TestCase):
         """
         with self.assertRaises(AssertionError), WorkerPool(n_jobs=4, daemon=True) as pool:
             pool.map(self._square_daemon, ((X,) for X in repeat(self.test_data, 4)), chunk_size=1)
+
+    def test_start_methods(self):
+        """
+        Test for different start methods
+        """
+        for start_method in TEST_START_METHODS:
+            if start_method == 'threading':
+                continue
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, daemon=False, start_method=start_method,
+                               use_dill=start_method in {'forkserver', 'spawn'}) as pool:
+                pool.map(self._square_daemon, ((X,) for X in repeat(self.test_data, 3)), chunk_size=1)
+
+        # This won't work for threading
+        with self.assertRaises(ValueError), WorkerPool(n_jobs=3, daemon=False, start_method='threading') as pool:
+            pool.map(self._square_daemon, ((X,) for X in repeat(self.test_data, 3)), chunk_size=1)
 
     @staticmethod
     def _square_daemon(X):
@@ -570,7 +708,7 @@ class CPUPinningTest(unittest.TestCase):
 
                 # Verify results
                 results_list = pool.map(square, self.test_data)
-                self.assertTrue(isinstance(results_list, list))
+                self.assertIsInstance(results_list, list)
                 self.assertEqual(self.test_desired_output, results_list)
 
                 # Verify that when CPU pinning is used, it is called as many times as there are jobs and is called for
@@ -581,6 +719,38 @@ class CPUPinningTest(unittest.TestCase):
                     self.assertEqual(p.call_count, pool.params.n_jobs)
                     mask = [call[0][1] for call in p.call_args_list]
                     self.assertListEqual(mask, expected_mask)
+
+    def test_start_methods(self):
+        """
+        Test for different start methods
+        """
+        # This test will fail if there are less CPUs available than specified.
+        if cpu_count() >= 2:
+            n_jobs, cpu_ids, expected_mask = 2, [1, 0], [[1], [0]]
+        else:
+            n_jobs, cpu_ids, expected_mask = 1, [0], [[0]]
+
+        for start_method in TEST_START_METHODS:
+            if start_method == 'threading':
+                continue
+            with self.subTest(start_method=start_method), patch('os.sched_setaffinity') as p, \
+                    WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids, start_method=start_method,
+                               use_dill=start_method in {'forkserver', 'spawn'}) as pool:
+                # Verify results
+                results_list = pool.map(square, self.test_data)
+                self.assertIsInstance(results_list, list)
+                self.assertEqual(self.test_desired_output, results_list)
+
+                # Verify that CPU pinning is used as many times as there are jobs and is called for each worker process
+                # ID
+                self.assertEqual(p.call_count, pool.params.n_jobs)
+                mask = [call[0][1] for call in p.call_args_list]
+                self.assertListEqual(mask, expected_mask)
+
+        # This won't work for threading
+        with self.assertRaises(AttributeError), WorkerPool(n_jobs=n_jobs, cpu_ids=cpu_ids,
+                                                           start_method='threading') as pool:
+            pool.map(square, self.test_data)
 
 
 class ProgressBarTest(unittest.TestCase):
@@ -610,7 +780,7 @@ class ProgressBarTest(unittest.TestCase):
 
             with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs) as pool:
                 results_list = pool.map(square, self.test_data, progress_bar=progress_bar)
-                self.assertTrue(isinstance(results_list, list))
+                self.assertIsInstance(results_list, list)
                 self.assertEqual(self.test_desired_output, results_list)
 
     def test_valid_progress_bars_numpy_input(self):
@@ -623,7 +793,7 @@ class ProgressBarTest(unittest.TestCase):
             # Should work just fine
             with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar), WorkerPool(n_jobs=n_jobs) as pool:
                 results = pool.map(square_numpy, self.test_data_numpy, progress_bar=progress_bar)
-                self.assertTrue(isinstance(results, np.ndarray))
+                self.assertIsInstance(results, np.ndarray)
                 np.testing.assert_array_equal(results, self.test_desired_output_numpy)
 
     def test_no_input_data(self):
@@ -648,24 +818,18 @@ class ProgressBarTest(unittest.TestCase):
                 pool.map(square_numpy, self.test_data_numpy, progress_bar=True,
                          progress_bar_position=progress_bar_position)
 
-
-class StartMethodTest(unittest.TestCase):
-
-    def setUp(self):
-        # Create some test data. Note that the regular map reads the inputs as a list of single tuples (one argument),
-        # whereas parallel.map sees it as a list of argument lists. Therefore we give the regular map a lambda function
-        # which mimics the parallel.map behavior.
-        self.test_data = list(enumerate([1, 2, 3, 5, 6, 9, 37, 42, 1337, 0, 3, 5, 0]))
-        self.test_desired_output = list(map(lambda _args: square(*_args), self.test_data))
-
-    def test_start_method(self):
+    def test_start_methods(self):
         """
-        Test different start methods. All should work just fine
+        Test for different start methods
         """
-        for n_jobs, start_method in product([1, 3], ['fork', 'forkserver', 'spawn', 'threading']):
-            with self.subTest(n_jobs=n_jobs, start_method=start_method), \
-                 WorkerPool(n_jobs, start_method=start_method) as pool:
-                self.assertListEqual(pool.map(square, self.test_data), self.test_desired_output)
+        print()
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, start_method=start_method,
+                               use_dill=start_method in {'forkserver', 'spawn'}) as pool:
+                results_list = pool.map(square, self.test_data, progress_bar=True)
+                self.assertIsInstance(results_list, list)
+                self.assertEqual(self.test_desired_output, results_list)
 
 
 class KeepAliveTest(unittest.TestCase):
@@ -743,7 +907,7 @@ class KeepAliveTest(unittest.TestCase):
     def test_keep_alive_func_changes(self):
         """
         When keep_alive is set to True it should reuse existing workers between map calls, but only when the called
-        function is kept constant
+        function, amongst others, is kept constant
         """
         for n_jobs in [1, 2, 4]:
             barrier = Barrier(n_jobs)
@@ -773,8 +937,8 @@ class KeepAliveTest(unittest.TestCase):
 
     def test_keep_alive_worker_lifespan_changes(self):
         """
-        When keep_alive is set to True it should reuse existing workers between map calls, but only when the called
-        function is kept constant
+        When keep_alive is set to True it should reuse existing workers between map calls, but only when the worker
+        lifespan, amongst others, is kept constant
         """
         for n_jobs in [1, 2, 4]:
             barrier = Barrier(n_jobs)
@@ -810,7 +974,7 @@ class KeepAliveTest(unittest.TestCase):
     def test_keep_alive_worker_init_changes(self):
         """
         When keep_alive is set to True it should reuse existing workers between map calls, but only when the worker init
-        function is kept constant
+        function, amongst others, is kept constant
         """
         for n_jobs in [1, 2, 4]:
             barrier = Barrier(n_jobs)
@@ -841,7 +1005,7 @@ class KeepAliveTest(unittest.TestCase):
     def test_keep_alive_worker_exit_changes(self):
         """
         When keep_alive is set to True it should reuse existing workers between map calls, but only when the worker exit
-        function is kept constant
+        function, amongst others, is kept constant
         """
         for n_jobs in [1, 2, 4]:
             barrier = Barrier(n_jobs)
@@ -868,6 +1032,68 @@ class KeepAliveTest(unittest.TestCase):
                 self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1,
                                               worker_exit=self._exit1), self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs * 3)
+
+    def test_keep_alive_enable_insights_changes(self):
+        """
+        When keep_alive is set to True it should reuse existing workers between map calls, but only when
+        enable_insights, amongst others, is kept constant
+        """
+        for n_jobs in [1, 2, 4]:
+            barrier = Barrier(n_jobs)
+            counter = Value('i', 0)
+            shared = barrier, counter
+            with self.subTest(n_jobs=n_jobs), \
+                    WorkerPool(n_jobs=n_jobs, shared_objects=shared, use_worker_state=True, keep_alive=True) as pool:
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1, enable_insights=False),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs)
+                barrier.reset()
+
+                self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_init=self._init1,
+                                                    enable_insights=False)), self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs)
+                barrier.reset()
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1, enable_insights=True),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs * 2)
+                barrier.reset()
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1, enable_insights=True),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs * 2)
+                barrier.reset()
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1, enable_insights=False),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, n_jobs * 3)
+
+    def test_start_methods(self):
+        """
+        Test for different start methods
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, use_worker_state=True, keep_alive=True, start_method=start_method,
+                               use_dill=start_method in {'forkserver', 'spawn'}) as pool:
+
+                barrier = pool.ctx.Barrier(2)
+                counter = pool.ctx.Value('i', 0)
+                pool.set_shared_objects((barrier, counter))
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, 2)
+                barrier.reset()
+
+                self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_init=self._init1)),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, 2)
+                barrier.reset()
+
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                                     self.test_desired_output_f1)
+                self.assertEqual(counter.value, 2)
 
     @staticmethod
     def _init1(_, worker_state):
@@ -925,6 +1151,13 @@ class ExceptionTest(unittest.TestCase):
         self.test_desired_output = list(map(lambda _args: square(*_args), self.test_data))
         self.test_data_len = len(self.test_data)
 
+        # Setup logger for debug purposes
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.DEBUG)
+
+    def tearDown(self):
+        self.logger.setLevel(logging.NOTSET)
+
     def test_exceptions(self):
         """
         Tests if MPIRE can handle exceptions well
@@ -933,9 +1166,12 @@ class ExceptionTest(unittest.TestCase):
         print()
         for n_jobs, n_tasks_max_active, worker_lifespan, progress_bar in product([1, 20], [None, 1], [None, 1],
                                                                                  [False, True]):
+            self.logger.debug(f"========== {n_jobs}, {n_tasks_max_active}, {worker_lifespan}, {progress_bar} "
+                              f"==========")
             with WorkerPool(n_jobs=n_jobs) as pool:
 
                 # Should work for map like functions
+                self.logger.debug("----- square_raises, map -----")
                 with self.subTest(n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                   progress_bar=progress_bar, function='square_raises', map='map'), \
                      self.assertRaises(ValueError):
@@ -943,6 +1179,7 @@ class ExceptionTest(unittest.TestCase):
                              worker_lifespan=worker_lifespan, progress_bar=progress_bar)
 
                 # Should work for imap like functions
+                self.logger.debug("----- square_raises, imap -----")
                 with self.subTest(n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                   progress_bar=progress_bar, function='square_raises', map='imap'), \
                      self.assertRaises(ValueError):
@@ -950,6 +1187,7 @@ class ExceptionTest(unittest.TestCase):
                                              worker_lifespan=worker_lifespan, progress_bar=progress_bar))
 
                 # Should work for map like functions
+                self.logger.debug("----- square_raises_on_idx, map -----")
                 with self.subTest(n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                   progress_bar=progress_bar, function='square_raises_on_idx', map='map'), \
                      self.assertRaises(ValueError):
@@ -957,12 +1195,44 @@ class ExceptionTest(unittest.TestCase):
                              worker_lifespan=worker_lifespan, progress_bar=progress_bar)
 
                 # Should work for imap like functions
+                self.logger.debug("----- square_raises_on_idx, imap -----")
                 with self.subTest(n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                   progress_bar=progress_bar, function='square_raises_on_idx', map='imap'), \
                      self.assertRaises(ValueError):
                     list(pool.imap_unordered(self._square_raises_on_idx, self.test_data,
                                              max_tasks_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                              progress_bar=progress_bar))
+
+    def test_start_methods(self):
+        """
+        Test for different start methods
+        """
+        print()
+        for start_method, progress_bar in product(TEST_START_METHODS, [False, True]):
+            self.logger.debug(f"========== {start_method}, {progress_bar} ==========")
+            with self.subTest(start_method=start_method, progress_bar=progress_bar), \
+                    WorkerPool(n_jobs=2, start_method=start_method,
+                               use_dill=start_method in {'forkserver', 'spawn'}) as pool:
+
+                # Should work for map like functions
+                self.logger.debug("----- square_raises, map -----")
+                with self.subTest(function='square_raises', map='map'), self.assertRaises(ValueError):
+                    pool.map(self._square_raises, self.test_data, progress_bar=progress_bar)
+
+                # Should work for imap like functions
+                self.logger.debug("----- square_raises, imap -----")
+                with self.subTest(function='square_raises', map='imap'), self.assertRaises(ValueError):
+                    list(pool.imap_unordered(self._square_raises, self.test_data, progress_bar=progress_bar))
+
+                # Should work for map like functions
+                self.logger.debug("----- square_raises_on_idx, map -----")
+                with self.subTest(function='square_raises_on_idx', map='map'), self.assertRaises(ValueError):
+                    pool.map(self._square_raises_on_idx, self.test_data, progress_bar=progress_bar)
+
+                # Should work for imap like functions
+                self.logger.debug("----- square_raises_on_idx, imap -----")
+                with self.subTest(function='square_raises_on_idx', map='imap'), self.assertRaises(ValueError):
+                    list(pool.imap_unordered(self._square_raises_on_idx, self.test_data, progress_bar=progress_bar))
 
     @staticmethod
     def _square_raises(_, x):

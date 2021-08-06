@@ -1,6 +1,20 @@
 Changelog
 =========
 
+2.1.0
+-----
+
+*(2021-08-06)*
+
+* Workers now have their own task queue, which speeds up tasks with bigger payloads
+* Fixed progress bar showing error information when completed without error
+* Fixed progress bar and worker insights not displaying properly when using threading
+* Progress bar handling improved accross several scenarios
+* Dashboard can now handle progress bars when using ``spawn`` or ``forkserver`` as start method
+* Added closing of ``multiprocessing.JoinableQueue`` objects, to clean up intermediate junk
+* Removed ``numpy`` dependency
+* Made ``dill`` optional again. In many cases it slows processing down
+
 2.0.0
 -----
 

@@ -37,10 +37,13 @@ def get_function_details(func: Callable) -> Dict[str, Union[str, int]]:
     # line found when context=1 (i.e., what is returned in invoked_frame.code_context). The start is where we see
     # something along the lines of `.[i]map[_unordered](`.
     code_context = inspect.getframeinfo(invoked_frame.frame, context=10).code_context
-    code_context = code_context[:code_context.index(invoked_frame.code_context[0]) + 1]
-    code_context = find_calling_lines(code_context)
-    invoked_line_no = invoked_frame.lineno - (len(code_context) - 1)
-    code_context = ' '.join(line.strip() for line in code_context)
+    if code_context is not None:
+        code_context = code_context[:code_context.index(invoked_frame.code_context[0]) + 1]
+        code_context = find_calling_lines(code_context)
+        invoked_line_no = invoked_frame.lineno - (len(code_context) - 1)
+        code_context = ' '.join(line.strip() for line in code_context)
+    else:
+        invoked_line_no = 'N/A'
 
     # If we're dealing with a partial, obtain the function within
     if isinstance(func, partial):

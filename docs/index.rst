@@ -25,7 +25,8 @@ Features
 - Nested pool of workers are allowed when setting the ``daemon`` option
 - Child processes can be pinned to specific or a range of CPUs
 - Multiple process start methods available, including: ``fork`` (default), ``forkserver``, ``spawn``, and ``threading``
-- Uses dill_ as serialization backend through multiprocess_, enabling parallelizing functions in iPython (notebooks)
+- Optionally uses dill_ as serialization backend through multiprocess_, enabling parallelizing more exotic functions
+  and objects
 
 .. _dill: https://pypi.org/project/dill/
 .. _multiprocess: https://github.com/uqfoundation/multiprocess
