@@ -1,6 +1,15 @@
 Changelog
 =========
 
+2.1.1
+-----
+
+*(2021-08-26)*
+
+* Fixed a bug with newer versions of tqdm. The progress bar would throw an ``AttributeError`` when connected to a
+  dashboard.
+* README and documentation updated
+
 2.1.0
 -----
 

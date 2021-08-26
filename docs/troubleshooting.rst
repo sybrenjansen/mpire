@@ -93,11 +93,4 @@ problem), or resort to setting ``use_dill=True``. The latter is capable of pickl
 Windows
 -------
 
-This package has been tested only on Linux-based systems. So I'm not sure if everything works on Windows. You can submit
-an issue on GitHub if you encounter issues.
-
-Windows doesn't support forking, so you will need to manually switch to spawn as start method. See :ref:`start_methods`
-for more information on start methods.
-
-Disclaimer: it could be that MPIRE can't be imported on systems without fork. If so, let me know by submitting an issue
-on GitHub.
+This package has been tested only on Linux-based systems. Windows support will come soon.
