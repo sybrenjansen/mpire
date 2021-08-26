@@ -85,7 +85,7 @@ task. Parallelizing a simple function as this can be as easy as importing ``mult
     with Pool(processes=5) as pool:
         results = pool.map(time_consuming_function, range(10))
 
-MPIRE can be used almost as a drop-in replacement to ``multiprocessing``. We use the :obj:`mpire.WorkerPool` class and
+MPIRE can be used almost as a drop-in replacement to ``multiprocessing``. We use the ``mpire.WorkerPool`` class and
 call one of the available ``map`` functions:
 
 .. code-block:: python
@@ -112,10 +112,12 @@ It's as simple as setting the ``progress_bar`` parameter to ``True``:
 And it will output a nicely formatted tqdm_ progress bar. In case you're running your code inside a notebook it will
 automatically switch to a widget.
 
-MPIRE also offers a dashboard, for which you need to install additional :ref:`dependencies <dashboarddep>`. See
-:ref:`Dashboard` for more information.
+MPIRE also offers a dashboard, for which you need to install additional dependencies_. See Dashboard_ for more
+information.
 
 .. _tqdm: https://tqdm.github.io/
+.. _dependencies: https://slimmer-ai.github.io/mpire/install.html#dashboard
+.. _Dashboard: https://slimmer-ai.github.io/mpire/usage/dashboard.html
 
 
 Shared objects
@@ -136,7 +138,9 @@ copying/serialization. Only when you alter the object in the worker function it 
         with WorkerPool(n_jobs=5, shared_objects=some_object) as pool:
             results = pool.map(time_consuming_function, range(10), progress_bar=True)
 
-See :ref:`shared_objects` for more details.
+See shared_objects_ for more details.
+
+.. _shared_objects: https://slimmer-ai.github.io/mpire/usage/worker_pool.html#shared-objects
 
 Worker initialization
 ~~~~~~~~~~~~~~~~~~~~~
@@ -159,8 +163,10 @@ set up a database connection, etc.:
         results = pool.map(task, range(10), worker_init=init)
 
 Similarly, you can use the ``worker_exit`` feature to let MPIRE call a function whenever a worker terminates. You can
-even let this exit function return results, which can be obtained later on. See the :ref:`worker_init_exit` section for
-more information.
+even let this exit function return results, which can be obtained later on. See the `worker_init and worker_exit`_
+section for more information.
+
+.. _worker_init and worker_exit: https://slimmer-ai.github.io/mpire/usage/map.html#worker-init-and-exit
 
 
 Worker insights
@@ -172,7 +178,7 @@ running (there are other libraries for that). Instead, it profiles the worker st
 working time. When worker init and exit functions are provided it will time those as well.
 
 Perhaps you're sending a lot of data over the task queue, which makes the waiting time go up. Whatever the case, you
-can enable and grab the insights using the ``enable_insights`` flag and :meth:`mpire.WorkerPool.get_insights` function,
+can enable and grab the insights using the ``enable_insights`` flag and ``mpire.WorkerPool.get_insights`` function,
 respectively:
 
 .. code-block:: python
@@ -181,8 +187,9 @@ respectively:
         results = pool.map(time_consuming_function, range(10), enable_insights=True)
         insights = pool.get_insights()
 
-See :ref:`worker insights` for a more detailed example and expected output.
+See `worker insights`_ for a more detailed example and expected output.
 
+.. _worker insights: https://slimmer-ai.github.io/mpire/usage/map.html#worker-insights
 
 Documentation
 -------------
