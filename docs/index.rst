@@ -6,28 +6,35 @@ user-friendly than the default multiprocessing package. It combines the convenie
 ``multiprocessing.Pool`` with the benefits of using copy-on-write shared objects of ``multiprocessing.Process``,
 together with easy-to-use worker state, worker insights, and progress bar functionality.
 
+.. note::
+
+    MPIRE currently only supports Linux based operating systems that support 'fork' as start method. Support for
+    Windows is coming soon.
+
 Features
 --------
 
-- Multiprocessing with map/map_unordered/imap/imap_unordered functions
+- Faster execution than other multiprocessing libraries. See benchmarks_.
+- Intuitive, Pythonic syntax
+- Multiprocessing with ``map``/``map_unordered``/``imap``/``imap_unordered`` functions
 - Easy use of copy-on-write shared objects with a pool of workers
 - Each worker can have its own state and with convenient worker init and exit functionality this state can be easily
   manipulated (e.g., to load a memory-intensive model only once for each worker without the need of sending it through a
   queue)
 - Progress bar support using tqdm_
 - Progress dashboard support
+- Worker insights to provide insight into your multiprocessing efficiency
 - Graceful and user-friendly exception handling
-- Worker insights gives you insight in your multiprocessing efficiency
 - Automatic task chunking for all available map functions to speed up processing of small task queues (including numpy
   arrays)
 - Adjustable maximum number of active tasks to avoid memory problems
 - Automatic restarting of workers after a specified number of tasks to reduce memory footprint
 - Nested pool of workers are allowed when setting the ``daemon`` option
 - Child processes can be pinned to specific or a range of CPUs
-- Multiple process start methods available, including: ``fork`` (default), ``forkserver``, ``spawn``, and ``threading``
-- Optionally uses dill_ as serialization backend through multiprocess_, enabling parallelizing more exotic functions
-  and objects
+- Optionally utilizes dill_ as serialization backend through multiprocess_, enabling parallelizing more exotic objects,
+  lambdas, and functions in iPython and Jupyter notebooks.
 
+.. _benchmarks: https://towardsdatascience.com/mpire-for-python-multiprocessing-is-really-easy-d2ae7999a3e9
 .. _dill: https://pypi.org/project/dill/
 .. _multiprocess: https://github.com/uqfoundation/multiprocess
 .. _tqdm: https://tqdm.github.io/

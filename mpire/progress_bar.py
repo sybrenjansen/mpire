@@ -247,12 +247,11 @@ class ProgressBarHandler:
         :return: Update dictionary
         """
         # Save some variables first so we can use them consistently with the same value
-        n = progress_bar.n
-
-        total = progress_bar.total
-        avg_time = progress_bar.avg_time
+        details = progress_bar.format_dict
+        n = details["n"]
+        total = details["total"]
         now = datetime.now()
-        remaining_time = ((total - n) * avg_time) if avg_time else None
+        remaining_time = (total - n) / details["rate"] if details["rate"] else None
 
         return {"id": self.progress_bar_id,
                 "success": not failed,
