@@ -4,6 +4,8 @@ from multiprocessing import Array, Lock, Value
 from multiprocessing.managers import BaseProxy, SyncManager
 from typing import Dict, Sequence, Tuple
 
+from mpire.signal import ignore_keyboard_interrupt
+
 # Dict for tqdm progress bar updates
 DASHBOARD_TQDM_DICT = {}
 
@@ -56,14 +58,14 @@ def start_manager_server(port_range: Sequence = range(8080, 8100)) -> SyncManage
             s.close()
 
             # Create manager
-            sm = SyncManager(address=('', port_nr), authkey=b'mpire_dashboard')
+            sm = SyncManager(address=("127.0.0.1", port_nr), authkey=b'mpire_dashboard')
             sm.register('get_dashboard_tqdm_dict', get_dashboard_tqdm_dict)
             sm.register('get_dashboard_tqdm_details_dict', get_dashboard_tqdm_details_dict)
             sm.register('get_dashboard_tqdm_lock', get_dashboard_tqdm_lock)
-            sm.start()
+            sm.start(ignore_keyboard_interrupt)
 
             # Set host and port number so other processes know where to connect to
-            DASHBOARD_MANAGER_HOST.value = b''
+            DASHBOARD_MANAGER_HOST.value = b"127.0.0.1"
             DASHBOARD_MANAGER_PORT.value = port_nr
 
             return sm

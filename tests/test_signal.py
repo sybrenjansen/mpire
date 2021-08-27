@@ -3,9 +3,12 @@ import os
 import signal
 import unittest
 
+from mpire.context import RUNNING_WINDOWS
 from mpire.signal import DelayedKeyboardInterrupt, DisableKeyboardInterruptSignal
+from tests.utils import ConditionalDecorator
 
 
+@ConditionalDecorator(unittest.skip("Signals aren't fully supported on Windows"), RUNNING_WINDOWS)
 class DelayedKeyboardInterruptTest(unittest.TestCase):
 
     def test_delayed_keyboard_interrupt(self):
@@ -48,6 +51,7 @@ class DelayedKeyboardInterruptTest(unittest.TestCase):
             value.value = 2
 
 
+@ConditionalDecorator(unittest.skip("Signals aren't fully supported on Windows"), RUNNING_WINDOWS)
 class DisabledKeyboardInterruptTest(unittest.TestCase):
 
     def test_disabled_keyboard_interrupt(self):

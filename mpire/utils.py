@@ -1,9 +1,9 @@
 import heapq
 import itertools
 import math
+import os
 from datetime import datetime, timedelta
 from multiprocessing import Array, cpu_count
-
 from typing import Callable, Generator, Iterable, List, Optional, Tuple, Union
 
 try:
@@ -12,6 +12,50 @@ try:
 except ImportError:
     np = None
     NUMPY_INSTALLED = False
+
+from mpire.context import RUNNING_WINDOWS
+
+# Needed for setting CPU affinity
+if RUNNING_WINDOWS:
+    try:
+        import win32api
+        import win32con
+        import win32process
+        WIN32API_AVAILABLE = True
+        WIN32API_ERROR = None
+    except ImportError as e:
+        WIN32API_AVAILABLE = False
+        WIN32API_ERROR = e
+        WIN32API_ERROR.msg += " If you're using Conda, you can run `conda install pywin32` to install the missing " \
+                              "module."
+
+
+def set_cpu_affinity(pid: int, mask: List[int]) -> None:
+    """
+    Sets the CPU affinity for a given process.
+
+    On Windows-based systems with more than 64 processors, I'm not sure if this will work. See
+    https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setprocessaffinitymask#parameters.
+
+    :param pid: Process ID
+    :param mask: List of CPU IDs
+    """
+    if RUNNING_WINDOWS:
+        # On Conda systems simply install pywin32 doesn't always work. In those cases, you need to run
+        # `conda install pywin32`.
+        if not WIN32API_AVAILABLE:
+            raise WIN32API_ERROR
+
+        # Convert mask to something Windows understands
+        windows_mask = 0
+        for cpu_id in mask:
+            windows_mask ^= 2 ** cpu_id
+
+        # Get handle and set affinity
+        handle = win32api.OpenProcess(win32con.PROCESS_ALL_ACCESS, True, pid)
+        win32process.SetProcessAffinityMask(handle, windows_mask)
+    else:
+        os.sched_setaffinity(pid, mask)
 
 
 def chunk_tasks(iterable_of_args: Iterable, iterable_len: Optional[int] = None,

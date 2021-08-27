@@ -5,6 +5,7 @@ from multiprocessing.managers import SyncManager
 import sys
 from typing import Optional, Tuple
 
+from mpire.context import RUNNING_WINDOWS
 from mpire.signal import DisableKeyboardInterruptSignal
 
 TqdmConnectionDetails = Tuple[Optional[bytes], bool]
@@ -111,10 +112,10 @@ class TqdmManager:
             cls.MANAGER.start()
         cls.MANAGER_STARTED.set()
 
-        # Set host so other processes know where to connect to. Since Python 3.9 address is a bytes object and is
-        # prefixed by a null byte which needs to be removed (null byte doesn't work with Array). Before 3.9 it was a
-        # string, which we need to transform to bytes
-        if sys.version_info[0] == 3 and sys.version_info[1] < 9:
+        # Set host so other processes know where to connect to. On Linux, since Python 3.9, address is a bytes object
+        # and is prefixed by a null byte which needs to be removed (null byte doesn't work with Array). Before 3.9, this
+        # was a string, which we need to transform to bytes
+        if RUNNING_WINDOWS or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
             cls.MANAGER_HOST.value = cls.MANAGER.address.encode()
         else:
             cls.MANAGER_HOST.value = cls.MANAGER.address[1:]
@@ -125,9 +126,9 @@ class TqdmManager:
         """
         Connect to the tqdm manager
         """
-        # Connect to a server. Since Python 3.9 the address is prefixed by a null byte (which was stripped when setting
-        # the host value, due to restrictions in Array). Address needs to be a string.
-        if sys.version_info[0] == 3 and sys.version_info[1] < 9:
+        # Connect to a server. On Linux, since Python 3.9, the address is prefixed by a null byte (which was stripped
+        # when setting the host value, due to restrictions in Array). Address needs to be a string.
+        if RUNNING_WINDOWS or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
             address = self.MANAGER_HOST.value.decode()
         else:
             address = f"\x00{self.MANAGER_HOST.value.decode()}"

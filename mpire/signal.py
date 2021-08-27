@@ -4,7 +4,7 @@ from types import FrameType
 from typing import Type
 
 
-class DelayedKeyboardInterrupt(object):
+class DelayedKeyboardInterrupt:
 
     def __init__(self, in_thread: bool = False) -> None:
         """

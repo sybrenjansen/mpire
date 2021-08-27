@@ -1,4 +1,8 @@
+import platform
 from setuptools import find_packages, setup
+
+# On Windows, we need pywin32 for CPU pinning
+additional_dependencies = ["pywin32==225"] if platform.system() == "Windows" else []
 
 
 def read_description():
@@ -17,7 +21,7 @@ if __name__ == "__main__":
         license="MIT",
         packages=find_packages(),
         scripts=["bin/mpire-dashboard"],
-        install_requires=["tqdm"],
+        install_requires=["tqdm"] + additional_dependencies,
         include_package_data=True,
         extras_require={
             "dashboard": ["flask"],
@@ -27,7 +31,7 @@ if __name__ == "__main__":
                      "sphinx-autodoc-typehints==1.11.0",
                      "sphinxcontrib-images==0.9.2",
                      "sphinx-versions==1.0.1"],
-            "testing": ["multiprocess", "numpy"]
+            "testing": ["multiprocess", "numpy"] + additional_dependencies
         },
         test_suite="tests",
         tests_require=["multiprocess", "numpy"],

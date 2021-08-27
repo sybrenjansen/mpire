@@ -5,6 +5,8 @@ from typing import Any, Callable, Iterable, List, Optional, Sized, Tuple, Union
 
 from tqdm import tqdm
 
+from mpire.context import RUNNING_WINDOWS
+
 # Typedefs
 CPUList = Optional[List[Union[int, List[int]]]]
 
@@ -159,6 +161,11 @@ class WorkerPoolParams:
                 raise ValueError('worker_lifespan should be either None or a positive integer (> 0)')
         elif worker_lifespan is not None:
             raise TypeError('worker_lifespan should be either None or a positive integer (> 0)')
+
+        # Progress bar is currently not supported on Windows when using threading as start method. For reasons still
+        # unknown we get a TypeError: cannot pickle '_thread.Lock' object.
+        if RUNNING_WINDOWS and progress_bar and self.start_method == "threading":
+            raise ValueError("Progress bar is currently not supported on Windows when using start_method='threading'")
 
         # Progress bar position should be a positive integer
         if not isinstance(progress_bar_position, int):

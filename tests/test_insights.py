@@ -6,11 +6,15 @@ from multiprocessing import managers
 from unittest.mock import patch
 
 from mpire import WorkerPool
-from mpire.insights import WorkerInsights
+from mpire.context import DEFAULT_START_METHOD
+from mpire.insights import RUNNING_WINDOWS, WorkerInsights
 from tests.utils import MockDatetimeNow
 
 
 def square(x):
+    # time.sleep is added for Windows compatibility, otherwise it says 0.0 time has passed
+    import time
+    time.sleep(0.1)
     return x * x
 
 
@@ -21,8 +25,8 @@ class WorkerInsightsTest(unittest.TestCase):
         Test if resetting the insights is done properly
         """
         for n_jobs in [1, 2, 4]:
-            insights = WorkerInsights(mp.get_context('fork'), n_jobs)
-            self.assertEqual(insights.ctx, mp.get_context('fork'))
+            insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs)
+            self.assertEqual(insights.ctx, mp.get_context(DEFAULT_START_METHOD))
             self.assertEqual(insights.n_jobs, n_jobs)
 
             with self.subTest('initialized', n_jobs=n_jobs):
@@ -46,7 +50,10 @@ class WorkerInsightsTest(unittest.TestCase):
                 insights.reset_insights(enable_insights=True)
                 self.assertTrue(insights.insights_enabled)
                 self.assertIsInstance(insights.insights_manager_lock, mp.synchronize.Lock)
-                self.assertIsInstance(insights.insights_manager, managers.SyncManager)
+                if RUNNING_WINDOWS:
+                    self.assertIsNone(insights.insights_manager)
+                else:
+                    self.assertIsInstance(insights.insights_manager, managers.SyncManager)
                 self.assertIsInstance(insights.worker_start_up_time, ctypes.Array)
                 self.assertIsInstance(insights.worker_init_time, ctypes.Array)
                 self.assertIsInstance(insights.worker_n_completed_tasks, ctypes.Array)
@@ -54,7 +61,7 @@ class WorkerInsightsTest(unittest.TestCase):
                 self.assertIsInstance(insights.worker_working_time, ctypes.Array)
                 self.assertIsInstance(insights.worker_exit_time, ctypes.Array)
                 self.assertIsInstance(insights.max_task_duration, ctypes.Array)
-                self.assertIsInstance(insights.max_task_args, managers.ListProxy)
+                self.assertIsInstance(insights.max_task_args, list if RUNNING_WINDOWS else managers.ListProxy)
 
                 # Basic sanity checks for the values
                 self.assertEqual(sum(insights.worker_start_up_time), 0)
@@ -64,7 +71,8 @@ class WorkerInsightsTest(unittest.TestCase):
                 self.assertEqual(sum(insights.worker_working_time), 0)
                 self.assertEqual(sum(insights.worker_exit_time), 0)
                 self.assertEqual(sum(insights.max_task_duration), 0)
-                self.assertListEqual(list(insights.max_task_args), [''] * n_jobs * 5)
+                if not RUNNING_WINDOWS:
+                    self.assertListEqual(list(insights.max_task_args), [''] * n_jobs * 5)
 
             # Set some values so we can test if the containers will be properly resetted
             insights.worker_start_up_time[0] = 1
@@ -133,7 +141,7 @@ class WorkerInsightsTest(unittest.TestCase):
                                               pool._worker_insights.max_task_args):
                         if duration == 0:
                             self.assertEqual(args, '')
-                        else:
+                        elif not RUNNING_WINDOWS:
                             self.assertIn(args, {'Arg 0: 0', 'Arg 0: 1', 'Arg 0: 2', 'Arg 0: 3', 'Arg 0: 4',
                                                  'Arg 0: 5', 'Arg 0: 6', 'Arg 0: 7', 'Arg 0: 8', 'Arg 0: 9'})
 
@@ -155,7 +163,7 @@ class WorkerInsightsTest(unittest.TestCase):
         """
         Test that the right containers are selected given a worker ID
         """
-        insights = WorkerInsights(mp.get_context('fork'), n_jobs=5)
+        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5)
 
         with self.subTest(insights_enabled=False):
             for worker_id in range(5):
@@ -185,7 +193,7 @@ class WorkerInsightsTest(unittest.TestCase):
                                          datetime(1970, 1, 1, 0, 0, 8, 0)]
         MockDatetimeNow.CURRENT_IDX = 0
 
-        insights = WorkerInsights(mp.get_context('fork'), n_jobs=5)
+        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5)
 
         # Shouldn't do anything when insights haven't been enabled
         with self.subTest(insights_enabled=False), patch('mpire.insights.datetime', new=MockDatetimeNow):
@@ -205,7 +213,7 @@ class WorkerInsightsTest(unittest.TestCase):
         """
         Test that the number of completed tasks is correctly added to worker_n_completed_tasks for the right index
         """
-        insights = WorkerInsights(mp.get_context('fork'), n_jobs=5)
+        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5)
 
         # Shouldn't do anything when insights haven't been enabled
         with self.subTest(insights_enabled=False):
@@ -232,7 +240,7 @@ class WorkerInsightsTest(unittest.TestCase):
                                          datetime(1970, 1, 1, 0, 0, 8, 0)]
         MockDatetimeNow.CURRENT_IDX = 0
 
-        insights = WorkerInsights(mp.get_context('fork'), n_jobs=5)
+        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5)
         max_task_duration_last_updated = datetime(1970, 1, 1, 0, 0, 1, 0)
 
         # Shouldn't do anything when insights haven't been enabled
@@ -283,7 +291,7 @@ class WorkerInsightsTest(unittest.TestCase):
                                          datetime(1970, 1, 1, 0, 0, 2, 0)]
         MockDatetimeNow.CURRENT_IDX = 0
 
-        insights = WorkerInsights(mp.get_context('fork'), n_jobs=2)
+        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=2)
         max_task_duration_last_updated = datetime(1970, 1, 1, 0, 0, 0, 0)
 
         # Shouldn't do anything when insights haven't been enabled
@@ -313,7 +321,7 @@ class WorkerInsightsTest(unittest.TestCase):
         """
         Test if the insights are properly processed
         """
-        insights = WorkerInsights(mp.get_context('fork'), n_jobs=2)
+        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=2)
 
         with self.subTest(enable_insights=False):
             insights.reset_insights(enable_insights=False)
@@ -356,7 +364,7 @@ class WorkerInsightsTest(unittest.TestCase):
                 'total_working_time': '0:01:19',
                 'total_exit_time': '0:00:00.770',
                 'top_5_max_task_durations': ['0:00:06', '0:00:02', '0:00:01', '0:00:00.800', '0:00:00.100'],
-                'top_5_max_task_args': ['3', '2', '1', '4', '5'],
+                'top_5_max_task_args': ['', '', '', '', ''] if RUNNING_WINDOWS else ['3', '2', '1', '4', '5'],
                 'total_time': '0:01:21.100',
                 'start_up_time_mean': '0:00:00.150', 'start_up_time_std': '0:00:00.050',
                 'init_time_mean': '0:00:00.165', 'init_time_std': '0:00:00.055',

@@ -5,7 +5,7 @@ import threading
 from datetime import datetime
 from typing import Any, Generator, List, Optional, Tuple, Union
 
-from mpire.context import MP_CONTEXTS
+from mpire.context import DEFAULT_START_METHOD, MP_CONTEXTS
 from mpire.signal import DelayedKeyboardInterrupt
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class WorkerComms:
         :param using_threading: Whether threading is used as backend
         """
         self.ctx = ctx
-        self.ctx_for_threading = MP_CONTEXTS['mp_dill' if use_dill else 'mp']['fork']
+        self.ctx_for_threading = MP_CONTEXTS['mp_dill' if use_dill else 'mp'][DEFAULT_START_METHOD]
         self.n_jobs = n_jobs
         self.using_threading = using_threading
 
@@ -407,6 +407,15 @@ class WorkerComms:
         """
         return self._exception_thrown.is_set()
 
+    def wait_for_exception_thrown(self, timeout: Optional[float]) -> bool:
+        """
+        Waits until the exception thrown event is set
+
+        :param timeout: How long to wait before giving up
+        :return: True when exception was thrown, False if timeout was reached
+        """
+        return self._exception_thrown.wait(timeout=timeout)
+
     def set_kill_signal_received(self) -> None:
         """
         Set the kill signal received event
@@ -611,13 +620,17 @@ class WorkerComms:
         :param q: Queue to join
         :param join: Whether to join the queue or not
         """
-        process = mp.Process(target=self._drain_and_join_queue, args=(q, join))
-        process.start()
-        process.join(timeout=5)
-        if process.is_alive():
-            logger.debug("Draining queue failed, skipping")
-            process.terminate()
-            process.join()
+        try:
+            process = mp.Process(target=self._drain_and_join_queue, args=(q, join))
+            process.start()
+            process.join(timeout=5)
+            if process.is_alive():
+                logger.debug("Draining queue failed, skipping")
+                process.terminate()
+                process.join()
+        except (OSError, RuntimeError):
+            # For Windows compatibility
+            pass
 
     @staticmethod
     def _drain_and_join_queue(q: mp.JoinableQueue, join: bool = True) -> None:
