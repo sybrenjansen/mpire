@@ -19,7 +19,8 @@ Features
 - Faster execution than other multiprocessing libraries. See benchmarks_.
 - Intuitive, Pythonic syntax
 - Multiprocessing with ``map``/``map_unordered``/``imap``/``imap_unordered`` functions
-- Easy use of copy-on-write shared objects with a pool of workers
+- Easy use of copy-on-write shared objects with a pool of workers (copy-on-write is only available for start methods
+  ``fork`` and ``threading``)
 - Each worker can have its own state and with convenient worker init and exit functionality this state can be easily
   manipulated (e.g., to load a memory-intensive model only once for each worker without the need of sending it through a
   queue)
@@ -121,8 +122,11 @@ information.
 Shared objects
 ~~~~~~~~~~~~~~
 
+Note: Copy-on-write shared objects is only available for start methods ``fork`` and ``threading``. For other start
+methods the shared objects are copied once for each worker.
+
 If you have one or more objects that you want to share between all workers you can make use of the copy-on-write
-``shared_objects`` option of MPIRE. MPIRE will pass on these objects only once for each worker without
+``shared_objects`` option of MPIRE.  MPIRE will pass on these objects only once for each worker without
 copying/serialization. Only when you alter the object in the worker function it will start copying it for that worker.
 
 .. code-block:: python
