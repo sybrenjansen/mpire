@@ -19,7 +19,8 @@ Features
 - Faster execution than other multiprocessing libraries. See benchmarks_.
 - Intuitive, Pythonic syntax
 - Multiprocessing with ``map``/``map_unordered``/``imap``/``imap_unordered`` functions
-- Easy use of copy-on-write shared objects with a pool of workers
+- Easy use of copy-on-write shared objects with a pool of workers (copy-on-write is only available for start methods
+  ``fork`` and ``threading``)
 - Each worker can have its own state and with convenient worker init and exit functionality this state can be easily
   manipulated (e.g., to load a memory-intensive model only once for each worker without the need of sending it through a
   queue)
@@ -36,19 +37,18 @@ Features
 - Optionally utilizes dill_ as serialization backend through multiprocess_, enabling parallelizing more exotic objects,
   lambdas, and functions in iPython and Jupyter notebooks.
 
+MPIRE has been tested on both Linux and Windows. There are a few minor known caveats for Windows users, which can be
+found here_.
+
 .. _benchmarks: https://towardsdatascience.com/mpire-for-python-multiprocessing-is-really-easy-d2ae7999a3e9
 .. _multiprocess: https://github.com/uqfoundation/multiprocess
 .. _dill: https://pypi.org/project/dill/
 .. _tqdm: https://tqdm.github.io/
+.. _here: https://slimmer-ai.github.io/mpire/troubleshooting.html#windows
 
 
 Installation
 ------------
-
-.. note::
-
-    MPIRE currently only supports Linux based operating systems that support 'fork' as start method. Support for
-    Windows is coming soon.
 
 Through pip (PyPi):
 
@@ -115,7 +115,6 @@ automatically switch to a widget.
 MPIRE also offers a dashboard, for which you need to install additional dependencies_. See Dashboard_ for more
 information.
 
-.. _tqdm: https://tqdm.github.io/
 .. _dependencies: https://slimmer-ai.github.io/mpire/install.html#dashboard
 .. _Dashboard: https://slimmer-ai.github.io/mpire/usage/dashboard.html
 
@@ -123,8 +122,11 @@ information.
 Shared objects
 ~~~~~~~~~~~~~~
 
+Note: Copy-on-write shared objects is only available for start methods ``fork`` and ``threading``. For other start
+methods the shared objects are copied once for each worker.
+
 If you have one or more objects that you want to share between all workers you can make use of the copy-on-write
-``shared_objects`` option of MPIRE. MPIRE will pass on these objects only once for each worker without
+``shared_objects`` option of MPIRE.  MPIRE will pass on these objects only once for each worker without
 copying/serialization. Only when you alter the object in the worker function it will start copying it for that worker.
 
 .. code-block:: python
@@ -190,6 +192,28 @@ respectively:
 See `worker insights`_ for a more detailed example and expected output.
 
 .. _worker insights: https://slimmer-ai.github.io/mpire/usage/map.html#worker-insights
+
+
+Benchmarks
+----------
+
+MPIRE has been benchmarked on three different benchmarks: numerical computation, stateful computation, and expensive
+initialization. More details on these benchmarks can be found in this `blog post`_. All code for these benchmarks can
+be found in this project_.
+
+The following graph shows the average normalized results of all three benchmarks. Results for individual benchmarks
+can be found in the `blog post`_. The benchmarks were run on a Linux machine with 20 cores, with disabled hyperthreading
+and 200GB of RAM. For each task, experiments were run with different numbers of processes/workers and results were
+averaged over 5 runs.
+
+.. image:: images/benchmarks_averaged.png
+    :width: 600px
+    :alt: Average normalized bechmark results
+
+.. _blog post: https://towardsdatascience.com/mpire-for-python-multiprocessing-is-really-easy-d2ae7999a3e9
+.. _project: https://github.com/sybrenjansen/multiprocessing_benchmarks
+
+
 
 Documentation
 -------------

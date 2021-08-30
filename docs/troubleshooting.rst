@@ -90,7 +90,14 @@ problem), or resort to setting ``use_dill=True``. The latter is capable of pickl
 :ref:`use_dill` for more information.
 
 
+.. _troubleshooting_windows:
+
 Windows
 -------
 
-This package has been tested only on Linux-based systems. Windows support will come soon.
+Windows support has some caveats:
+
+* When using worker insights the arguments of the top 5 longest tasks are not available;
+* Progress bar is not supported when using threading as start method;
+* When using ``dill`` and an exception occurs, or when the exception occurs in an exit function, it can print additional
+  ``OSError`` messages in the terminal, but they can be safely ignored.

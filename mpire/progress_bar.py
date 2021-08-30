@@ -11,7 +11,7 @@ from mpire.comms import WorkerComms, POISON_PILL
 from mpire.dashboard.connection_utils import (DashboardConnectionDetails, get_dashboard_connection_details,
                                               set_dashboard_connection)
 from mpire.insights import WorkerInsights
-from mpire.signal import DisableKeyboardInterruptSignal
+from mpire.signal import DisableKeyboardInterruptSignal, ignore_keyboard_interrupt
 from mpire.tqdm_utils import TqdmConnectionDetails, TqdmManager
 from mpire.utils import format_seconds
 
@@ -124,6 +124,8 @@ class ProgressBarHandler:
         :param dashboard_connection_details: Dashboard manager host, port_nr and whether a dashboard is
             started/connected
         """
+        ignore_keyboard_interrupt()  # For Windows compatibility
+
         logger.debug("Progress bar handler started")
         self.process_started.set()
 

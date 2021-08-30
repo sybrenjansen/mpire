@@ -184,15 +184,31 @@ Shared objects
 --------------
 
 MPIRE allows you to provide shared objects to the workers in a similar way as is possible with the
-``multiprocessing.Process`` class. These shared objects are treated as ``copy-on-write``, they are only copied once
-changes are made to them, otherwise they share the same memory address. This is convenient if you want to let workers
-access a large dataset that wouldn't fit in memory when copied multiple times. When shared objects are copied they are
-only copied once for each worker, in contrast to copying it for each task which is done when using a regular
-``multiprocessing.Pool``.
+``multiprocessing.Process`` class. For the start methods ``fork`` and ``threading`` these shared objects are treated as
+``copy-on-write``, which means they are only copied once changes are made to them. Otherwise they share the same memory
+address. This is convenient if you want to let workers access a large dataset that wouldn't fit in memory when copied
+multiple times. For the start methods ``spawn`` and ``forkserver`` the shared objects are copied only once for each
+worker, in contrast to copying it for each task which is done when using a regular ``multiprocessing.Pool``.
 
-By using a ``multiprocessing.Array``, ``multiprocessing.Value``, or another object with ``multiprocessing.Manager`` you
-could even store results in the same object from multiple processes. However, be aware of the possible locking behavior
-that comes with it. In some cases you can safely disable locking, as is shown here:
+.. code-block:: python
+
+    def task(dataset, x):
+        # Do something with this copy-on-write dataset
+        ...
+
+    def main():
+        dataset = ... # Load big dataset
+        with WorkerPool(n_jobs=4, shared_objects=dataset, start_method='fork') as pool:
+            ... = pool.map(task, range(100))
+
+Apart from sharing regular Python objects between workers, you can also share multiprocessing synchronization
+primitives such as ``multiprocessing.Lock`` using this method. Objects like these require to be shared through
+inheritance, which is exactly how shared objects in MPIRE are passed on.
+
+When copy-on-write is not available for you, you can also use shared objects to share a ``multiprocessing.Array``,
+``multiprocessing.Value``, or another object with ``multiprocessing.Manager``. You can then store results in the same
+object from multiple processes. However, you should keep the amount of synchronization to a minimum when the resources
+are protected with a lock, or disable locking if your situation allows it as is shown here:
 
 .. code-block:: python
 
@@ -246,6 +262,9 @@ Instead of passing the shared objects to the :obj:`mpire.WorkerPool` constructor
         pool.map_unordered(square_with_index, enumerate(range(100)),
                            iterable_len=100)
 
+Shared objects have to be specified before the workers are started. Workers are started once the first ``map`` call is
+executed. I.e., when ``keep_alive=True`` and the workers are reused, changing the shared objects between two consecutive
+``map`` calls won't work.
 
 .. _worker_state:
 
@@ -300,10 +319,11 @@ The ``multiprocessing`` package allows you to start processes using a few differ
 ``'forkserver'``. Threading is also available by using ``'threading'``. For detailed information on the multiprocessing
 contexts, please refer to the multiprocessing documentation_ and caveats_ section. In short:
 
-- ``'fork'`` (the default) copies the parent process such that the child process is effectively identical. This
-  includes copying everything currently in memory. This is sometimes useful, but other times useless or even a serious
-  bottleneck.
-- ``'spawn'`` starts a fresh python interpreter where only those resources necessary are inherited.
+- ``'fork'`` (the default on Unix based systems) copies the parent process such that the child process is effectively
+  identical. This includes copying everything currently in memory. This is sometimes useful, but other times useless or
+  even a serious bottleneck.
+- ``'spawn'`` (the default on Windows) starts a fresh python interpreter where only those resources necessary are
+  inherited.
 - ``'forkserver'`` first starts a server process (using spawn). Whenever a new process is needed the parent process
   requests the server to fork a new process.
 - ``'threading'`` starts child threads.

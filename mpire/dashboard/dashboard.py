@@ -11,11 +11,13 @@ from typing import Dict, Optional, Sequence, Union
 from flask import escape, Flask, jsonify, render_template, request
 from werkzeug.serving import make_server
 
-from mpire.signal import DisableKeyboardInterruptSignal
+from mpire.signal import DisableKeyboardInterruptSignal, ignore_keyboard_interrupt
 from mpire.dashboard.manager import (DASHBOARD_MANAGER_HOST, DASHBOARD_MANAGER_PORT,
                                      get_manager_client_dicts, start_manager_server)
 
 logger = logging.getLogger(__name__)
+logger_werkzeug = logging.getLogger('werkzeug')
+logger_werkzeug.setLevel(logging.ERROR)
 app = Flask(__name__)
 _server = None
 _progress_bar_html = resource_string(__name__, 'templates/progress_bar.html').decode('utf-8')
@@ -118,7 +120,8 @@ def start_dashboard(port_range: Sequence = range(8080, 8100)) -> Dict[str, Union
             # Start flask server
             logging.getLogger('werkzeug').setLevel(logging.WARN)
             dashboard_port_nr = Value('i', 0, lock=False)
-            Process(target=_run, args=(DASHBOARD_STARTED_EVENT, dashboard_port_nr, port_range),
+            Process(target=_run, args=(DASHBOARD_STARTED_EVENT, DASHBOARD_MANAGER_HOST.value,
+                                       DASHBOARD_MANAGER_PORT.value, dashboard_port_nr, port_range),
                     daemon=True, name='dashboard-process').start()
             DASHBOARD_STARTED_EVENT.wait()
 
@@ -142,21 +145,33 @@ def connect_to_dashboard(manager_port_nr: int, manager_host: Optional[Union[byte
 
     if not DASHBOARD_STARTED_EVENT.is_set():
         # Set connection variables so we can connect to the right manager
-        DASHBOARD_MANAGER_HOST.value = (manager_host or '').encode()
+        manager_host = manager_host or "127.0.0.1"
+        if isinstance(manager_host, str):
+            manager_host = manager_host.encode()
+        DASHBOARD_MANAGER_HOST.value = manager_host
         DASHBOARD_MANAGER_PORT.value = manager_port_nr
         DASHBOARD_STARTED_EVENT.set()
     else:
         raise RuntimeError("You're already connected to a running dashboard")
 
 
-def _run(started: Event, dashboard_port_nr: Value, port_range: Sequence) -> None:
+def _run(started: Event, manager_host: str, manager_port_nr: int, dashboard_port_nr: Value,
+         port_range: Sequence) -> None:
     """
     Starts a dashboard server
 
     :param started: Event that signals the dashboard server has started
+    :param manager_host: Dashboard manager host
+    :param manager_port_nr: Dashboard manager port number
     :param dashboard_port_nr: Value object for storing the dashboad port number that is used
     :param port_range: Port range to try.
     """
+    ignore_keyboard_interrupt()  # For Windows compatibility
+
+    # Set dashboard connection details. This is needed when spawn is the default start method
+    DASHBOARD_MANAGER_HOST.value = manager_host
+    DASHBOARD_MANAGER_PORT.value = manager_port_nr
+
     # Connect to manager from this process
     global _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _server
     _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _ = get_manager_client_dicts()

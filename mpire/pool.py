@@ -15,13 +15,14 @@ except ImportError:
     NUMPY_INSTALLED = False
 
 from mpire.comms import WorkerComms
+from mpire.context import DEFAULT_START_METHOD, RUNNING_WINDOWS
 from mpire.dashboard.connection_utils import get_dashboard_connection_details
 from mpire.insights import WorkerInsights
 from mpire.params import CPUList, WorkerPoolParams
 from mpire.progress_bar import ProgressBarHandler
 from mpire.signal import DisableKeyboardInterruptSignal
 from mpire.tqdm_utils import TqdmManager
-from mpire.utils import apply_numpy_chunking, chunk_tasks
+from mpire.utils import apply_numpy_chunking, chunk_tasks, set_cpu_affinity
 from mpire.worker import MP_CONTEXTS, worker_factory
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ class WorkerPool:
 
     def __init__(self, n_jobs: Optional[int] = None, daemon: bool = True, cpu_ids: CPUList = None,
                  shared_objects: Any = None, pass_worker_id: bool = False, use_worker_state: bool = False,
-                 start_method: str = 'fork', keep_alive: bool = False, use_dill: bool = False) -> None:
+                 start_method: str = DEFAULT_START_METHOD, keep_alive: bool = False, use_dill: bool = False) -> None:
         """
         :param n_jobs: Number of workers to spawn. If ``None``, will use ``cpu_count()``
         :param daemon: Whether to start the child processes as daemon
@@ -49,9 +50,10 @@ class WorkerPool:
             Shared objects is only passed on to the user function when it's not ``None``
         :param pass_worker_id: Whether to pass on a worker ID to the user function or not
         :param use_worker_state: Whether to let a worker have a worker state or not
-        :param start_method: What process start method to use. Options for multiprocessing: ``'fork'`` (default),
-            ``'forkserver'`` and ``'spawn'``. For multithreading use ``'threading'``. See
-            https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods for more information and
+        :param start_method: What process start method to use. Options for multiprocessing: ``'fork'`` (default, if
+            available), ``'forkserver'`` and ``'spawn'`` (default, if ``'fork'`` isn't available). For multithreading
+            use ``'threading'``. See https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
+            for more information and
             https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods for some
             caveats when using the ``'spawn'`` or ``'forkserver'`` methods
         :param keep_alive: When True it will keep workers alive after completing a map call, allowing to reuse workers
@@ -175,7 +177,7 @@ class WorkerPool:
 
             # Pin CPU if desired
             if self.params.cpu_ids:
-                os.sched_setaffinity(w.pid, self.params.cpu_ids[worker_id])
+                set_cpu_affinity(w.pid, self.params.cpu_ids[worker_id])
 
             return w
 
@@ -700,10 +702,13 @@ class WorkerPool:
         # patience runs out we terminate them.
         try_count = 10
         while try_count > 0:
-            try:
-                os.kill(worker_process.pid, signal.SIGUSR1)
-            except ProcessLookupError:
-                pass
+            # Signal handling in Windows is cumbersome, to say the least. Therefore, it handles error handling
+            # differently. See Worker::_exit_gracefully_windows for more information.
+            if not RUNNING_WINDOWS:
+                try:
+                    os.kill(worker_process.pid, signal.SIGUSR1)
+                except ProcessLookupError:
+                    pass
 
             self._worker_comms.wait_for_dead_worker(worker_id, timeout=0.1)
             if not self._worker_comms.is_worker_alive(worker_id):
@@ -719,9 +724,13 @@ class WorkerPool:
         # Join the worker process
         try_count = 10
         while try_count > 0:
-            worker_process.join(timeout=0.1)
-            if not worker_process.is_alive():
-                break
+            try:
+                worker_process.join(timeout=0.1)
+                if not worker_process.is_alive():
+                    break
+            except ValueError:
+                # For Windows compatibility
+                pass
 
             # For properly joining, it can help if we try to get some results here. Workers can still be busy putting
             # items in queues under the hood, even at this point.
@@ -732,9 +741,13 @@ class WorkerPool:
 
         # If, after all this, the worker is still alive, we terminate it with a brutal kill signal. This shouldn't
         # really happen. But, better safe than sorry
-        if worker_process.is_alive():
-            worker_process.terminate()
-            worker_process.join()
+        try:
+            if worker_process.is_alive():
+                worker_process.terminate()
+                worker_process.join()
+        except ValueError:
+            # For Windows compatibility
+            pass
 
         # Added since Python 3.7
         if hasattr(worker_process, 'close'):

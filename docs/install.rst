@@ -23,6 +23,7 @@ Dependencies
 Python packages (installed automatically when installing MPIRE):
 
 - tqdm
+- pywin32 (Windows only)
 
 .. _dilldep:
 

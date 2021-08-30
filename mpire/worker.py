@@ -6,6 +6,7 @@ except ImportError:
 import multiprocessing as mp
 import signal
 import traceback
+import _thread
 from datetime import datetime
 from functools import partial
 from threading import Thread
@@ -24,7 +25,7 @@ except ImportError:
     NUMPY_INSTALLED = False
 
 from mpire.comms import NON_LETHAL_POISON_PILL, POISON_PILL, WorkerComms
-from mpire.context import MP_CONTEXTS
+from mpire.context import FORK_AVAILABLE, MP_CONTEXTS, RUNNING_WINDOWS
 from mpire.dashboard.connection_utils import DashboardConnectionDetails, set_dashboard_connection
 from mpire.exception import CannotPickleExceptionError, StopWorker
 from mpire.insights import WorkerInsights
@@ -79,8 +80,9 @@ class AbstractWorker:
         self.is_running = False
         self.is_running_lock = ctx.Lock()
 
-        # Register handler for graceful shutdown
-        signal.signal(signal.SIGUSR1, self._exit_gracefully)
+        # Register handler for graceful shutdown. This doesn't work on Windows
+        if not RUNNING_WINDOWS:
+            signal.signal(signal.SIGUSR1, self._exit_gracefully)
 
     def _exit_gracefully(self, *_) -> None:
         """
@@ -102,11 +104,33 @@ class AbstractWorker:
                 self.is_running = False
                 raise StopWorker
 
+    def _exit_gracefully_windows(self):
+        """
+        Windows doesn't fully support signals as Unix-based systems do. Therefore, we have to work around it. This
+        function is started in a thread. We wait for a kill signal (Event object) and interrupt the main thread if we
+        got it (derived from https://stackoverflow.com/a/40281422). This will raise a KeyboardInterrupt, which is then
+        caught by the signal handler, which in turn checks if we need to raise a StopWorker.
+
+        Note: functions that release the GIL won't be interupted by this procedure (e.g., time.sleep). If graceful
+        shutdown takes too long the process will be terminated by the main process. If anyone has a better approach for
+        graceful interrupt in Windows, please create a PR.
+        """
+        while self.worker_comms.is_worker_alive(self.worker_id):
+            if self.worker_comms.wait_for_exception_thrown(timeout=0.1):
+                _thread.interrupt_main()
+                return
+
     def run(self) -> None:
         """
         Continuously asks the tasks queue for new task arguments. When not receiving a poisonous pill or when the max
         life span is not yet reached it will execute the new task and put the results in the results queue.
         """
+        # Enable graceful shutdown for Windows. Note that we can't kill threads in Python
+        if RUNNING_WINDOWS and self.params.start_method != "threading":
+            signal.signal(signal.SIGINT, self._exit_gracefully)
+            t = Thread(target=self._exit_gracefully_windows)
+            t.start()
+
         self.worker_comms.set_worker_alive(self.worker_id)
 
         # Set tqdm and dashboard connection details. This is needed for nested pools and in the case forkserver or
@@ -419,32 +443,34 @@ class AbstractWorker:
         )
 
 
-class ForkWorker(AbstractWorker, MP_CONTEXTS['mp']['fork'].Process):
-    pass
+if FORK_AVAILABLE:
+    class ForkWorker(AbstractWorker, MP_CONTEXTS['mp']['fork'].Process):
+        pass
 
 
-class ForkServerWorker(AbstractWorker, MP_CONTEXTS['mp']['forkserver'].Process):
-    pass
+    class ForkServerWorker(AbstractWorker, MP_CONTEXTS['mp']['forkserver'].Process):
+        pass
 
 
 class SpawnWorker(AbstractWorker, MP_CONTEXTS['mp']['spawn'].Process):
     pass
 
 
-class DillForkWorker(AbstractWorker, MP_CONTEXTS['mp']['fork'].Process):
+class ThreadingWorker(AbstractWorker, MP_CONTEXTS['threading'].Thread):
     pass
 
 
 if DILL_INSTALLED:
-    class DillForkServerWorker(AbstractWorker, MP_CONTEXTS['mp_dill']['forkserver'].Process):
-        pass
+    if FORK_AVAILABLE:
+        class DillForkWorker(AbstractWorker, MP_CONTEXTS['mp']['fork'].Process):
+            pass
+
+
+        class DillForkServerWorker(AbstractWorker, MP_CONTEXTS['mp_dill']['forkserver'].Process):
+            pass
 
 
     class DillSpawnWorker(AbstractWorker, MP_CONTEXTS['mp_dill']['spawn'].Process):
-        pass
-
-
-    class ThreadingWorker(AbstractWorker, MP_CONTEXTS['threading'].Thread):
         pass
 
 
@@ -465,8 +491,12 @@ def worker_factory(start_method: str, use_dill: bool) -> Type[Union[AbstractWork
             raise ImportError("Can't use dill as the dependencies are not installed. Use `pip install mpire[dill]` to "
                               "install the required dependencies.")
         elif start_method == 'fork':
+            if not FORK_AVAILABLE:
+                raise ValueError("Start method 'fork' is not available")
             return DillForkWorker
         elif start_method == 'forkserver':
+            if not FORK_AVAILABLE:
+                raise ValueError("Start method 'forkserver' is not available")
             return DillForkServerWorker
         elif start_method == 'spawn':
             return DillSpawnWorker
@@ -474,8 +504,12 @@ def worker_factory(start_method: str, use_dill: bool) -> Type[Union[AbstractWork
             raise ValueError(f"Unknown start method with dill: '{start_method}'")
     else:
         if start_method == 'fork':
+            if not FORK_AVAILABLE:
+                raise ValueError("Start method 'fork' is not available")
             return ForkWorker
         elif start_method == 'forkserver':
+            if not FORK_AVAILABLE:
+                raise ValueError("Start method 'forkserver' is not available")
             return ForkServerWorker
         elif start_method == 'spawn':
             return SpawnWorker

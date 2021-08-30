@@ -1,7 +1,6 @@
 import _thread
 import ctypes
 import multiprocess as mp_dill
-import multiprocess.synchronize
 import multiprocessing as mp
 import multiprocessing.synchronize
 import queue
@@ -12,7 +11,7 @@ from itertools import product
 from unittest.mock import patch
 
 from mpire.comms import NON_LETHAL_POISON_PILL, POISON_PILL, WorkerComms
-from mpire.context import MP_CONTEXTS
+from mpire.context import DEFAULT_START_METHOD, FORK_AVAILABLE, MP_CONTEXTS
 from tests.utils import MockDatetimeNow
 
 
@@ -22,12 +21,13 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test if initializing/resetting the comms is done properly
         """
-        for n_jobs, (ctx, use_dill, using_threading, expected_ctx_for_threading) in product(
-                [1, 2, 4], [(MP_CONTEXTS['mp_dill']['fork'], True, False, MP_CONTEXTS['mp_dill']['fork']),
-                            (MP_CONTEXTS['mp']['forkserver'], False, False, MP_CONTEXTS['mp']['fork']),
-                            (MP_CONTEXTS['mp_dill']['spawn'], True, False, MP_CONTEXTS['mp_dill']['fork']),
-                            (MP_CONTEXTS['threading'], False, True, MP_CONTEXTS['mp']['fork'])]
-        ):
+        test_ctx = [(MP_CONTEXTS['mp_dill']['spawn'], True, False, MP_CONTEXTS['mp_dill'][DEFAULT_START_METHOD]),
+                    (MP_CONTEXTS['threading'], False, True, MP_CONTEXTS['mp'][DEFAULT_START_METHOD])]
+        if FORK_AVAILABLE:
+            test_ctx.extend([(MP_CONTEXTS['mp_dill']['fork'], True, False, MP_CONTEXTS['mp_dill']['fork']),
+                             (MP_CONTEXTS['mp']['forkserver'], False, False, MP_CONTEXTS['mp']['fork'])])
+
+        for n_jobs, (ctx, use_dill, using_threading, expected_ctx_for_threading) in product([1, 2, 4], test_ctx):
             comms = WorkerComms(ctx, n_jobs, use_dill, using_threading)
             self.assertEqual(comms.ctx, ctx)
             self.assertEqual(comms.ctx_for_threading, expected_ctx_for_threading)
@@ -139,7 +139,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test progress bar related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
 
         # Has progress bar
         self.assertFalse(comms.has_progress_bar())
@@ -226,7 +226,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test progress bar complete related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
         comms.init_comms(False, True)
 
         self.assertFalse(comms._progress_bar_complete.is_set())
@@ -241,7 +241,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test keep_order related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
 
         self.assertFalse(comms.keep_order())
         comms.set_keep_order()
@@ -253,7 +253,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test task related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 3, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3, False, False)
         comms.init_comms(False, False)
 
         # Nothing available yet
@@ -311,7 +311,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test results related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
         comms.init_comms(False, False)
 
         # Nothing available yet
@@ -346,7 +346,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test exit results related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 3, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3, False, False)
         comms.init_comms(True, False)
 
         # Nothing available yet
@@ -396,7 +396,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test exit results related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 4, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 4, False, False)
         comms.init_comms(True, False)
 
         # Add a few results. Every worker will always have a return value (even if it's the implicit None). Note that
@@ -413,7 +413,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test exit results related functions. When an exception occurred, it should return an empty list
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 3, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3, False, False)
         comms.init_comms(True, False)
 
         # Add a few results.
@@ -435,7 +435,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test all exit results obtained related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
         comms.init_comms(True, False)
 
         self.assertFalse(comms._all_exit_results_obtained.is_set())
@@ -450,7 +450,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test exception related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
         comms.init_comms(False, False)
 
         # Nothing available yet
@@ -485,7 +485,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test exception thrown related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
 
         self.assertFalse(comms.exception_thrown())
         comms.set_exception_thrown()
@@ -497,7 +497,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test kill signal received related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
 
         self.assertFalse(comms.kill_signal_received())
         comms.set_kill_signal_received()
@@ -511,7 +511,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         for n_jobs in [1, 2, 4]:
             with self.subTest(n_jobs=n_jobs):
-                comms = WorkerComms(MP_CONTEXTS['mp']['fork'], n_jobs, False, False)
+                comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs, False, False)
                 comms.init_comms(False, False)
                 comms.insert_poison_pill()
                 for worker_id in range(n_jobs):
@@ -528,7 +528,7 @@ class WorkerCommsTest(unittest.TestCase):
 
         for n_jobs in [1, 2, 4]:
             with self.subTest(n_jobs=n_jobs):
-                comms = WorkerComms(MP_CONTEXTS['mp']['fork'], n_jobs, False, False)
+                comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs, False, False)
                 comms.init_comms(False, False)
                 comms.insert_non_lethal_poison_pill()
                 for worker_id in range(n_jobs):
@@ -540,7 +540,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test worker restart related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 5, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5, False, False)
         comms.init_comms(False, False)
 
         # No restarts yet
@@ -569,7 +569,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test worker alive related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 5, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5, False, False)
         comms.init_comms(False, False)
 
         # Signal some workers are alive
@@ -601,7 +601,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         get_results should be called once, get_exit_results should be called when exit function is defined
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 5, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5, False, False)
         dont_wait_event = threading.Event()
         dont_wait_event.set()
 
@@ -656,7 +656,7 @@ class WorkerCommsTest(unittest.TestCase):
         progress bar has been enabled one queu for the progress bar.
         """
         for n_jobs, has_worker_exit, has_progress_bar in product([1, 2, 4], [False, True], [False, True]):
-            comms = WorkerComms(MP_CONTEXTS['mp']['fork'], n_jobs, False, False)
+            comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs, False, False)
             comms.init_comms(has_worker_exit=has_worker_exit, has_progress_bar=has_progress_bar)
 
             with self.subTest(n_jobs=n_jobs, has_worker_exit=has_worker_exit, has_progress_bar=has_progress_bar), \
@@ -669,7 +669,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test draining queues
         """
-        comms = WorkerComms(MP_CONTEXTS['mp']['fork'], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
 
         # Create a custom queue with some data
         q = mp.JoinableQueue()
