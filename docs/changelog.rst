@@ -4,7 +4,7 @@ Changelog
 2.2.0
 -----
 
-*(2021-08-27)*
+*(2021-08-30)*
 
 * Added support for Windows. Support has a few caveats:
 
