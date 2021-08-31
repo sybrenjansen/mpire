@@ -184,11 +184,13 @@ Shared objects
 --------------
 
 MPIRE allows you to provide shared objects to the workers in a similar way as is possible with the
-``multiprocessing.Process`` class. For the start methods ``fork`` and ``threading`` these shared objects are treated as
-``copy-on-write``, which means they are only copied once changes are made to them. Otherwise they share the same memory
-address. This is convenient if you want to let workers access a large dataset that wouldn't fit in memory when copied
-multiple times. For the start methods ``spawn`` and ``forkserver`` the shared objects are copied only once for each
-worker, in contrast to copying it for each task which is done when using a regular ``multiprocessing.Pool``.
+``multiprocessing.Process`` class. For the start method ``fork`` these shared objects are treated as ``copy-on-write``,
+which means they are only copied once changes are made to them. Otherwise they share the same memory address. This is
+convenient if you want to let workers access a large dataset that wouldn't fit in memory when copied multiple times.
+
+For ``threading`` these shared objects are readable and writable without copies being made. For the start methods
+``spawn`` and ``forkserver`` the shared objects are copied only once for each worker, in contrast to copying it for each
+task which is done when using a regular ``multiprocessing.Pool``.
 
 .. code-block:: python
 

@@ -20,7 +20,7 @@
 from datetime import datetime
 import re
 
-_version = '2.2.0'
+_version = '2.2.1'
 
 
 def isBoostFunc(what, obj):

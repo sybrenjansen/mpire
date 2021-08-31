@@ -1,8 +1,10 @@
 Changelog
 =========
 
-Not yet released
-----------------
+2.2.1
+-----
+
+*(2021-08-31)*
 
 * Fixed compatibility with newer tqdm versions (``>= 4.62.2``) (`#11`_)
 

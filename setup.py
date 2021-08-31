@@ -13,7 +13,7 @@ def read_description():
 if __name__ == "__main__":
     setup(
         name="mpire",
-        version="2.2.0",
+        version="2.2.1",
         author="Slimmer AI",
         description="A Python package for easy multiprocessing, but faster than multiprocessing",
         long_description=read_description(),
@@ -40,12 +40,17 @@ if __name__ == "__main__":
             "Development Status :: 5 - Production/Stable",
 
             # Supported Python versions
-            "Programming Language :: Python :: 3",
+            "Programming Language :: Python :: 3.6",
+            "Programming Language :: Python :: 3.7",
+            "Programming Language :: Python :: 3.8",
+            "Programming Language :: Python :: 3.9",
 
             # License
             "License :: OSI Approved :: MIT License",
 
             # Topic
+            "Topic :: Software Development",
+            "Topic :: Software Development :: Libraries",
             "Topic :: Software Development :: Libraries :: Python Modules"
         ]
     )
