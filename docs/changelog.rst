@@ -1,17 +1,27 @@
 Changelog
 =========
 
+Not yet released
+----------------
+
+* Fixed compatibility with newer tqdm versions (``>= 4.62.2``) (`#11`_)
+
+.. _#11: https://github.com/Slimmer-AI/mpire/issues/11
+
 2.2.0
 -----
 
 *(2021-08-30)*
 
-* Added support for Windows. Support has a few caveats:
+* Added support for Windows (`#6`_, `#7`_). Support has a few caveats:
 
   * When using worker insights the arguments of the top 5 longest tasks are not available
   * Progress bar is not supported when using threading as start method
   * When using ``dill`` and an exception occurs, or when the exception occurs in an exit function, it can print
     additional ``OSError`` messages in the terminal, but these can be safely ignored.
+
+.. _#6: https://github.com/Slimmer-AI/mpire/issues/6
+.. _#7: https://github.com/Slimmer-AI/mpire/issues/7
 
 2.1.1
 -----

@@ -167,8 +167,6 @@ class ProgressBarHandler:
                 # and send it to the dashboard, if available.)
                 if self.worker_comms.exception_thrown() or self.worker_comms.kill_signal_received():
                     progress_bar.set_description('Exception occurred, terminating ... ')
-                    if in_notebook:
-                        progress_bar.sp(bar_style='danger')
                     if self.worker_comms.exception_thrown():
                         _, traceback_str = self.worker_comms.get_exception()
                         self._send_update(progress_bar, failed=True, traceback_str=traceback_str)
@@ -176,12 +174,16 @@ class ProgressBarHandler:
                     elif self.worker_comms.kill_signal_received():
                         self._send_update(progress_bar, failed=True, traceback_str='Kill signal received')
 
-                # Final update of the progress bar. When this is the main progress bar we add as many newlines as the
-                # highest progress bar position, such that new output is added after the progress bars.
+                # Final update of the progress bar. When we're not in a notebook and this is the main progress bar, we
+                # add as many newlines as the highest progress bar position, such that new output is added after the
+                # progress bars.
                 progress_bar.refresh()
-                progress_bar.disable = True
-                if main_progress_bar and not in_notebook:
-                    progress_bar.fp.write('\n' * (tqdm_position_register.get_highest_progress_bar_position() + 1))
+                if in_notebook:
+                    progress_bar.close()
+                else:
+                    progress_bar.disable = True
+                    if main_progress_bar:
+                        progress_bar.fp.write('\n' * (tqdm_position_register.get_highest_progress_bar_position() + 1))
                 if from_queue:
                     self.worker_comms.task_done_progress_bar()
                 break
@@ -193,7 +195,7 @@ class ProgressBarHandler:
             # Force a refresh when we're at 100%
             if progress_bar.n == progress_bar.total:
                 if in_notebook:
-                    progress_bar.sp(bar_style='success')
+                    progress_bar.close()
                 progress_bar.refresh()
                 self.worker_comms.set_progress_bar_complete()
                 self.worker_comms.wait_until_progress_bar_is_complete()
