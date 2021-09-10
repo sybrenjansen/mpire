@@ -16,11 +16,11 @@ following:
 
 Running this function takes about 10 seconds to complete.
 
-Functions like these are known as `embarrassingly parellel`_ problems, functions that require little to no effort to
-turn into a parellel task. Parallelizing a simple function as this can be as easy as importing ``multiprocessing`` and
+Functions like these are known as `embarrassingly parallel`_ problems, functions that require little to no effort to
+turn into a parallel task. Parallelizing a simple function as this can be as easy as importing ``multiprocessing`` and
 using the ``multiprocessing.Pool`` class:
 
-.. _embarrassingly parellel: https://en.wikipedia.org/wiki/Embarrassingly_parallel
+.. _embarrassingly parallel: https://en.wikipedia.org/wiki/Embarrassingly_parallel
 
 .. code-block:: python
 
