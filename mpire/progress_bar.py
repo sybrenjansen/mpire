@@ -142,7 +142,10 @@ class ProgressBarHandler:
 
         # In case we're running tqdm in a notebook we need to apply a dirty hack to get progress bars working.
         # Solution adapted from https://github.com/tqdm/tqdm/issues/485#issuecomment-473338308
-        in_notebook = 'IPython' in sys.modules and 'IPKernelApp' in sys.modules['IPython'].get_ipython().config
+        try:
+            in_notebook = 'IPKernelApp' in sys.modules['IPython'].get_ipython().config
+        except (AttributeError, KeyError):
+            in_notebook = False
         if in_notebook:
             print(' ', end='', flush=True)
 

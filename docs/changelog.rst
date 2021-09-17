@@ -1,6 +1,13 @@
 Changelog
 =========
 
+Master
+------
+
+* Fixed progress bar in a particular setting with iPython and django installed (`#13`_)
+
+.. _#13: https://github.com/Slimmer-AI/mpire/pull/13
+
 2.2.1
 -----
 
