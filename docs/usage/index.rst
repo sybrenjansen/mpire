@@ -2,8 +2,8 @@ Usage
 =====
 
 .. toctree::
-    :maxdepth: 1
+    :maxdepth: 2
 
-    worker_pool
-    map
+    workerpool/index
+    map/index
     dashboard

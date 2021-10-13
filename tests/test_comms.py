@@ -6,13 +6,23 @@ import multiprocessing.synchronize
 import queue
 import threading
 import unittest
+import warnings
 from datetime import datetime
 from itertools import product
 from unittest.mock import patch
 
-from mpire.comms import NON_LETHAL_POISON_PILL, POISON_PILL, WorkerComms
+from mpire.comms import NEW_MAP_PARAMS_PILL, NON_LETHAL_POISON_PILL, POISON_PILL, WorkerComms
 from mpire.context import DEFAULT_START_METHOD, FORK_AVAILABLE, MP_CONTEXTS
+from mpire.params import WorkerMapParams
 from tests.utils import MockDatetimeNow
+
+
+def _f1():
+    pass
+
+
+def _f2():
+    pass
 
 
 class WorkerCommsTest(unittest.TestCase):
@@ -445,6 +455,33 @@ class WorkerCommsTest(unittest.TestCase):
         with patch.object(comms._all_exit_results_obtained, 'wait') as p:
             comms.wait_until_all_exit_results_obtained()
             self.assertEqual(p.call_count, 1)
+
+    def test_add_new_map_params(self):
+        """
+        Test new map parameters function
+        """
+        comms = WorkerComms(MP_CONTEXTS['mp_dill'][DEFAULT_START_METHOD], 2, True, False)
+        comms.init_comms(False, False)
+
+        map_params = WorkerMapParams(_f1, None, None, 1)
+        comms.add_new_map_params(map_params)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            for worker_id in range(2):
+                self.assertEqual(comms.get_task(worker_id), NEW_MAP_PARAMS_PILL)
+                self.assertEqual(comms.get_task(worker_id), map_params)
+                comms.task_done(worker_id)
+                comms.task_done(worker_id)
+
+        map_params = WorkerMapParams(_f1, _f2, None, None)
+        comms.add_new_map_params(map_params)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            for worker_id in range(2):
+                self.assertEqual(comms.get_task(worker_id), NEW_MAP_PARAMS_PILL)
+                self.assertEqual(comms.get_task(worker_id), map_params)
+                comms.task_done(worker_id)
+                comms.task_done(worker_id)
 
     def test_exceptions(self):
         """

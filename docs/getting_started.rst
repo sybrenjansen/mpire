@@ -71,7 +71,11 @@ Shared objects
 
 If you have one or more objects that you want to share between all workers you can make use of the copy-on-write
 ``shared_objects`` option of MPIRE. MPIRE will pass on these objects only once for each worker without
-copying/serialization. Only when you alter the object in the worker function it will start copying it for that worker.
+copying/serialization. Only when the object is altered in the worker function it will start copying it for that worker.
+
+.. note::
+
+    Copy-on-write is not available on Windows, as it requires the start method ``fork``.
 
 .. code-block:: python
 
@@ -81,7 +85,7 @@ copying/serialization. Only when you alter the object in the worker function it 
 
     def main():
         some_object = ...
-        with WorkerPool(n_jobs=5, shared_objects=some_object) as pool:
+        with WorkerPool(n_jobs=5, shared_objects=some_object, start_method='fork') as pool:
             results = pool.map(time_consuming_function, range(10), progress_bar=True)
 
 See :ref:`shared_objects` for more details.

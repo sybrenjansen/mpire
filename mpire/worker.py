@@ -24,12 +24,12 @@ except ImportError:
     np = None
     NUMPY_INSTALLED = False
 
-from mpire.comms import NON_LETHAL_POISON_PILL, POISON_PILL, WorkerComms
+from mpire.comms import NEW_MAP_PARAMS_PILL, NON_LETHAL_POISON_PILL, POISON_PILL, WorkerComms
 from mpire.context import FORK_AVAILABLE, MP_CONTEXTS, RUNNING_WINDOWS
 from mpire.dashboard.connection_utils import DashboardConnectionDetails, set_dashboard_connection
 from mpire.exception import CannotPickleExceptionError, StopWorker
 from mpire.insights import WorkerInsights
-from mpire.params import WorkerPoolParams
+from mpire.params import WorkerMapParams, WorkerPoolParams
 from mpire.tqdm_utils import TqdmConnectionDetails, TqdmManager
 from mpire.utils import TimeIt
 
@@ -39,12 +39,14 @@ class AbstractWorker:
     A multiprocessing helper class which continuously asks the queue for new jobs, until a poison pill is inserted
     """
 
-    def __init__(self, worker_id: int, params: WorkerPoolParams, worker_comms: WorkerComms,
-                 worker_insights: WorkerInsights, tqdm_connection_details: TqdmConnectionDetails,
+    def __init__(self, worker_id: int, pool_params: WorkerPoolParams, map_params: WorkerMapParams,
+                 worker_comms: WorkerComms, worker_insights: WorkerInsights,
+                 tqdm_connection_details: TqdmConnectionDetails,
                  dashboard_connection_details: DashboardConnectionDetails, start_time: datetime) -> None:
         """
         :param worker_id: Worker ID
-        :param params: WorkerPool parameters
+        :param pool_params: WorkerPool parameters
+        :param map_params: WorkerPool map parameters
         :param worker_comms: Worker communication objects (queues, locks, events, ...)
         :param worker_insights: WorkerInsights object which stores the worker insights
         :param tqdm_connection_details: Tqdm manager host, and whether the manager is started/connected
@@ -56,7 +58,8 @@ class AbstractWorker:
 
         # Parameters
         self.worker_id = worker_id
-        self.params = params
+        self.pool_params = pool_params
+        self.map_params = map_params
         self.worker_comms = worker_comms
         self.worker_insights = worker_insights
         self.tqdm_connection_details = tqdm_connection_details
@@ -73,10 +76,10 @@ class AbstractWorker:
         self.max_task_duration_list = self.worker_insights.get_max_task_duration_list(self.worker_id)
 
         # Exception handling variables
-        if self.params.start_method == 'threading':
+        if self.pool_params.start_method == 'threading':
             ctx = MP_CONTEXTS['threading']
         else:
-            ctx = MP_CONTEXTS['mp_dill' if self.params.use_dill else 'mp'][self.params.start_method]
+            ctx = MP_CONTEXTS['mp_dill' if self.pool_params.use_dill else 'mp'][self.pool_params.start_method]
         self.is_running = False
         self.is_running_lock = ctx.Lock()
 
@@ -126,7 +129,7 @@ class AbstractWorker:
         life span is not yet reached it will execute the new task and put the results in the results queue.
         """
         # Enable graceful shutdown for Windows. Note that we can't kill threads in Python
-        if RUNNING_WINDOWS and self.params.start_method != "threading":
+        if RUNNING_WINDOWS and self.pool_params.start_method != "threading":
             signal.signal(signal.SIGINT, self._exit_gracefully)
             t = Thread(target=self._exit_gracefully_windows)
             t.start()
@@ -144,24 +147,23 @@ class AbstractWorker:
 
             # Obtain additional args to pass to the function
             additional_args = []
-            if self.params.pass_worker_id:
+            if self.pool_params.pass_worker_id:
                 additional_args.append(self.worker_id)
-            if self.params.shared_objects is not None:
-                additional_args.append(self.params.shared_objects)
-            if self.params.use_worker_state:
+            if self.pool_params.shared_objects is not None:
+                additional_args.append(self.pool_params.shared_objects)
+            if self.pool_params.use_worker_state:
                 additional_args.append(self.worker_state)
 
             # Run initialization function. If it returns True it means an exception occurred and we should exit
-            if self.params.worker_init and self._run_init_func(additional_args):
+            if self.map_params.worker_init and self._run_init_func(additional_args):
                 return
 
             # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
             # with idx support which deals with the provided idx variable.
-            func = partial(self._helper_func_with_idx if self.worker_comms.keep_order() else self._helper_func,
-                           partial(self.params.func, *additional_args))
+            func = self._get_func(additional_args)
 
             n_tasks_executed = 0
-            while self.params.worker_lifespan is None or n_tasks_executed < self.params.worker_lifespan:
+            while self.map_params.worker_lifespan is None or n_tasks_executed < self.map_params.worker_lifespan:
 
                 # Obtain new chunk of jobs
                 with TimeIt(self.worker_insights.worker_waiting_time, self.worker_id):
@@ -176,7 +178,7 @@ class AbstractWorker:
                     self._update_progress_bar(force_update=True)
                     self.worker_comms.task_done(self.worker_id)
                     if next_chunked_args == POISON_PILL:
-                        if self.params.worker_exit:
+                        if self.map_params.worker_exit:
                             self._run_exit_func(additional_args)
                             self.worker_comms.wait_until_all_exit_results_obtained()
                         if self.worker_comms.has_progress_bar():
@@ -184,6 +186,14 @@ class AbstractWorker:
                         return
                     else:
                         continue
+
+                # Update the map parameters of this function when new parameters are provided
+                elif next_chunked_args == NEW_MAP_PARAMS_PILL:
+                    self.worker_comms.task_done(self.worker_id)
+                    self.map_params = self.worker_comms.get_task(self.worker_id)
+                    func = self._get_func(additional_args)
+                    self.worker_comms.task_done(self.worker_id)
+                    continue
 
                 # When we recieved None this means we need to stop because of an exception in the main process
                 elif next_chunked_args is None:
@@ -217,15 +227,26 @@ class AbstractWorker:
             # Max lifespan reached
             self._update_task_insights(force_update=True)
             self._update_progress_bar(force_update=True)
-            if self.params.worker_exit and self._run_exit_func(additional_args):
+            if self.map_params.worker_exit and self._run_exit_func(additional_args):
                 return
 
             # Notify WorkerPool to start a new worker
-            if self.params.worker_lifespan is not None and n_tasks_executed == self.params.worker_lifespan:
+            if self.map_params.worker_lifespan is not None and n_tasks_executed == self.map_params.worker_lifespan:
                 self.worker_comms.signal_worker_restart(self.worker_id)
 
         finally:
             self.worker_comms.set_worker_dead(self.worker_id)
+
+    def _get_func(self, additional_args: List) -> Callable:
+        """
+        Determine what function to call. If we have to keep in mind the order (for map) we use the helper function with
+        idx support which deals with the provided idx variable.
+
+        :param additional_args: Additional args list
+        :return: Function to call
+        """
+        return partial(self._helper_func_with_idx if self.worker_comms.keep_order() else self._helper_func,
+                       partial(self.map_params.func, *additional_args))
 
     def _run_init_func(self, additional_args: List) -> bool:
         """
@@ -236,7 +257,7 @@ class AbstractWorker:
         """
         def _init_func():
             with TimeIt(self.worker_insights.worker_init_time, self.worker_id):
-                self.params.worker_init(*additional_args)
+                self.map_params.worker_init(*additional_args)
 
         return self._run_safely(_init_func, no_args=True)[1]
 
@@ -267,7 +288,7 @@ class AbstractWorker:
         """
         def _exit_func():
             with TimeIt(self.worker_insights.worker_exit_time, self.worker_id):
-                return self.params.worker_exit(*additional_args)
+                return self.map_params.worker_exit(*additional_args)
 
         results, should_return = self._run_safely(_exit_func, no_args=True)
 

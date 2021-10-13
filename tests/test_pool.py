@@ -1,6 +1,7 @@
 import logging
 import types
 import unittest
+import warnings
 from itertools import product, repeat
 from multiprocessing import Barrier, Value
 from unittest.mock import patch
@@ -721,7 +722,7 @@ class CPUPinningTest(unittest.TestCase):
                 if cpu_ids is None:
                     self.assertEqual(p.call_args_list, [])
                 else:
-                    self.assertEqual(p.call_count, pool.params.n_jobs)
+                    self.assertEqual(p.call_count, pool.pool_params.n_jobs)
                     mask = [call[0][1] for call in p.call_args_list]
                     self.assertListEqual(mask, expected_mask)
 
@@ -747,7 +748,7 @@ class CPUPinningTest(unittest.TestCase):
 
                 # Verify that CPU pinning is used as many times as there are jobs and is called for each worker process
                 # ID
-                self.assertEqual(p.call_count, pool.params.n_jobs)
+                self.assertEqual(p.call_count, pool.pool_params.n_jobs)
                 mask = [call[0][1] for call in p.call_args_list]
                 self.assertListEqual(mask, expected_mask)
 
@@ -833,7 +834,7 @@ class ProgressBarTest(unittest.TestCase):
                 # Progress bar on Windows with threading is currently not supported
                 if RUNNING_WINDOWS and start_method == 'threading':
                     with self.assertRaises(ValueError):
-                        results_list = pool.map(square, self.test_data, progress_bar=True)
+                        pool.map(square, self.test_data, progress_bar=True)
                 else:
                     results_list = pool.map(square, self.test_data, progress_bar=True)
                     self.assertIsInstance(results_list, list)
@@ -912,170 +913,41 @@ class KeepAliveTest(unittest.TestCase):
                                      self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs)
 
-    def test_keep_alive_func_changes(self):
+    def test_keep_alive_map_params_change(self):
         """
-        When keep_alive is set to True it should reuse existing workers between map calls, but only when the called
-        function, amongst others, is kept constant
+        When keep_alive is set to True it should reuse existing workers between map calls, even when the called
+        function, init or exit functions, or the worker lifespan changes
         """
         for n_jobs in [1, 3]:
             barrier = Barrier(n_jobs)
             counter = Value('i', 0)
             shared = barrier, counter
-            with self.subTest(n_jobs=n_jobs), \
+            with self.subTest(n_jobs=n_jobs), warnings.catch_warnings(), \
                     WorkerPool(n_jobs=n_jobs, shared_objects=shared, use_worker_state=True, keep_alive=True) as pool:
 
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                warnings.simplefilter('ignore')
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=100, worker_init=self._init1,
+                                              worker_exit=self._exit1),
                                      self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs)
                 barrier.reset()
 
-                self.assertListEqual(list(pool.imap(self._f2, self.test_data, worker_init=self._init1)),
+                self.assertListEqual(list(pool.imap(self._f2, self.test_data, worker_lifespan=100,
+                                                    worker_init=self._init1, worker_exit=self._exit2)),
                                      self.test_desired_output_f2)
-                self.assertEqual(counter.value, n_jobs * 2)
+                self.assertEqual(counter.value, n_jobs)
                 barrier.reset()
 
-                self.assertListEqual(pool.map(self._f2, self.test_data, worker_init=self._init1),
+                self.assertListEqual(pool.map(self._f2, self.test_data, worker_lifespan=200, worker_init=self._init2,
+                                              worker_exit=self._exit1),
                                      self.test_desired_output_f2)
-                self.assertEqual(counter.value, n_jobs * 2)
-                barrier.reset()
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
-                                     self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs * 3)
-
-    def test_keep_alive_worker_lifespan_changes(self):
-        """
-        When keep_alive is set to True it should reuse existing workers between map calls, but only when the worker
-        lifespan, amongst others, is kept constant
-        """
-        for n_jobs in [1, 3]:
-            barrier = Barrier(n_jobs)
-            counter = Value('i', 0)
-            shared = barrier, counter
-            with self.subTest(n_jobs=n_jobs), \
-                    WorkerPool(n_jobs=n_jobs, shared_objects=shared, use_worker_state=True, keep_alive=True) as pool:
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=100, worker_init=self._init1),
-                                     self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs)
                 barrier.reset()
 
-                self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_lifespan=100,
-                                                    worker_init=self._init1)), self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs)
-                barrier.reset()
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=200, worker_init=self._init1),
-                                     self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs * 2)
-                barrier.reset()
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=200, worker_init=self._init1),
-                                     self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs * 2)
-                barrier.reset()
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=100, worker_init=self._init1),
-                                     self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs * 3)
-
-    def test_keep_alive_worker_init_changes(self):
-        """
-        When keep_alive is set to True it should reuse existing workers between map calls, but only when the worker init
-        function, amongst others, is kept constant
-        """
-        for n_jobs in [1, 3]:
-            barrier = Barrier(n_jobs)
-            counter = Value('i', 0)
-            shared = barrier, counter
-            with self.subTest(n_jobs=n_jobs), \
-                    WorkerPool(n_jobs=n_jobs, shared_objects=shared, use_worker_state=True, keep_alive=True) as pool:
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_lifespan=100, worker_init=self._init1,
+                                              worker_exit=None),
                                      self.test_desired_output_f1)
                 self.assertEqual(counter.value, n_jobs)
-                barrier.reset()
-
-                self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_init=self._init2)),
-                                     self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs * 2)
-                barrier.reset()
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init2),
-                                     self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs * 2)
-                barrier.reset()
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1),
-                                     self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs * 3)
-
-    def test_keep_alive_worker_exit_changes(self):
-        """
-        When keep_alive is set to True it should reuse existing workers between map calls, but only when the worker exit
-        function, amongst others, is kept constant
-        """
-        for n_jobs in [1, 3]:
-            barrier = Barrier(n_jobs)
-            counter = Value('i', 0)
-            shared = barrier, counter
-            with self.subTest(n_jobs=n_jobs), \
-                    WorkerPool(n_jobs=n_jobs, shared_objects=shared, use_worker_state=True, keep_alive=True) as pool:
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1,
-                                              worker_exit=self._exit1), self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs)
-                barrier.reset()
-
-                self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_init=self._init1,
-                                                    worker_exit=self._exit2)), self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs * 2)
-                barrier.reset()
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1,
-                                              worker_exit=self._exit2), self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs * 2)
-                barrier.reset()
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1,
-                                              worker_exit=self._exit1), self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs * 3)
-
-    def test_keep_alive_enable_insights_changes(self):
-        """
-        When keep_alive is set to True it should reuse existing workers between map calls, but only when
-        enable_insights, amongst others, is kept constant
-        """
-        for n_jobs in [1, 3]:
-            barrier = Barrier(n_jobs)
-            counter = Value('i', 0)
-            shared = barrier, counter
-            with self.subTest(n_jobs=n_jobs), \
-                    WorkerPool(n_jobs=n_jobs, shared_objects=shared, use_worker_state=True, keep_alive=True) as pool:
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1, enable_insights=False),
-                                     self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs)
-                barrier.reset()
-
-                self.assertListEqual(list(pool.imap(self._f1, self.test_data, worker_init=self._init1,
-                                                    enable_insights=False)), self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs)
-                barrier.reset()
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1, enable_insights=True),
-                                     self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs * 2)
-                barrier.reset()
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1, enable_insights=True),
-                                     self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs * 2)
-                barrier.reset()
-
-                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1, enable_insights=False),
-                                     self.test_desired_output_f1)
-                self.assertEqual(counter.value, n_jobs * 3)
 
     def test_start_methods(self):
         """
