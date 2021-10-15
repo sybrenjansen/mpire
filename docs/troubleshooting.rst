@@ -73,6 +73,7 @@ will be much quicker. See :ref:`max_active_tasks` for more information.
 When you're using a lazy map function also be sure to iterate through the results, otherwise that queue will be full and
 draining it will take a longer time.
 
+.. _unpickable_tasks:
 
 Unpicklable tasks/results
 -------------------------
@@ -88,6 +89,18 @@ add a heavy performance penalty and is therefore not an acceptable solution.
 Instead, the user should make sure their tasks and results are always picklable (which in most cases won't be a
 problem), or resort to setting ``use_dill=True``. The latter is capable of pickling a lot more exotic types. See
 :ref:`use_dill` for more information.
+
+
+AttributeError: Can't get attribute '<some_function>' on <module '__main__' (built-in)>
+---------------------------------------------------------------------------------------
+
+This error can occur when inside an iPython or Jupyter notebook session and the function to parallelize is defined in
+that session. This is often the result of using ``spawn`` as start method (the default on Windows), which starts a new
+process without copying the function in question.
+
+This error is actually related to the :ref:`unpickable_tasks` problem and can be solved in a similar way. I.e., you can
+define your function in a file that can be imported by the child process, or you can resort to using ``dill`` by setting
+``use_dill=True``. See :ref:`use_dill` for more information.
 
 
 .. _troubleshooting_windows:

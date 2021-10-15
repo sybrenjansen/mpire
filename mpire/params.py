@@ -3,46 +3,50 @@ import multiprocessing as mp
 import warnings
 from typing import Any, Callable, Iterable, List, Optional, Sized, Tuple, Union
 
+from dataclasses import dataclass, field
 from tqdm import tqdm
 
-from mpire.context import RUNNING_WINDOWS
+from mpire.context import RUNNING_WINDOWS, DEFAULT_START_METHOD
 
 # Typedefs
-CPUList = Optional[List[Union[int, List[int]]]]
+CPUList = List[Union[int, List[int]]]
 
 
+@dataclass(init=True, frozen=False)
 class WorkerPoolParams:
-
     """
-    Data class, with some parameter verification, for all :obj:`mpire.WorkerPool` parameters.
+    Data class for all :obj:`mpire.WorkerPool` parameters.
     """
+    n_jobs: Optional[int]
+    _n_jobs: int = field(init=False, repr=False)
+    cpu_ids: Optional[CPUList]
+    _cpu_ids: CPUList = field(init=False, repr=False)
+    daemon: bool = True
+    shared_objects: Any = None
+    pass_worker_id: bool = False
+    use_worker_state: bool = False
+    start_method: str = DEFAULT_START_METHOD
+    keep_alive: bool = False
+    use_dill: bool = False
+    enable_insights: bool = False
 
-    def __init__(self, n_jobs: Optional[int] = None, daemon: bool = True, cpu_ids: CPUList = None,
-                 shared_objects: Any = None, pass_worker_id: bool = False, use_worker_state: bool = False,
-                 start_method: str = 'fork', keep_alive: bool = False, use_dill: bool = False) -> None:
-        """
-        See ``WorkerPool.__init__`` docstring.
-        """
-        self.n_jobs = n_jobs or mp.cpu_count()
-        self.daemon = daemon
-        self.cpu_ids = self._check_cpu_ids(cpu_ids)
-        self.shared_objects = shared_objects
-        self.pass_worker_id = pass_worker_id
-        self.use_worker_state = use_worker_state
-        self.start_method = start_method
-        self.keep_alive = keep_alive
-        self.use_dill = use_dill
+    @property
+    def n_jobs(self) -> Optional[int]:
+        return self._n_jobs
 
-        # Number of (chunks of) jobs a child process can process before requesting a restart
-        self.worker_lifespan = None
+    @n_jobs.setter
+    def n_jobs(self, n_jobs: Optional[int]) -> None:
+        self._n_jobs = n_jobs or mp.cpu_count()
 
-        # User provided functions to call
-        self.func = None
-        self.worker_init = None
-        self.worker_exit = None
-        self.enable_insights = None
+    @property
+    def cpu_ids(self) -> CPUList:
+        return self._cpu_ids
 
-    def _check_cpu_ids(self, cpu_ids: CPUList) -> List[List[int]]:
+    @cpu_ids.setter
+    def cpu_ids(self, cpu_ids: Optional[CPUList]) -> None:
+        self._cpu_ids = self._check_cpu_ids(cpu_ids)
+
+    def _check_cpu_ids(self, cpu_ids: Optional[CPUList]) -> CPUList:
         """
         Checks the cpu_ids parameter for correctness
 
@@ -93,119 +97,116 @@ class WorkerPoolParams:
 
         return converted_cpu_ids
 
-    def check_map_parameters(self, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int],
-                             max_tasks_active: Optional[int], chunk_size: Optional[Union[int, float]],
-                             n_splits: Optional[int], worker_lifespan: Optional[int], progress_bar: bool,
-                             progress_bar_position: int) \
-            -> Tuple[Optional[int], int, Optional[int], Union[bool, tqdm]]:
+
+@dataclass(init=True, frozen=True)
+class WorkerMapParams:
+    """
+    Data class for all :meth:`mpire.WorkerPool.map` parameters that need to be passed on to a worker.
+    """
+    # User provided functions to call, provided to a map function
+    func: Callable
+    worker_init: Optional[Callable] = None
+    worker_exit: Optional[Callable] = None
+
+    # Number of (chunks of) jobs a child process can process before requesting a restart
+    worker_lifespan: Optional[int] = None
+
+    def __eq__(self, other: 'WorkerMapParams') -> bool:
         """
-        Check the parameters provided to any (i)map function. Also extracts the number of tasks and can modify the
-        ``chunk_size`` and ``progress_bar`` parameters.
-
-        :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-            passes it to the function
-        :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
-            to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
-            iterable object, or by specifying the number of tasks
-        :param max_tasks_active: Maximum number of active tasks in the queue. Use ``None`` to not limit the queue
-        :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
-            number of chunks
-        :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
-        :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
-            stay alive the entire time. Use this when workers use up too much memory over the course of time
-        :param progress_bar: When ``True`` it will display a progress bar
-        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time
-        :return: Number of tasks, max tasks active, chunk size, progress bar
+        :param other: Other WorkerMapConfig
+        :return: Whether the configs are the same
         """
-        # Get number of tasks
-        n_tasks = None
-        if iterable_len is not None:
-            n_tasks = iterable_len
-        elif hasattr(iterable_of_args, '__len__'):
-            n_tasks = len(iterable_of_args)
-        elif chunk_size is None or progress_bar:
-            warnings.warn('Failed to obtain length of iterable when chunk size or number of splits is None and/or a '
-                          'progress bar is requested. Chunk size is set to 1 and no progress bar will be shown. '
-                          'Remedy: either provide an iterable with a len() function or specify iterable_len in the '
-                          'function call', RuntimeWarning, stacklevel=2)
-            chunk_size = 1
-            progress_bar = False
+        if other.worker_init != self.worker_init or other.worker_exit != self.worker_exit:
+            warnings.warn("You're changing either the worker_init and/or worker_exit function while keep_alive is "
+                          "enabled. Be aware this can have undesired side-effects as worker_init functions are only "
+                          "executed when a worker is started and worker_exit functions when a worker is terminated.",
+                          RuntimeWarning, stacklevel=2)
 
-        # Check chunk_size parameter
-        if chunk_size is not None:
-            if not isinstance(chunk_size, (int, float)):
-                raise TypeError('chunk_size should be either None or an integer value')
-            elif chunk_size <= 0:
-                raise ValueError('chunk_size should be a positive integer > 0')
+        return (other.func == self.func and
+                other.worker_init == self.worker_init and
+                other.worker_exit == self.worker_exit and
+                other.worker_lifespan == self.worker_lifespan)
 
-        # Check n_splits parameter (only when chunk_size is None)
-        else:
-            if not (isinstance(n_splits, int) or n_splits is None):
-                raise TypeError('n_splits should be either None or an integer value')
-            if isinstance(n_splits, int) and n_splits <= 0:
-                raise ValueError('n_splits should be a positive integer > 0')
 
-        # Check max_tasks_active parameter
-        if max_tasks_active is None:
-            max_tasks_active = self.n_jobs * 2
-        elif isinstance(max_tasks_active, int):
-            if max_tasks_active <= 0:
-                raise ValueError('max_tasks_active should be a positive integer or None')
-        else:
-            raise TypeError('max_tasks_active should be a positive integer or None')
+def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[Sized, Iterable],
+                         iterable_len: Optional[int], max_tasks_active: Optional[int],
+                         chunk_size: Optional[Union[int, float]], n_splits: Optional[int],
+                         worker_lifespan: Optional[int], progress_bar: bool, progress_bar_position: int) \
+        -> Tuple[Optional[int], int, Optional[int], Union[bool, tqdm]]:
+    """
+    Check the parameters provided to any (i)map function. Also extracts the number of tasks and can modify the
+    ``chunk_size`` and ``progress_bar`` parameters.
 
-        # If worker lifespan is not None or not a positive integer, raise
-        if isinstance(worker_lifespan, int):
-            if worker_lifespan <= 0:
-                raise ValueError('worker_lifespan should be either None or a positive integer (> 0)')
-        elif worker_lifespan is not None:
-            raise TypeError('worker_lifespan should be either None or a positive integer (> 0)')
+    :param pool_params: WorkerPool config
+    :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
+        passes it to the function
+    :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
+        to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
+        iterable object, or by specifying the number of tasks
+    :param max_tasks_active: Maximum number of active tasks in the queue. Use ``None`` to not limit the queue
+    :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
+        number of chunks
+    :param n_splits: Number of splits to use when ``chunk_size`` is ``None``
+    :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
+        stay alive the entire time. Use this when workers use up too much memory over the course of time
+    :param progress_bar: When ``True`` it will display a progress bar
+    :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
+        multiple progress bars at the same time
+    :return: Number of tasks, max tasks active, chunk size, progress bar
+    """
+    # Get number of tasks
+    n_tasks = None
+    if iterable_len is not None:
+        n_tasks = iterable_len
+    elif hasattr(iterable_of_args, '__len__'):
+        n_tasks = len(iterable_of_args)
+    elif chunk_size is None or progress_bar:
+        warnings.warn('Failed to obtain length of iterable when chunk size or number of splits is None and/or a '
+                      'progress bar is requested. Chunk size is set to 1 and no progress bar will be shown. '
+                      'Remedy: either provide an iterable with a len() function or specify iterable_len in the '
+                      'function call', RuntimeWarning, stacklevel=2)
+        chunk_size = 1
+        progress_bar = False
 
-        # Progress bar is currently not supported on Windows when using threading as start method. For reasons still
-        # unknown we get a TypeError: cannot pickle '_thread.Lock' object.
-        if RUNNING_WINDOWS and progress_bar and self.start_method == "threading":
-            raise ValueError("Progress bar is currently not supported on Windows when using start_method='threading'")
+    # Check chunk_size parameter
+    if chunk_size is not None:
+        if not isinstance(chunk_size, (int, float)):
+            raise TypeError('chunk_size should be either None or an integer value')
+        elif chunk_size <= 0:
+            raise ValueError('chunk_size should be a positive integer > 0')
 
-        # Progress bar position should be a positive integer
-        if not isinstance(progress_bar_position, int):
-            raise TypeError('progress_bar_position should be a positive integer (>= 0)')
-        if progress_bar_position < 0:
-            raise ValueError('progress_bar_position should be a positive integer (>= 0)')
+    # Check n_splits parameter (only when chunk_size is None)
+    else:
+        if not (isinstance(n_splits, int) or n_splits is None):
+            raise TypeError('n_splits should be either None or an integer value')
+        if isinstance(n_splits, int) and n_splits <= 0:
+            raise ValueError('n_splits should be a positive integer > 0')
 
-        return n_tasks, max_tasks_active, chunk_size, progress_bar
+    # Check max_tasks_active parameter
+    if max_tasks_active is None:
+        max_tasks_active = pool_params.n_jobs * 2
+    elif isinstance(max_tasks_active, int):
+        if max_tasks_active <= 0:
+            raise ValueError('max_tasks_active should be a positive integer or None')
+    else:
+        raise TypeError('max_tasks_active should be a positive integer or None')
 
-    def set_map_params(self, func: Callable, worker_init: Optional[Callable], worker_exit: Optional[Callable],
-                       worker_lifespan: int, enable_insights: bool) -> None:
-        """
-        Set map specific parameters
+    # If worker lifespan is not None or not a positive integer, raise
+    if isinstance(worker_lifespan, int):
+        if worker_lifespan <= 0:
+            raise ValueError('worker_lifespan should be either None or a positive integer (> 0)')
+    elif worker_lifespan is not None:
+        raise TypeError('worker_lifespan should be either None or a positive integer (> 0)')
 
-        :param func: Function to call each time new task arguments become available
-        :param worker_init: Function to call each time a new worker starts
-        :param worker_exit: Function to call each time a worker exits
-        :param worker_lifespan: Number of chunks a worker can handle before it is restarted
-        :param enable_insights: Whether to enable worker insights
-        """
-        self.func = func
-        self.worker_init = worker_init
-        self.worker_exit = worker_exit
-        self.worker_lifespan = worker_lifespan
-        self.enable_insights = enable_insights
+    # Progress bar is currently not supported on Windows when using threading as start method. For reasons still
+    # unknown we get a TypeError: cannot pickle '_thread.Lock' object.
+    if RUNNING_WINDOWS and progress_bar and pool_params.start_method == "threading":
+        raise ValueError("Progress bar is currently not supported on Windows when using start_method='threading'")
 
-    def workers_need_restart(self, func: Callable, worker_init: Optional[Callable], worker_exit: Optional[Callable],
-                             worker_lifespan: int, enable_insights: bool) -> bool:
-        """
-        Checks if workers need to be restarted based on some key parameters
+    # Progress bar position should be a positive integer
+    if not isinstance(progress_bar_position, int):
+        raise TypeError('progress_bar_position should be a positive integer (>= 0)')
+    if progress_bar_position < 0:
+        raise ValueError('progress_bar_position should be a positive integer (>= 0)')
 
-        :param func: Function to call each time new task arguments become available
-        :param worker_init: Function to call each time a new worker starts
-        :param worker_exit: Function to call each time a worker exits
-        :param worker_lifespan: Number of chunks a worker can handle before it is restarted
-        :param enable_insights: Whether to enable worker insights
-        :return: Whether the workers need to be restarted
-        """
-        return (func != self.func or
-                worker_init != self.worker_init or
-                worker_exit != self.worker_exit or
-                worker_lifespan != self.worker_lifespan or
-                enable_insights != self.enable_insights)
+    return n_tasks, max_tasks_active, chunk_size, progress_bar

@@ -4,6 +4,7 @@ import os
 import queue
 import signal
 import threading
+import warnings
 from datetime import datetime
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Sized, Union
 
@@ -18,7 +19,7 @@ from mpire.comms import WorkerComms
 from mpire.context import DEFAULT_START_METHOD, RUNNING_WINDOWS
 from mpire.dashboard.connection_utils import get_dashboard_connection_details
 from mpire.insights import WorkerInsights
-from mpire.params import CPUList, WorkerPoolParams
+from mpire.params import check_map_parameters, CPUList, WorkerMapParams, WorkerPoolParams
 from mpire.progress_bar import ProgressBarHandler
 from mpire.signal import DisableKeyboardInterruptSignal
 from mpire.tqdm_utils import TqdmManager
@@ -35,7 +36,8 @@ class WorkerPool:
 
     def __init__(self, n_jobs: Optional[int] = None, daemon: bool = True, cpu_ids: CPUList = None,
                  shared_objects: Any = None, pass_worker_id: bool = False, use_worker_state: bool = False,
-                 start_method: str = DEFAULT_START_METHOD, keep_alive: bool = False, use_dill: bool = False) -> None:
+                 start_method: str = DEFAULT_START_METHOD, keep_alive: bool = False, use_dill: bool = False,
+                 enable_insights: bool = False) -> None:
         """
         :param n_jobs: Number of workers to spawn. If ``None``, will use ``cpu_count()``
         :param daemon: Whether to start the child processes as daemon
@@ -61,10 +63,13 @@ class WorkerPool:
         :param use_dill: Whether to use dill as serialization backend. Some exotic types (e.g., lambdas, nested
             functions) don't work well when using ``spawn`` as start method. In such cased, use ``dill`` (can be a bit
             slower sometimes)
+        :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
+            neglible)
         """
         # Set parameters
-        self.params = WorkerPoolParams(n_jobs, daemon, cpu_ids, shared_objects, pass_worker_id, use_worker_state,
-                                       start_method, keep_alive, use_dill)
+        self.pool_params = WorkerPoolParams(n_jobs, cpu_ids, daemon, shared_objects, pass_worker_id, use_worker_state,
+                                            start_method, keep_alive, use_dill, enable_insights)
+        self.map_params = None  # type: Optional[WorkerMapParams]
 
         # Worker factory
         self.Worker = worker_factory(start_method, use_dill)
@@ -77,11 +82,11 @@ class WorkerPool:
 
         # Container of the child processes and corresponding communication objects
         self._workers = []
-        self._worker_comms = WorkerComms(self.ctx, self.params.n_jobs, use_dill, start_method == 'threading')
+        self._worker_comms = WorkerComms(self.ctx, self.pool_params.n_jobs, use_dill, start_method == 'threading')
         self._exit_results = None
 
         # Worker insights, used for profiling
-        self._worker_insights = WorkerInsights(self.ctx, self.params.n_jobs)
+        self._worker_insights = WorkerInsights(self.ctx, self.pool_params.n_jobs)
 
     def pass_on_worker_id(self, pass_on: bool = True) -> None:
         """
@@ -91,7 +96,7 @@ class WorkerPool:
 
         :param pass_on: Whether to pass on a worker ID to the user function or not
         """
-        self.params.pass_worker_id = pass_on
+        self.pool_params.pass_worker_id = pass_on
 
     def set_shared_objects(self, shared_objects: Any = None) -> None:
         """
@@ -105,7 +110,7 @@ class WorkerPool:
         :param shared_objects: ``None`` or any other type of object (multiple objects can be wrapped in a single tuple).
             Shared objects is only passed on to the user function when it's not ``None``
         """
-        self.params.shared_objects = shared_objects
+        self.pool_params.shared_objects = shared_objects
 
     def set_use_worker_state(self, use_worker_state: bool = True) -> None:
         """
@@ -114,7 +119,7 @@ class WorkerPool:
 
         :param use_worker_state: Whether to let a worker have a worker state or not
         """
-        self.params.use_worker_state = use_worker_state
+        self.pool_params.use_worker_state = use_worker_state
 
     def set_keep_alive(self, keep_alive: bool = True) -> None:
         """
@@ -123,24 +128,23 @@ class WorkerPool:
         :param keep_alive: When True it will keep workers alive after completing a map call, allowing to reuse workers
             when map is called with the same function and worker lifespan multiple times in a row
         """
-        self.params.keep_alive = keep_alive
+        self.pool_params.keep_alive = keep_alive
 
-    def _start_workers(self, progress_bar: bool, enable_insights: bool) -> None:
+    def _start_workers(self, progress_bar: bool) -> None:
         """
         Spawns the workers and starts them so they're ready to start reading from the tasks queue.
 
         :param progress_bar: Whether there's a progress bar
-        :param enable_insights: Whether to enable worker insights
         """
         # Init communication primitives
         logger.debug("Initializing comms")
-        self._worker_comms.init_comms(self.params.worker_exit is not None, progress_bar)
-        self._worker_insights.reset_insights(enable_insights)
+        self._worker_comms.init_comms(self.map_params.worker_exit is not None, progress_bar)
+        self._worker_insights.reset_insights(self.pool_params.enable_insights)
         self._exit_results = []
 
         # Start new workers
         logger.debug("Spinning up workers")
-        for worker_id in range(self.params.n_jobs):
+        for worker_id in range(self.pool_params.n_jobs):
             self._workers.append(self._start_worker(worker_id))
         logger.debug("Workers created")
 
@@ -150,7 +154,7 @@ class WorkerPool:
         """
         for worker_id in self._worker_comms.get_worker_restarts():
             # Obtain results from exit results queue (should be done before joining the worker)
-            if self.params.worker_exit:
+            if self.map_params.worker_exit:
                 self._exit_results.append(self._worker_comms.get_exit_results(worker_id))
 
             # Join worker
@@ -170,14 +174,14 @@ class WorkerPool:
         # Disable the interrupt signal. We let the process die gracefully if it needs to
         with DisableKeyboardInterruptSignal():
             # Create worker
-            w = self.Worker(worker_id, self.params, self._worker_comms, self._worker_insights,
+            w = self.Worker(worker_id, self.pool_params, self.map_params, self._worker_comms, self._worker_insights,
                             TqdmManager.get_connection_details(), get_dashboard_connection_details(), datetime.now())
-            w.daemon = self.params.daemon
+            w.daemon = self.pool_params.daemon
             w.start()
 
             # Pin CPU if desired
-            if self.params.cpu_ids:
-                set_cpu_affinity(w.pid, self.params.cpu_ids[worker_id])
+            if self.pool_params.cpu_ids:
+                set_cpu_affinity(w.pid, self.pool_params.cpu_ids[worker_id])
 
             return w
 
@@ -205,7 +209,7 @@ class WorkerPool:
     def map(self, func: Callable, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int] = None,
             max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
             worker_lifespan: Optional[int] = None, progress_bar: bool = False, progress_bar_position: int = 0,
-            concatenate_numpy_output: bool = True, enable_insights: bool = False,
+            concatenate_numpy_output: bool = True, enable_insights: Optional[bool] = None,
             worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None) -> Any:
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
@@ -232,7 +236,10 @@ class WorkerPool:
             multiple progress bars at the same time
         :param concatenate_numpy_output: When ``True`` it will concatenate numpy output to a single numpy array
         :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
-            neglible)
+            neglible).
+
+            DEPRECATED in v2.3.0, to be removed in v2.6.0! Set ``enable_insights`` from the ``WorkerPool`` constructor
+            instead.
         :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
             should receive the worker ID as its first argument. If shared objects are provided the function should
             receive those as the next argument. If the worker state has been enabled it should receive a state variable
@@ -250,7 +257,7 @@ class WorkerPool:
         if NUMPY_INSTALLED and isinstance(iterable_of_args, np.ndarray):
             iterable_of_args, iterable_len, chunk_size, n_splits = apply_numpy_chunking(iterable_of_args, iterable_len,
                                                                                         chunk_size, n_splits,
-                                                                                        self.params.n_jobs)
+                                                                                        self.pool_params.n_jobs)
 
         # Process all args
         if iterable_len is None and hasattr(iterable_of_args, '__len__'):
@@ -267,13 +274,13 @@ class WorkerPool:
 
         # Convert back to numpy if necessary
         return (np.concatenate(sorted_results) if NUMPY_INSTALLED and sorted_results and concatenate_numpy_output and
-                                                  isinstance(sorted_results[0], np.ndarray) else sorted_results)
+                isinstance(sorted_results[0], np.ndarray) else sorted_results)
 
     def map_unordered(self, func: Callable, iterable_of_args: Union[Sized, Iterable],
                       iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                       chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                       worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                      progress_bar_position: int = 0, enable_insights: bool = False,
+                      progress_bar_position: int = 0, enable_insights: Optional[bool] = None,
                       worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None) -> Any:
         """
         Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
@@ -299,7 +306,10 @@ class WorkerPool:
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
             multiple progress bars at the same time
         :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
-            neglible)
+            neglible).
+
+            DEPRECATED in v2.3.0, to be removed in v2.6.0! Set ``enable_insights`` from the ``WorkerPool`` constructor
+            instead.
         :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
             should receive the worker ID as its first argument. If shared objects are provided the function should
             receive those as the next argument. If the worker state has been enabled it should receive a state variable
@@ -318,7 +328,8 @@ class WorkerPool:
     def imap(self, func: Callable, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int] = None,
              max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
              worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-             progress_bar_position: int = 0, enable_insights: bool = False, worker_init: Optional[Callable] = None,
+             progress_bar_position: int = 0, enable_insights: Optional[bool] = None,
+             worker_init: Optional[Callable] = None,
              worker_exit: Optional[Callable] = None) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``, but ordered. Also allows a user to set the maximum number of
@@ -344,7 +355,10 @@ class WorkerPool:
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
             multiple progress bars at the same time
         :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
-            neglible)
+            neglible).
+
+            DEPRECATED in v2.3.0, to be removed in v2.6.0! Set ``enable_insights`` from the ``WorkerPool`` constructor
+            instead.
         :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
             should receive the worker ID as its first argument. If shared objects are provided the function should
             receive those as the next argument. If the worker state has been enabled it should receive a state variable
@@ -362,7 +376,7 @@ class WorkerPool:
         if NUMPY_INSTALLED and isinstance(iterable_of_args, np.ndarray):
             iterable_of_args, iterable_len, chunk_size, n_splits = apply_numpy_chunking(iterable_of_args, iterable_len,
                                                                                         chunk_size, n_splits,
-                                                                                        self.params.n_jobs)
+                                                                                        self.pool_params.n_jobs)
 
         # Yield results in order
         next_result_idx = 0
@@ -403,7 +417,7 @@ class WorkerPool:
                        iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                        chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                        worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                       progress_bar_position: int = 0, enable_insights: bool = False,
+                       progress_bar_position: int = 0, enable_insights: Optional[bool] = None,
                        worker_init: Optional[Callable] = None,
                        worker_exit: Optional[Callable] = None) -> Generator[Any, None, None]:
         """
@@ -430,7 +444,10 @@ class WorkerPool:
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
             multiple progress bars at the same time
         :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
-            neglible)
+            neglible).
+
+            DEPRECATED in v2.3.0, to be removed in v2.6.0! Set ``enable_insights`` from the ``WorkerPool`` constructor
+            instead.
         :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
             should receive the worker ID as its first argument. If shared objects are provided the function should
             receive those as the next argument. If the worker state has been enabled it should receive a state variable
@@ -446,16 +463,27 @@ class WorkerPool:
         numpy_chunking = False
         if NUMPY_INSTALLED and isinstance(iterable_of_args, np.ndarray):
             iterator_of_chunked_args, iterable_len, chunk_size, n_splits = apply_numpy_chunking(
-                iterable_of_args, iterable_len, chunk_size, n_splits, self.params.n_jobs
+                iterable_of_args, iterable_len, chunk_size, n_splits, self.pool_params.n_jobs
             )
             numpy_chunking = True
 
         # Check parameters and thereby obtain the number of tasks. The chunk_size and progress bar parameters could be
         # modified as well
-        n_tasks, max_tasks_active, chunk_size, progress_bar = self.params.check_map_parameters(
-            iterable_of_args, iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan, progress_bar,
-            progress_bar_position
+        n_tasks, max_tasks_active, chunk_size, progress_bar = check_map_parameters(
+            self.pool_params, iterable_of_args, iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan,
+            progress_bar, progress_bar_position
         )
+        new_map_params = WorkerMapParams(func, worker_init, worker_exit, worker_lifespan)
+
+        # enable_insights is deprecated as a map parameter
+        if (self._workers and enable_insights is not None and self.pool_params.enable_insights is not None and
+                enable_insights != self.pool_params.enable_insights):
+            warnings.warn("Changing enable_insights is not allowed when keep_alive is set to True.",
+                          RuntimeWarning, stacklevel=2)
+        elif enable_insights is not None:
+            warnings.warn("Deprecated in v2.3.0, to be removed in v2.6.0! Set enable_insights from the WorkerPool "
+                          "constructor instead.", DeprecationWarning, stacklevel=2)
+            self.pool_params.enable_insights = enable_insights
 
         # Start tqdm manager if a progress bar is desired. Will only start one when not already started. This has to be
         # done before starting the workers in case nested pools are used
@@ -464,22 +492,21 @@ class WorkerPool:
         # Chunk the function arguments. Make single arguments when we're not dealing with numpy arrays
         if not numpy_chunking:
             iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size,
-                                                   n_splits or self.params.n_jobs * 64)
+                                                   n_splits or self.pool_params.n_jobs * 64)
 
-        # Start workers if there aren't any. If they already exist they must be restarted when either the function(s) to
-        # execute, worker_lifespan, or enable_insights changes
-        if self._workers and self.params.workers_need_restart(func, worker_init, worker_exit, worker_lifespan,
-                                                              enable_insights):
-            self.stop_and_join(None, keep_alive=False)
+        # Start workers if there aren't any. If they already exist check if we need to pass on new parameters
+        if self._workers and self.map_params != new_map_params:
+            self.map_params = new_map_params
+            self._worker_comms.add_new_map_params(new_map_params)
         if not self._workers:
-            self.params.set_map_params(func, worker_init, worker_exit, worker_lifespan, enable_insights)
-            self._start_workers(progress_bar, enable_insights)
+            self.map_params = new_map_params
+            self._start_workers(progress_bar)
 
         # Create progress bar handler, which receives progress updates from the workers and updates the progress bar
         # accordingly
         try:
-            with ProgressBarHandler(self.ctx, self.params.start_method == 'threading', func, self.params.n_jobs,
-                                    progress_bar, n_tasks, progress_bar_position, self._worker_comms,
+            with ProgressBarHandler(self.ctx, self.pool_params, self.map_params, progress_bar, n_tasks,
+                                    progress_bar_position, self._worker_comms,
                                     self._worker_insights) as progress_bar_handler:
                 try:
                     # Process all args in the iterable
@@ -519,16 +546,16 @@ class WorkerPool:
                         self._handle_exception(progress_bar_handler)
 
                     # All results are in: it's clean up time
-                    self.stop_and_join(progress_bar_handler, keep_alive=self.params.keep_alive)
+                    self.stop_and_join(progress_bar_handler, keep_alive=self.pool_params.keep_alive)
 
                 except KeyboardInterrupt:
                     self._handle_exception(progress_bar_handler)
 
             # Join exception queue, if it hasn't already
             logger.debug("Joining exception queue")
-            self._worker_comms.join_exception_queue(self.params.keep_alive)
+            self._worker_comms.join_exception_queue(self.pool_params.keep_alive)
             logger.debug("Done joining exception queue, now joining progress bar queue")
-            self._worker_comms.join_progress_bar_task_completed_queue(self.params.keep_alive)
+            self._worker_comms.join_progress_bar_task_completed_queue(self.pool_params.keep_alive)
             logger.debug("Done joining progress bar queue")
 
         finally:
@@ -602,6 +629,7 @@ class WorkerPool:
             # All tasks have been processed and results are in. Insert (non-lethal) poison pill
             if keep_alive:
                 self._worker_comms.insert_non_lethal_poison_pill()
+                self._worker_comms.reset_last_completed_task_info()
             else:
                 self._worker_comms.insert_poison_pill()
 
@@ -624,7 +652,7 @@ class WorkerPool:
                 self._handle_exception(progress_bar_handler)
 
             # Obtain results from the exit results queues (should be done before joining the workers)
-            if not keep_alive and self.params.worker_exit:
+            if not keep_alive and self.map_params.worker_exit:
                 logger.debug("Obtaining exit results")
                 self._exit_results.extend(self._worker_comms.get_exit_results_all_workers())
                 self._worker_comms.set_all_exit_results_obtained()
@@ -663,7 +691,7 @@ class WorkerPool:
         self._worker_comms.set_exception_thrown()
 
         # When we're working with threads we have to wait for them to join. We can't kill threads in Python
-        if self.params.start_method == 'threading':
+        if self.pool_params.start_method == 'threading':
             threads = self._workers
         else:
             # Create cleanup threads such that processes can get killed simultaneously, which can save quite some time

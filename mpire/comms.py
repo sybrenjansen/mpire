@@ -6,12 +6,14 @@ from datetime import datetime
 from typing import Any, Generator, List, Optional, Tuple, Union
 
 from mpire.context import DEFAULT_START_METHOD, MP_CONTEXTS
+from mpire.params import WorkerMapParams
 from mpire.signal import DelayedKeyboardInterrupt
 
 logger = logging.getLogger(__name__)
 
 POISON_PILL = '\0'
 NON_LETHAL_POISON_PILL = '\1'
+NEW_MAP_PARAMS_PILL = '\2'
 
 
 class WorkerComms:
@@ -92,8 +94,7 @@ class WorkerComms:
         """
         # Task related
         self._task_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
-        self._task_idx = 0
-        self._last_completed_task_worker_id = None
+        self.reset_last_completed_task_info()
 
         # Results related
         self._results_queue = self.ctx.JoinableQueue()
@@ -123,6 +124,13 @@ class WorkerComms:
         else:
             self._task_completed_queue = None
             self._progress_bar_complete = None
+
+    def reset_last_completed_task_info(self) -> None:
+        """
+        Resets the task_idx and last_completed_task_worker_id
+        """
+        self._task_idx = 0
+        self._last_completed_task_worker_id = None
 
     ################
     # Progress bar
@@ -361,6 +369,16 @@ class WorkerComms:
         while not self.exception_thrown():
             if self._all_exit_results_obtained.wait(timeout=0.01):
                 return
+
+    def add_new_map_params(self, map_params: WorkerMapParams) -> None:
+        """
+        Submits new map params for each worker
+
+        :param map_params: New map params
+        """
+        for worker_id in range(self.n_jobs):
+            self.add_task(NEW_MAP_PARAMS_PILL, worker_id)
+            self.add_task(map_params, worker_id)
 
     ################
     # Exceptions

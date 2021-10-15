@@ -3,7 +3,7 @@ import multiprocessing as mp
 import multiprocessing.context
 import sys
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, Optional, Type
+from typing import Any, Dict, Optional, Type
 
 from tqdm.auto import tqdm
 
@@ -11,6 +11,7 @@ from mpire.comms import WorkerComms, POISON_PILL
 from mpire.dashboard.connection_utils import (DashboardConnectionDetails, get_dashboard_connection_details,
                                               set_dashboard_connection)
 from mpire.insights import WorkerInsights
+from mpire.params import WorkerMapParams, WorkerPoolParams
 from mpire.signal import DisableKeyboardInterruptSignal, ignore_keyboard_interrupt
 from mpire.tqdm_utils import TqdmConnectionDetails, TqdmManager
 from mpire.utils import format_seconds
@@ -36,14 +37,13 @@ DATETIME_FORMAT = "%Y-%m-%d, %H:%M:%S"
 
 class ProgressBarHandler:
 
-    def __init__(self, ctx: multiprocessing.context.BaseContext, using_threading: bool, func: Callable, n_jobs: int,
-                 show_progress_bar: bool, progress_bar_total: int, progress_bar_position: int,
-                 worker_comms: WorkerComms, worker_insights: WorkerInsights) -> None:
+    def __init__(self, ctx: multiprocessing.context.BaseContext, pool_params: WorkerPoolParams,
+                 map_params: WorkerMapParams, show_progress_bar: bool, progress_bar_total: int,
+                 progress_bar_position: int, worker_comms: WorkerComms, worker_insights: WorkerInsights) -> None:
         """
         :param ctx: Multiprocessing context
-        :param using_threading: Whether threading is used as backend
-        :param func: Function passed on to a WorkerPool map function
-        :param n_jobs: Number of workers that are used
+        :param pool_params: WorkerPool parameters
+        :param map_params: Map parameters
         :param show_progress_bar: When ``True`` will display a progress bar
         :param progress_bar_total: Total number of tasks that will be processed
         :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
@@ -54,15 +54,15 @@ class ProgressBarHandler:
         # When the threading backend is used we switch to a multiprocessing context, because the progress bar handler
         # needs to be a process, not a thread. This is because when using threading, the progress bar updates will
         # interfere too much with the main process.
-        self.ctx = mp if using_threading else ctx
+        self.ctx = mp if pool_params.start_method == 'threading' else ctx
         self.show_progress_bar = show_progress_bar
         self.progress_bar_total = progress_bar_total
         self.progress_bar_position = progress_bar_position
         self.worker_comms = worker_comms
         self.worker_insights = worker_insights
         if show_progress_bar and DASHBOARD_STARTED_EVENT is not None:
-            self.function_details = get_function_details(func)
-            self.function_details['n_jobs'] = n_jobs
+            self.function_details = get_function_details(map_params.func)
+            self.function_details['n_jobs'] = pool_params.n_jobs
         else:
             self.function_details = None
 
@@ -142,7 +142,10 @@ class ProgressBarHandler:
 
         # In case we're running tqdm in a notebook we need to apply a dirty hack to get progress bars working.
         # Solution adapted from https://github.com/tqdm/tqdm/issues/485#issuecomment-473338308
-        in_notebook = 'IPython' in sys.modules and 'IPKernelApp' in sys.modules['IPython'].get_ipython().config
+        try:
+            in_notebook = 'IPKernelApp' in sys.modules['IPython'].get_ipython().config
+        except (AttributeError, KeyError):
+            in_notebook = False
         if in_notebook:
             print(' ', end='', flush=True)
 

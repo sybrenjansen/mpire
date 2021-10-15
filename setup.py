@@ -1,8 +1,13 @@
 import platform
+import sys
 from setuptools import find_packages, setup
 
-# On Windows, we need pywin32 for CPU pinning
-additional_dependencies = ["pywin32==225"] if platform.system() == "Windows" else []
+# For Python < 3.7 we need dataclasses. On Windows, we need pywin32 for CPU pinning
+additional_dependencies = []
+if sys.version_info[0] == 3 and sys.version_info[1] < 7:
+    additional_dependencies.append("dataclasses")
+if platform.system() == "Windows":
+    additional_dependencies.append("pywin32==225")
 
 
 def read_description():

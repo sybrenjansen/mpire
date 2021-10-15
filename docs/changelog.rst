@@ -1,6 +1,19 @@
 Changelog
 =========
 
+Master
+------
+
+* Fixed progress bar in a particular setting with iPython and django installed (`#13`_)
+* ``keep_alive`` now works even when the function to be called or any other parameter passed to the ``map`` function is
+  changed (`#15`_)
+* Moved ``enable_insights`` to the WorkerPool constructor. Using ``enable_insights`` from a ``map`` function is now
+  deprecated and will be removed in MPIRE v2.6.0.
+* Restructured docs and updated several sections for Windows users.
+
+.. _#13: https://github.com/Slimmer-AI/mpire/pull/13
+.. _#15: https://github.com/Slimmer-AI/mpire/issues/15
+
 2.2.1
 -----
 
