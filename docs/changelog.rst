@@ -1,8 +1,10 @@
 Changelog
 =========
 
-Master
-------
+2.3.0
+-----
+
+*(2021-10-15)*
 
 * Fixed progress bar in a particular setting with iPython and django installed (`#13`_)
 * ``keep_alive`` now works even when the function to be called or any other parameter passed to the ``map`` function is
