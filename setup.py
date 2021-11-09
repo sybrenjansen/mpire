@@ -31,7 +31,7 @@ if __name__ == "__main__":
         extras_require={
             "dashboard": ["flask"],
             "dill": ["multiprocess"],
-            "docs": ["docutils==0.17.1"
+            "docs": ["docutils==0.17.1",
                      "sphinx==3.2.1",
                      "sphinx-rtd-theme==0.5.0",
                      "sphinx-autodoc-typehints==1.11.0",
