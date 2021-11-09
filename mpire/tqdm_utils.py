@@ -2,10 +2,8 @@ from ctypes import c_char
 from multiprocessing import Array, Event, Lock
 from multiprocessing.managers import SyncManager
 
-import sys
 from typing import Optional, Tuple
 
-from mpire.context import RUNNING_WINDOWS
 from mpire.signal import DisableKeyboardInterruptSignal
 
 TqdmConnectionDetails = Tuple[Optional[bytes], bool]
@@ -112,13 +110,15 @@ class TqdmManager:
             cls.MANAGER.start()
         cls.MANAGER_STARTED.set()
 
-        # Set host so other processes know where to connect to. On Linux, since Python 3.9, address is a bytes object
-        # and is prefixed by a null byte which needs to be removed (null byte doesn't work with Array). Before 3.9, this
-        # was a string, which we need to transform to bytes
-        if RUNNING_WINDOWS or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
-            cls.MANAGER_HOST.value = cls.MANAGER.address.encode()
-        else:
-            cls.MANAGER_HOST.value = cls.MANAGER.address[1:]
+        # Set host so other processes know where to connect to. On some systems and Python versions address is a bytes
+        # object, on others it's a string. On some it's also prefixed by a null byte which needs to be removed (null
+        # byte doesn't work with Array).
+        address = cls.MANAGER.address
+        if isinstance(address, str):
+            address = address.encode()
+        if address[0] == 0:
+            address = address[1:]
+        cls.MANAGER_HOST.value = address
 
         return True
 
@@ -126,16 +126,20 @@ class TqdmManager:
         """
         Connect to the tqdm manager
         """
-        # Connect to a server. On Linux, since Python 3.9, the address is prefixed by a null byte (which was stripped
-        # when setting the host value, due to restrictions in Array). Address needs to be a string.
-        if RUNNING_WINDOWS or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
-            address = self.MANAGER_HOST.value.decode()
-        else:
-            address = f"\x00{self.MANAGER_HOST.value.decode()}"
-        self.MANAGER = SyncManager(address=address, authkey=b'mpire_tqdm')
-        self.MANAGER.register('get_tqdm_lock')
-        self.MANAGER.register('get_tqdm_position_register')
-        self.MANAGER.connect()
+        # Connect to a server. On some systems and Python versions the address is prefixed by a null byte (which was
+        # stripped when setting the host value, due to restrictions in Array). Address needs to be a string.
+        address = self.MANAGER_HOST.value.decode()
+        try:
+            self.MANAGER = SyncManager(address=address, authkey=b'mpire_tqdm')
+            self.MANAGER.register('get_tqdm_lock')
+            self.MANAGER.register('get_tqdm_position_register')
+            self.MANAGER.connect()
+        except FileNotFoundError:
+            address = f"\x00{address}"
+            self.MANAGER = SyncManager(address=address, authkey=b'mpire_tqdm')
+            self.MANAGER.register('get_tqdm_lock')
+            self.MANAGER.register('get_tqdm_position_register')
+            self.MANAGER.connect()
 
     @classmethod
     def stop_manager(cls) -> None:
