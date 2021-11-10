@@ -5,7 +5,6 @@ Dev
 ---
 
 * Made connecting to the tqdm manager more robust (`#23`_)
-* Added macos-latest as test OS
 
 .. _#23: https://github.com/Slimmer-AI/mpire/issues/23
 
