@@ -58,12 +58,6 @@ Through pip (PyPi):
 
     pip install mpire
 
-From source:
-
-.. code-block:: bash
-
-    python setup.py install
-
 
 Getting started
 ---------------
@@ -235,7 +229,7 @@ or
     pip install .[docs]
 
 
-Documentation can then be build by executing:
+Documentation can then be build by using Python <= 3.9 and executing:
 
 .. code-block:: bash
 

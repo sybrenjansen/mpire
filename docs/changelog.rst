@@ -1,6 +1,13 @@
 Changelog
 =========
 
+Dev
+---
+
+* Made connecting to the tqdm manager more robust (`#23`_)
+
+.. _#23: https://github.com/Slimmer-AI/mpire/issues/23
+
 2.3.0
 -----
 
