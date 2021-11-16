@@ -18,7 +18,7 @@ def read_description():
 if __name__ == "__main__":
     setup(
         name="mpire",
-        version="2.3.0",
+        version="2.3.1",
         author="Slimmer AI",
         description="A Python package for easy multiprocessing, but faster than multiprocessing",
         long_description=read_description(),

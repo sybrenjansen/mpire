@@ -1,8 +1,10 @@
 Changelog
 =========
 
-Dev
----
+2.3.1
+-----
+
+*(2021-11-16)*
 
 * Made connecting to the tqdm manager more robust (`#23`_)
 
