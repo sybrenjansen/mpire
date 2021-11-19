@@ -1,6 +1,15 @@
 Changelog
 =========
 
+2.3.2
+-----
+
+*(2021-11-19)*
+
+* Included license file in source distribution (`#25`_)
+
+.. _#25: https://github.com/Slimmer-AI/mpire/pull/25
+
 2.3.1
 -----
 
