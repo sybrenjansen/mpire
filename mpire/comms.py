@@ -159,7 +159,7 @@ class WorkerComms:
 
         # Check if we need to update
         now = datetime.now()
-        if force_update or (now - progress_bar_last_updated).total_seconds() > 0.1:
+        if force_update or (now - progress_bar_last_updated).total_seconds() > 0.2:
             self._task_completed_queue.put(progress_bar_n_tasks_completed)
             progress_bar_last_updated = now
             progress_bar_n_tasks_completed = 0
@@ -400,11 +400,11 @@ class WorkerComms:
         with DelayedKeyboardInterrupt():
             self._exception_queue.put((POISON_PILL, POISON_PILL))
 
-    def get_exception(self) -> Tuple[type, str]:
+    def get_exception(self, in_thread: bool = False) -> Tuple[type, str]:
         """
         :return: Tuple containing the type of the exception and the traceback string
         """
-        with DelayedKeyboardInterrupt():
+        with DelayedKeyboardInterrupt(in_thread):
             return self._exception_queue.get(block=True)
 
     def task_done_exception(self) -> None:

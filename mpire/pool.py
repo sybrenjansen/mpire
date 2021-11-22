@@ -505,9 +505,8 @@ class WorkerPool:
         # Create progress bar handler, which receives progress updates from the workers and updates the progress bar
         # accordingly
         try:
-            with ProgressBarHandler(self.ctx, self.pool_params, self.map_params, progress_bar, n_tasks,
-                                    progress_bar_position, self._worker_comms,
-                                    self._worker_insights) as progress_bar_handler:
+            with ProgressBarHandler(self.pool_params, self.map_params, progress_bar, n_tasks, progress_bar_position,
+                                    self._worker_comms, self._worker_insights) as progress_bar_handler:
                 try:
                     # Process all args in the iterable
                     n_active = 0
@@ -560,7 +559,9 @@ class WorkerPool:
 
         finally:
             if tqdm_manager_owner:
+                logger.debug("Stopping TQDM manager")
                 TqdmManager.stop_manager()
+                logger.debug("TQDM manager stopped")
 
         # Log insights
         if enable_insights:
@@ -596,9 +597,9 @@ class WorkerPool:
         logger.debug("Joining exception queue")
         self._worker_comms.join_exception_queue()
         logger.debug("Exception queue joined")
-        if progress_bar_handler and progress_bar_handler.process is not None:
+        if progress_bar_handler and progress_bar_handler.thread is not None:
             logger.debug("Joining progress bar handler")
-            progress_bar_handler.process.join()
+            progress_bar_handler.thread.join()
             logger.debug("Progress bar handler joined")
         self.terminate()
 
