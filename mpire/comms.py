@@ -120,7 +120,7 @@ class WorkerComms:
 
         # Progress bar related
         if has_progress_bar:
-            self._tasks_completed_array = self.ctx.Array('Q', self.n_jobs, lock=False)  # unsigned long long
+            self._tasks_completed_array = self.ctx.Array('L', self.n_jobs, lock=False)  # ULong (should be enough)
             self._tasks_completed_locks = [self.ctx.Lock() for _ in range(self.n_jobs)]
             self._progress_bar_last_updated = datetime.now()
             self._progress_bar_shutdown = self.ctx.Event()
