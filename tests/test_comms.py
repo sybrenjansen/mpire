@@ -31,23 +31,21 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test if initializing/resetting the comms is done properly
         """
-        test_ctx = [(MP_CONTEXTS['mp_dill']['spawn'], True, False, MP_CONTEXTS['mp_dill'][DEFAULT_START_METHOD]),
-                    (MP_CONTEXTS['threading'], False, True, MP_CONTEXTS['mp'][DEFAULT_START_METHOD])]
+        test_ctx = [MP_CONTEXTS['mp_dill']['spawn'], MP_CONTEXTS['threading']]
         if FORK_AVAILABLE:
-            test_ctx.extend([(MP_CONTEXTS['mp_dill']['fork'], True, False, MP_CONTEXTS['mp_dill']['fork']),
-                             (MP_CONTEXTS['mp']['forkserver'], False, False, MP_CONTEXTS['mp']['fork'])])
+            test_ctx.extend([MP_CONTEXTS['mp_dill']['fork'], MP_CONTEXTS['mp']['forkserver']])
 
-        for n_jobs, (ctx, use_dill, using_threading, expected_ctx_for_threading) in product([1, 2, 4], test_ctx):
-            comms = WorkerComms(ctx, n_jobs, use_dill, using_threading)
+        for n_jobs, ctx in product([1, 2, 4], test_ctx):
+            comms = WorkerComms(ctx, n_jobs)
             self.assertEqual(comms.ctx, ctx)
-            self.assertEqual(comms.ctx_for_threading, expected_ctx_for_threading)
             self.assertEqual(comms.n_jobs, n_jobs)
-            self.assertEqual(comms.using_threading, using_threading)
 
-            expected_mp = mp_dill if use_dill else mp
+            event_type = type(ctx.Event())
+            lock_type = type(ctx.Lock())
+            joinable_queue_type = type(ctx.JoinableQueue())
 
-            with self.subTest('__init__ called', n_jobs=n_jobs, using_threading=using_threading):
-                self.assertIsInstance(comms._keep_order, type(ctx.Event()))
+            with self.subTest('__init__ called', n_jobs=n_jobs):
+                self.assertIsInstance(comms._keep_order, event_type)
                 self.assertFalse(comms._keep_order.is_set())
                 self.assertIsNone(comms._task_queues)
                 self.assertIsNone(comms._task_idx)
@@ -58,53 +56,68 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertIsNone(comms._worker_done_array)
                 self.assertIsNone(comms._workers_dead)
                 self.assertIsNone(comms._exception_queue)
-                self.assertIsInstance(comms.exception_lock,
-                                      _thread.LockType if using_threading else expected_mp.synchronize.Lock)
-                self.assertIsInstance(comms._exception_thrown, expected_mp.synchronize.Event)
-                self.assertIsInstance(comms._kill_signal_received, expected_mp.synchronize.Event)
+                self.assertIsInstance(comms.exception_lock, lock_type)
+                self.assertIsInstance(comms._exception_thrown, event_type)
+                self.assertIsInstance(comms._kill_signal_received, event_type)
                 self.assertFalse(comms._exception_thrown.is_set())
                 self.assertFalse(comms._kill_signal_received.is_set())
-                self.assertIsNone(comms._task_completed_queue)
+                self.assertIsNone(comms._tasks_completed_array)
+                self.assertIsNone(comms._tasks_completed_locks)
+                self.assertIsNone(comms._progress_bar_last_updated)
+                self.assertIsNone(comms._progress_bar_shutdown)
+                self.assertIsNone(comms._progress_bar_complete)
                 self.assertIsNone(comms._all_exit_results_obtained)
 
-            with self.subTest('without initial values', n_jobs=n_jobs, using_threading=using_threading,
-                              has_worker_exit=False, has_progress_bar=False):
+            with self.subTest('without initial values', n_jobs=n_jobs, has_worker_exit=False, has_progress_bar=False):
                 comms.init_comms(has_worker_exit=False, has_progress_bar=False)
                 self.assertFalse(comms._keep_order.is_set())
                 self.assertEqual(len(comms._task_queues), n_jobs)
                 for q in comms._task_queues:
-                    self.assertIsInstance(q, expected_mp.queues.JoinableQueue)
+                    self.assertIsInstance(q, joinable_queue_type)
                 self.assertIsNone(comms._last_completed_task_worker_id)
-                self.assertIsInstance(comms._results_queue, expected_mp.queues.JoinableQueue)
+                self.assertIsInstance(comms._results_queue, joinable_queue_type)
                 self.assertListEqual(comms._exit_results_queues, [])
                 self.assertIsInstance(comms._worker_done_array, ctypes.Array)
                 self.assertEqual(len(comms._workers_dead), n_jobs)
                 for worker_dead in comms._workers_dead:
-                    self.assertIsInstance(worker_dead,
-                                          threading.Event if using_threading else expected_mp.synchronize.Event)
+                    self.assertIsInstance(worker_dead, event_type)
                     self.assertTrue(worker_dead.is_set())
-                self.assertIsInstance(comms._exception_queue, expected_mp.queues.JoinableQueue)
+                self.assertIsInstance(comms._exception_queue, joinable_queue_type)
                 self.assertFalse(comms._exception_thrown.is_set())
                 self.assertFalse(comms._kill_signal_received.is_set())
-                self.assertIsNone(comms._task_completed_queue)
+                self.assertIsNone(comms._tasks_completed_array)
+                self.assertIsNone(comms._tasks_completed_locks)
+                self.assertIsNone(comms._progress_bar_last_updated)
+                self.assertIsNone(comms._progress_bar_shutdown)
                 self.assertIsNone(comms._progress_bar_complete)
 
                 # Basic sanity checks for the values
                 self.assertEqual(comms._task_idx, 0)
                 self.assertEqual(list(comms._worker_done_array), [False for _ in range(n_jobs)])
 
-            with self.subTest('without initial values', n_jobs=n_jobs, using_threading=using_threading,
-                              has_worker_exit=True, has_progress_bar=True):
+            MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0)]
+            MockDatetimeNow.CURRENT_IDX = 0
+
+            with self.subTest('without initial values', n_jobs=n_jobs, has_worker_exit=True, has_progress_bar=True), \
+                    patch('mpire.comms.datetime', new=MockDatetimeNow):
                 comms.init_comms(has_worker_exit=True, has_progress_bar=True)
                 self.assertEqual(len(comms._exit_results_queues), n_jobs)
                 for q in comms._exit_results_queues:
-                    self.assertIsInstance(q, expected_mp.queues.JoinableQueue)
-                self.assertIsInstance(comms._all_exit_results_obtained,
-                                      threading.Event if using_threading else expected_mp.synchronize.Event)
+                    self.assertIsInstance(q, joinable_queue_type)
+                self.assertIsInstance(comms._all_exit_results_obtained, event_type)
                 self.assertFalse(comms._all_exit_results_obtained.is_set())
-                self.assertIsInstance(comms._task_completed_queue, expected_mp.queues.JoinableQueue)
-                self.assertIsInstance(comms._progress_bar_complete, expected_mp.synchronize.Event)
+                self.assertIsInstance(comms._tasks_completed_array, ctypes.Array)
+                self.assertEqual(len(comms._tasks_completed_locks), n_jobs)
+                for lock in comms._tasks_completed_locks:
+                    self.assertIsInstance(lock, lock_type)
+                self.assertEqual(comms._progress_bar_last_updated, datetime(1970, 1, 1, 0, 0, 0, 0))
+                self.assertIsInstance(comms._progress_bar_shutdown, event_type)
+                self.assertFalse(comms._progress_bar_shutdown.is_set())
+                self.assertIsInstance(comms._progress_bar_complete, event_type)
                 self.assertFalse(comms._progress_bar_complete.is_set())
+
+                # Basic sanity checks for the values
+                self.assertEqual(list(comms._tasks_completed_array), [0 for _ in range(n_jobs)])
 
             # Set some values so we can test if the containers will be properly resetted
             comms._keep_order.set()
@@ -116,29 +129,30 @@ class WorkerCommsTest(unittest.TestCase):
             comms._kill_signal_received.set()
 
             # Note that threading doesn't have a JoinableQueue, so they're taken from multiprocessing
-            with self.subTest('with initial values', n_jobs=n_jobs, using_threading=using_threading,
-                              has_worker_exit=False, has_progress_bar=False):
+            with self.subTest('with initial values', n_jobs=n_jobs, has_worker_exit=False, has_progress_bar=False):
                 comms.init_comms(has_worker_exit=False, has_progress_bar=False)
                 self.assertEqual(len(comms._task_queues), n_jobs)
                 for q in comms._task_queues:
-                    self.assertIsInstance(q, expected_mp.queues.JoinableQueue)
+                    self.assertIsInstance(q, joinable_queue_type)
                 self.assertIsNone(comms._last_completed_task_worker_id)
-                self.assertIsInstance(comms._results_queue, expected_mp.queues.JoinableQueue)
+                self.assertIsInstance(comms._results_queue, joinable_queue_type)
                 self.assertListEqual(comms._exit_results_queues, [])
                 self.assertIsInstance(comms._worker_done_array, ctypes.Array)
                 self.assertEqual(len(comms._workers_dead), n_jobs)
                 for worker_dead in comms._workers_dead:
-                    self.assertIsInstance(worker_dead,
-                                          threading.Event if using_threading else expected_mp.synchronize.Event)
+                    self.assertIsInstance(worker_dead, event_type)
                     self.assertTrue(worker_dead.is_set())
-                self.assertIsInstance(comms._exception_queue, expected_mp.queues.JoinableQueue)
+                self.assertIsInstance(comms._exception_queue, joinable_queue_type)
                 self.assertFalse(comms._exception_thrown.is_set())
                 self.assertFalse(comms._kill_signal_received.is_set())
-                self.assertIsNone(comms._task_completed_queue)
+                self.assertIsNone(comms._tasks_completed_array)
+                self.assertIsNone(comms._tasks_completed_locks)
+                self.assertIsNone(comms._progress_bar_last_updated)
+                self.assertIsNone(comms._progress_bar_shutdown)
+                self.assertIsNone(comms._progress_bar_complete)
 
                 # Some variables are not reset by this function, but are reset otherwise
-                self.assertIsInstance(comms._keep_order,
-                                      threading.Event if using_threading else expected_mp.synchronize.Event)
+                self.assertIsInstance(comms._keep_order, event_type)
                 self.assertTrue(comms._keep_order.is_set())
 
                 # Basic sanity checks for the values
@@ -149,7 +163,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test progress bar related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
 
         # Has progress bar
         self.assertFalse(comms.has_progress_bar())
@@ -157,8 +171,7 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertTrue(comms.has_progress_bar())
 
         # Nothing available yet
-        with self.assertRaises(queue.Empty):
-            comms._task_completed_queue.get(block=False)
+        self.assertEqual(sum(comms._tasks_completed_array), 0)
 
         MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0),
                                          datetime(1970, 1, 1, 0, 0, 0, 0),
@@ -171,23 +184,21 @@ class WorkerCommsTest(unittest.TestCase):
         n_tasks_completed = 0
         with patch('mpire.comms.datetime', new=MockDatetimeNow):
             for n in range(1, 4):
-                last_updated, n_tasks_completed = comms.task_completed_progress_bar(last_updated, n_tasks_completed,
+                last_updated, n_tasks_completed = comms.task_completed_progress_bar(0, last_updated, n_tasks_completed,
                                                                                     force_update=False)
                 self.assertEqual(n_tasks_completed, n)
-        with self.assertRaises(queue.Empty):
-            comms._task_completed_queue.get(block=False)
+        self.assertEqual(sum(comms._tasks_completed_array), 0)
 
         # Not enough time has passed, but we'll force the update. Number of tasks done should still be 3
         with patch('mpire.comms.datetime', new=MockDatetimeNow):
-            last_updated, n_tasks_completed = comms.task_completed_progress_bar(last_updated, n_tasks_completed,
+            last_updated, n_tasks_completed = comms.task_completed_progress_bar(0, last_updated, n_tasks_completed,
                                                                                 force_update=True)
-        self.assertEqual(comms.get_tasks_completed_progress_bar(), (3, True))
+        self.assertEqual(comms.get_tasks_completed_progress_bar(), 3)
         self.assertEqual(last_updated, datetime(1970, 1, 1, 0, 0, 0, 0))
         self.assertEqual(n_tasks_completed, 0)
-        comms.task_done_progress_bar()
 
         # 4 tasks already done and another 4 tasks done. Enough time should've passed for each update call, except the
-        # second
+        # second. In total we have 3 (from above) + 4 + 4 = 11 tasks done
         MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 1, 0, 0),
                                          datetime(1970, 1, 1, 0, 1, 0, 0),
                                          datetime(1970, 1, 1, 0, 3, 0, 0),
@@ -197,50 +208,48 @@ class WorkerCommsTest(unittest.TestCase):
         n_tasks_completed = 4
         with patch('mpire.comms.datetime', new=MockDatetimeNow):
             for _ in range(4):
-                last_updated, n_tasks_completed = comms.task_completed_progress_bar(last_updated, n_tasks_completed,
+                last_updated, n_tasks_completed = comms.task_completed_progress_bar(0, last_updated, n_tasks_completed,
                                                                                     force_update=False)
                 self.assertEqual(last_updated, MockDatetimeNow.RETURN_VALUES[MockDatetimeNow.CURRENT_IDX - 1])
-        self.assertListEqual([comms.get_tasks_completed_progress_bar() for _ in range(3)],
-                             [(5, True), (2, True), (1, True)])
+        self.assertEqual(comms.get_tasks_completed_progress_bar(), 11)
         self.assertEqual(last_updated, datetime(1970, 1, 1, 0, 4, 0, 0))
         self.assertEqual(n_tasks_completed, 0)
-        [comms.task_done_progress_bar() for _ in range(3)]
 
-        # Add poison pill
-        comms.add_progress_bar_poison_pill()
-        self.assertEqual(comms.get_tasks_completed_progress_bar(), (POISON_PILL, True))
-        comms.task_done_progress_bar()
+        # Signal shutdown
+        comms.signal_progress_bar_shutdown()
+        self.assertEqual(comms.get_tasks_completed_progress_bar(), POISON_PILL)
+        comms._progress_bar_shutdown.clear()
 
         # Set exception
-        comms.set_exception_thrown()
-        self.assertEqual(comms.get_tasks_completed_progress_bar(), (POISON_PILL, False))
+        comms.signal_exception_thrown()
+        self.assertEqual(comms.get_tasks_completed_progress_bar(), POISON_PILL)
         comms._exception_thrown.clear()
 
         # Set kill signal received
-        comms.set_kill_signal_received()
-        self.assertEqual(comms.get_tasks_completed_progress_bar(), (POISON_PILL, False))
+        comms.signal_kill_signal_received()
+        self.assertEqual(comms.get_tasks_completed_progress_bar(), POISON_PILL)
         comms._kill_signal_received.clear()
 
-        # Should be joinable. When using keep_alive, it should still be open
-        comms.join_progress_bar_task_completed_queue(keep_alive=True)
-        comms.task_completed_progress_bar(force_update=True)
-        comms.get_tasks_completed_progress_bar()
-        comms.task_done_progress_bar()
-        comms.join_progress_bar_task_completed_queue(keep_alive=False)
+    def test_progress_bar_shutdown(self):
+        """
+        Test progress bar complete related functions
+        """
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
+        comms.init_comms(False, True)
 
-        # Depending on Python version it either throws AssertionError or ValueError
-        with self.assertRaises((AssertionError, ValueError)):
-            comms.task_completed_progress_bar(force_update=True)
+        self.assertFalse(comms._progress_bar_shutdown.is_set())
+        comms.signal_progress_bar_shutdown()
+        self.assertTrue(comms._progress_bar_shutdown.is_set())
 
     def test_progress_bar_complete(self):
         """
         Test progress bar complete related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
         comms.init_comms(False, True)
 
         self.assertFalse(comms._progress_bar_complete.is_set())
-        comms.set_progress_bar_complete()
+        comms.signal_progress_bar_complete()
         self.assertTrue(comms._progress_bar_complete.is_set())
 
         with patch.object(comms._progress_bar_complete, 'wait') as p:
@@ -251,10 +260,10 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test keep_order related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
 
         self.assertFalse(comms.keep_order())
-        comms.set_keep_order()
+        comms.signal_keep_order()
         self.assertTrue(comms.keep_order())
         comms.clear_keep_order()
         self.assertFalse(comms.keep_order())
@@ -263,7 +272,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test task related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3)
         comms.init_comms(False, False)
 
         # Nothing available yet
@@ -310,7 +319,7 @@ class WorkerCommsTest(unittest.TestCase):
                                      datetime(2000, 1, 1, 1, 2, 3), '123', 123, 1337])
 
         # Throw in an exception. Should return None
-        comms.set_exception_thrown()
+        comms.signal_exception_thrown()
         for worker_id in range(3):
             self.assertIsNone(comms.get_task(worker_id))
 
@@ -321,7 +330,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test results related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
         comms.init_comms(False, False)
 
         # Nothing available yet
@@ -356,7 +365,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test exit results related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3)
         comms.init_comms(True, False)
 
         # Nothing available yet
@@ -380,7 +389,7 @@ class WorkerCommsTest(unittest.TestCase):
         # use a while loop because we need to wait until the queue is ready. This block=False trick is used in
         # terminate().
         comms.add_exit_results(0, 'hello world')
-        comms.set_exception_thrown()
+        comms.signal_exception_thrown()
         self.assertIsNone(comms.get_exit_results(0))
         while True:
             try:
@@ -406,7 +415,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test exit results related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 4, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 4)
         comms.init_comms(True, False)
 
         # Add a few results. Every worker will always have a return value (even if it's the implicit None). Note that
@@ -423,7 +432,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test exit results related functions. When an exception occurred, it should return an empty list
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3)
         comms.init_comms(True, False)
 
         # Add a few results.
@@ -431,7 +440,7 @@ class WorkerCommsTest(unittest.TestCase):
             comms.add_exit_results(worker_id, worker_id)
 
         # Set exception
-        comms.set_exception_thrown()
+        comms.signal_exception_thrown()
 
         # Should return empty list
         self.assertListEqual(comms.get_exit_results_all_workers(), [])
@@ -445,11 +454,11 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test all exit results obtained related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
         comms.init_comms(True, False)
 
         self.assertFalse(comms._all_exit_results_obtained.is_set())
-        comms.set_all_exit_results_obtained()
+        comms.signal_all_exit_results_obtained()
         self.assertTrue(comms._all_exit_results_obtained.is_set())
 
         with patch.object(comms._all_exit_results_obtained, 'wait') as p:
@@ -460,7 +469,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test new map parameters function
         """
-        comms = WorkerComms(MP_CONTEXTS['mp_dill'][DEFAULT_START_METHOD], 2, True, False)
+        comms = WorkerComms(MP_CONTEXTS['mp_dill'][DEFAULT_START_METHOD], 2)
         comms.init_comms(False, False)
 
         map_params = WorkerMapParams(_f1, None, None, 1)
@@ -487,7 +496,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test exception related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
         comms.init_comms(False, False)
 
         # Nothing available yet
@@ -522,10 +531,10 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test exception thrown related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
 
         self.assertFalse(comms.exception_thrown())
-        comms.set_exception_thrown()
+        comms.signal_exception_thrown()
         self.assertTrue(comms.exception_thrown())
         comms._exception_thrown.clear()
         self.assertFalse(comms.exception_thrown())
@@ -534,10 +543,10 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test kill signal received related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
 
         self.assertFalse(comms.kill_signal_received())
-        comms.set_kill_signal_received()
+        comms.signal_kill_signal_received()
         self.assertTrue(comms.kill_signal_received())
         comms._kill_signal_received.clear()
         self.assertFalse(comms.kill_signal_received())
@@ -548,7 +557,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         for n_jobs in [1, 2, 4]:
             with self.subTest(n_jobs=n_jobs):
-                comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs, False, False)
+                comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs)
                 comms.init_comms(False, False)
                 comms.insert_poison_pill()
                 for worker_id in range(n_jobs):
@@ -565,7 +574,7 @@ class WorkerCommsTest(unittest.TestCase):
 
         for n_jobs in [1, 2, 4]:
             with self.subTest(n_jobs=n_jobs):
-                comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs, False, False)
+                comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs)
                 comms.init_comms(False, False)
                 comms.insert_non_lethal_poison_pill()
                 for worker_id in range(n_jobs):
@@ -577,7 +586,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test worker restart related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5)
         comms.init_comms(False, False)
 
         # No restarts yet
@@ -606,23 +615,23 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test worker alive related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5)
         comms.init_comms(False, False)
 
         # Signal some workers are alive
-        comms.set_worker_alive(0)
-        comms.set_worker_alive(1)
-        comms.set_worker_dead(1)
-        comms.set_worker_alive(2)
-        comms.set_worker_alive(3)
+        comms.signal_worker_alive(0)
+        comms.signal_worker_alive(1)
+        comms.signal_worker_dead(1)
+        comms.signal_worker_alive(2)
+        comms.signal_worker_alive(3)
 
         # Check alive status
         self.assertListEqual([comms.is_worker_alive(worker_id) for worker_id in range(5)],
                              [True, False, True, True, False])
 
         # Reset some
-        comms.set_worker_dead(0)
-        comms.set_worker_dead(3)
+        comms.signal_worker_dead(0)
+        comms.signal_worker_dead(3)
 
         # Check alive status
         self.assertListEqual([comms.is_worker_alive(worker_id) for worker_id in range(5)],
@@ -638,7 +647,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         get_results should be called once, get_exit_results should be called when exit function is defined
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5)
         dont_wait_event = threading.Event()
         dont_wait_event.set()
 
@@ -665,25 +674,21 @@ class WorkerCommsTest(unittest.TestCase):
         comms.init_comms(has_worker_exit=False, has_progress_bar=True)
         with self.subTest(has_worker_exit=False, has_progress_bar=True), \
                 patch.object(comms, 'get_results', side_effect=comms.get_results) as p1, \
-                patch.object(comms, 'get_exit_results') as p2, \
-                patch.object(comms._task_completed_queue, 'get', side_effect=comms._task_completed_queue.get) as p3:
+                patch.object(comms, 'get_exit_results') as p2:
             comms.drain_queues_terminate_worker(0, dont_wait_event)
             self.assertEqual(p1.call_count, 1)
             self.assertEqual(p2.call_count, 0)
-            self.assertEqual(p3.call_count, 1)
             self.assertTrue(dont_wait_event.is_set())
 
         comms.init_comms(has_worker_exit=True, has_progress_bar=True)
         for worker_id in range(5):
             with self.subTest(has_worker_exit=True, has_progress_bar=True, worker_id=worker_id), \
                     patch.object(comms, 'get_results', side_effect=comms.get_results) as p1, \
-                    patch.object(comms, 'get_exit_results', side_effect=comms.get_exit_results) as p2, \
-                    patch.object(comms._task_completed_queue, 'get', side_effect=comms._task_completed_queue.get) as p3:
+                    patch.object(comms, 'get_exit_results', side_effect=comms.get_exit_results) as p2:
                 comms.drain_queues_terminate_worker(worker_id, dont_wait_event)
                 self.assertEqual(p1.call_count, 1)
                 self.assertEqual(p2.call_count, 1)
                 self.assertEqual(p2.call_args_list[0][0][0], worker_id)
-                self.assertEqual(p3.call_count, 1)
                 self.assertTrue(dont_wait_event.is_set())
 
     def test_drain_queues(self):
@@ -693,20 +698,20 @@ class WorkerCommsTest(unittest.TestCase):
         progress bar has been enabled one queu for the progress bar.
         """
         for n_jobs, has_worker_exit, has_progress_bar in product([1, 2, 4], [False, True], [False, True]):
-            comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs, False, False)
+            comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs)
             comms.init_comms(has_worker_exit=has_worker_exit, has_progress_bar=has_progress_bar)
 
             with self.subTest(n_jobs=n_jobs, has_worker_exit=has_worker_exit, has_progress_bar=has_progress_bar), \
                     patch.object(comms, 'drain_and_join_queue') as p:
                 comms.drain_queues()
                 self.assertEqual(p.call_count,
-                                 n_jobs + 1 + (n_jobs if has_worker_exit else 0) + (1 if has_progress_bar else 0))
+                                 n_jobs + 1 + (n_jobs if has_worker_exit else 0))
 
     def test__drain_and_join_queue(self):
         """
         Test draining queues
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False, False)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
 
         # Create a custom queue with some data
         q = mp.JoinableQueue()

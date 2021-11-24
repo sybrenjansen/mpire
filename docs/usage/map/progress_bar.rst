@@ -25,11 +25,6 @@ When inside a Jupyter/IPython notebook, the progress bar will change automatical
     by executing ``jupyter nbextension enable --py --sys-prefix widgetsnbextension`` in your terminal before starting
     the notebook.
 
-.. note::
-
-    Please keep in mind that to show real-time progress information MPIRE starts an additional child process, which
-    could consume a bit of the available compute power of your machine. However, this is often negligible.
-
 
 Multiple progress bars with nested WorkerPools
 ----------------------------------------------

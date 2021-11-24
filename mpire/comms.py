@@ -2,10 +2,10 @@ import logging
 import multiprocessing as mp
 import queue
 import threading
+import time
 from datetime import datetime
 from typing import Any, Generator, List, Optional, Tuple, Union
 
-from mpire.context import DEFAULT_START_METHOD, MP_CONTEXTS
 from mpire.params import WorkerMapParams
 from mpire.signal import DelayedKeyboardInterrupt
 
@@ -29,17 +29,16 @@ class WorkerComms:
     - Terminating and restarting comms
     """
 
-    def __init__(self, ctx: mp.context.BaseContext, n_jobs: int, use_dill: bool, using_threading: bool) -> None:
+    # Amount of time in between each progress bar update
+    progress_bar_update_interval = 0.1
+
+    def __init__(self, ctx: mp.context.BaseContext, n_jobs: int) -> None:
         """
         :param ctx: Multiprocessing context
         :param n_jobs: Number of workers
-        :param use_dill: Whether to use dill as serialization backend
-        :param using_threading: Whether threading is used as backend
         """
         self.ctx = ctx
-        self.ctx_for_threading = MP_CONTEXTS['mp_dill' if use_dill else 'mp'][DEFAULT_START_METHOD]
         self.n_jobs = n_jobs
-        self.using_threading = using_threading
 
         # Whether or not to inform the child processes to keep order in mind (for the map functions)
         self._keep_order = self.ctx.Event()
@@ -69,11 +68,15 @@ class WorkerComms:
         # exception can be thrown. When the threading backend is used we switch to a multiprocessing Event, because the
         # progress bar handler needs a process-aware object
         self.exception_lock = self.ctx.Lock()
-        self._exception_thrown = self.ctx_for_threading.Event() if using_threading else self.ctx.Event()
-        self._kill_signal_received = self.ctx_for_threading.Event() if using_threading else self.ctx.Event()
+        self._exception_thrown = self.ctx.Event()
+        self._kill_signal_received = self.ctx.Event()
 
-        # Queue related to the progress bar. Child processes signal whenever they are finished with a task
-        self._task_completed_queue = None
+        # Array where the number of completed tasks is stored for the progress bar. We don't use the vanilla lock from
+        # multiprocessing.Array, but create a lock per worker such that workers can write concurrently.
+        self._tasks_completed_array = None
+        self._tasks_completed_locks = None
+        self._progress_bar_last_updated = None
+        self._progress_bar_shutdown = None
         self._progress_bar_complete = None
 
     ################
@@ -111,18 +114,22 @@ class WorkerComms:
         [worker_dead.set() for worker_dead in self._workers_dead]
 
         # Exception related
-        self._exception_queue = (self.ctx_for_threading.JoinableQueue() if self.using_threading else
-                                 self.ctx.JoinableQueue())
+        self._exception_queue = self.ctx.JoinableQueue()
         self._exception_thrown.clear()
         self._kill_signal_received.clear()
 
         # Progress bar related
         if has_progress_bar:
-            self._task_completed_queue = (self.ctx_for_threading.JoinableQueue() if self.using_threading else
-                                          self.ctx.JoinableQueue())
-            self._progress_bar_complete = self.ctx_for_threading.Event() if self.using_threading else self.ctx.Event()
+            self._tasks_completed_array = self.ctx.Array('Q', self.n_jobs, lock=False)  # unsigned long long
+            self._tasks_completed_locks = [self.ctx.Lock() for _ in range(self.n_jobs)]
+            self._progress_bar_last_updated = datetime.now()
+            self._progress_bar_shutdown = self.ctx.Event()
+            self._progress_bar_complete = self.ctx.Event()
         else:
-            self._task_completed_queue = None
+            self._tasks_completed_array = None
+            self._tasks_completed_locks = None
+            self._progress_bar_last_updated = None
+            self._progress_bar_shutdown = None
             self._progress_bar_complete = None
 
     def reset_last_completed_task_info(self) -> None:
@@ -140,14 +147,15 @@ class WorkerComms:
         """
         :return: Whether we have a progress bar
         """
-        return self._task_completed_queue is not None
+        return self._tasks_completed_array is not None
 
-    def task_completed_progress_bar(self, progress_bar_last_updated: Optional[datetime] = None,
+    def task_completed_progress_bar(self, worker_id: int, progress_bar_last_updated: Optional[datetime] = None,
                                     progress_bar_n_tasks_completed: Optional[int] = None,
                                     force_update: bool = False) -> Tuple[datetime, int]:
         """
         Signal that we've completed a task every 0.1 seconds, for the progress bar
 
+        :param worker_id: Worker ID
         :param progress_bar_last_updated: Last time the progress bar update was send
         :param progress_bar_n_tasks_completed: Number of tasks completed since last update
         :param force_update: Whether to force an update
@@ -159,43 +167,45 @@ class WorkerComms:
 
         # Check if we need to update
         now = datetime.now()
-        if force_update or (now - progress_bar_last_updated).total_seconds() > 0.2:
-            self._task_completed_queue.put(progress_bar_n_tasks_completed)
+        if force_update or (now - progress_bar_last_updated).total_seconds() > self.progress_bar_update_interval:
+            with self._tasks_completed_locks[worker_id]:
+                self._tasks_completed_array[worker_id] += progress_bar_n_tasks_completed
             progress_bar_last_updated = now
             progress_bar_n_tasks_completed = 0
 
         return progress_bar_last_updated, progress_bar_n_tasks_completed
 
-    def add_progress_bar_poison_pill(self) -> None:
+    def get_tasks_completed_progress_bar(self) -> Union[int, str]:
+        """
+        Obtain the number of tasks completed by the workers. As the progress bar handler lives inside a thread we don't
+        poll continuously, but every 0.1 seconds.
+
+        :return: The number of tasks done or a poison pill
+        """
+        # Check if we need to wait a bit for the next update
+        time_diff = (datetime.now() - self._progress_bar_last_updated).total_seconds()
+        if time_diff < self.progress_bar_update_interval:
+            time.sleep(self.progress_bar_update_interval - time_diff)
+
+        # Sum the tasks completed and return
+        while (not self.exception_thrown() and not self.kill_signal_received() and
+               not self._progress_bar_shutdown.is_set()):
+            n_tasks_completed = 0
+            for worker_id in range(self.n_jobs):
+                with self._tasks_completed_locks[worker_id]:
+                    n_tasks_completed += self._tasks_completed_array[worker_id]
+            self._progress_bar_last_updated = datetime.now()
+            return n_tasks_completed
+
+        return POISON_PILL
+
+    def signal_progress_bar_shutdown(self) -> None:
         """
         Signals the progress bar handling process to shut down
         """
-        self._task_completed_queue.put(POISON_PILL)
+        self._progress_bar_shutdown.set()
 
-    def get_tasks_completed_progress_bar(self) -> Tuple[Union[int, str], bool]:
-        """
-        Sometimes, due to super small user-provided functions, this queue can get rather crowded. When an exception
-        occurs in such a function after a while, this queue.get() can get deadlocked. So, we set a timeout and
-        occasionally check for errors.
-
-        :return: Tuple containing the number of tasks done or a poison pill, and a boolean indicating if the result
-            came from the queue or not
-        """
-        while not self.exception_thrown() and not self.kill_signal_received():
-            try:
-                return self._task_completed_queue.get(block=True, timeout=0.01), True
-            except queue.Empty:
-                pass
-
-        return POISON_PILL, False
-
-    def task_done_progress_bar(self) -> None:
-        """
-        Signal that we've completed a task for the progress bar
-        """
-        self._task_completed_queue.task_done()
-
-    def set_progress_bar_complete(self) -> None:
+    def signal_progress_bar_complete(self) -> None:
         """
         Signal that the progress bar is complete
         """
@@ -213,7 +223,7 @@ class WorkerComms:
     # Order modifiers
     ################
 
-    def set_keep_order(self) -> None:
+    def signal_keep_order(self) -> None:
         """
         Set that we need to keep order in mind
         """
@@ -356,7 +366,7 @@ class WorkerComms:
             exit_results.append(results)
         return exit_results
 
-    def set_all_exit_results_obtained(self) -> None:
+    def signal_all_exit_results_obtained(self) -> None:
         """
         Signal that all exit results have been obtained
         """
@@ -413,7 +423,7 @@ class WorkerComms:
         """
         self._exception_queue.task_done()
 
-    def set_exception_thrown(self) -> None:
+    def signal_exception_thrown(self) -> None:
         """
         Set the exception event
         """
@@ -434,7 +444,7 @@ class WorkerComms:
         """
         return self._exception_thrown.wait(timeout=timeout)
 
-    def set_kill_signal_received(self) -> None:
+    def signal_kill_signal_received(self) -> None:
         """
         Set the kill signal received event
         """
@@ -489,7 +499,7 @@ class WorkerComms:
         """
         self._worker_done_array[worker_id] = False
 
-    def set_worker_alive(self, worker_id: int) -> None:
+    def signal_worker_alive(self, worker_id: int) -> None:
         """
         Indicate that a worker is alive
 
@@ -497,7 +507,7 @@ class WorkerComms:
         """
         self._workers_dead[worker_id].clear()
 
-    def set_worker_dead(self, worker_id: int) -> None:
+    def signal_worker_dead(self, worker_id: int) -> None:
         """
 `       Indicate that a worker is dead
 
@@ -548,18 +558,6 @@ class WorkerComms:
             [q.close() for q in self._task_queues]
             [q.join_thread() for q in self._task_queues]
 
-    def join_progress_bar_task_completed_queue(self, keep_alive: bool = False) -> None:
-        """
-        Join progress bar tasks completed queue
-
-        :param keep_alive: Whether to keep the queues alive
-        """
-        if self.has_progress_bar():
-            self._task_completed_queue.join()
-            if not keep_alive:
-                self._task_completed_queue.close()
-                self._task_completed_queue.join_thread()
-
     def join_exception_queue(self, keep_alive: bool = False) -> None:
         """
         Join exception queue
@@ -604,29 +602,13 @@ class WorkerComms:
                 if got_results:
                     dont_wait_event.set()
 
-        # Get results from the progress bar queue. If we got any, keep going and inform the other termination threads to
-        # wait until this one's finished
-        if self.has_progress_bar():
-            got_results = False
-            try:
-                while True:
-                    self._task_completed_queue.get(block=False)
-                    self._task_completed_queue.task_done()
-                    dont_wait_event.clear()
-                    got_results = True
-            except (queue.Empty, OSError):
-                if got_results:
-                    dont_wait_event.set()
-
     def drain_queues(self) -> None:
         """
-        Drain tasks, results, progress bar, and exit results queues. Note that the exception queue doesn't need to be
-        drained. This one is properly cleaned up in the exception handling class.
+        Drain tasks, results, and exit results queues. Note that the exception queue doesn't need to be drained.
+        This one is properly cleaned up in the exception handling class.
         """
         [self.drain_and_join_queue(q) for q in self._task_queues]
         self.drain_and_join_queue(self._results_queue)
-        if self.has_progress_bar():
-            self.drain_and_join_queue(self._task_completed_queue)
         [self.drain_and_join_queue(q) for q in self._exit_results_queues]
 
     def drain_and_join_queue(self, q: mp.JoinableQueue, join: bool = True) -> None:

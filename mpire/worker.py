@@ -101,7 +101,7 @@ class AbstractWorker:
         # exception first, it depends on who obtains the lock first. If `run` obtains it, it will set `running` to
         # False, meaning we won't raise and `run` will return. If this function obtains it first it will throw, which
         # again is caught by the `run` function, which will return.
-        self.worker_comms.set_kill_signal_received()
+        self.worker_comms.signal_kill_signal_received()
         with self.is_running_lock:
             if self.is_running:
                 self.is_running = False
@@ -134,7 +134,7 @@ class AbstractWorker:
             t = Thread(target=self._exit_gracefully_windows)
             t.start()
 
-        self.worker_comms.set_worker_alive(self.worker_id)
+        self.worker_comms.signal_worker_alive(self.worker_id)
 
         # Set tqdm and dashboard connection details. This is needed for nested pools and in the case forkserver or
         # spawn is used as start method
@@ -235,7 +235,7 @@ class AbstractWorker:
                 self.worker_comms.signal_worker_restart(self.worker_id)
 
         finally:
-            self.worker_comms.set_worker_dead(self.worker_id)
+            self.worker_comms.signal_worker_dead(self.worker_id)
 
     def _get_func(self, additional_args: List) -> Callable:
         """
@@ -362,7 +362,7 @@ class AbstractWorker:
             if not self.worker_comms.exception_thrown():
 
                 # Let others know we need to stop
-                self.worker_comms.set_exception_thrown()
+                self.worker_comms.signal_exception_thrown()
 
                 # Create traceback string
                 traceback_str = "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % (
@@ -450,7 +450,7 @@ class AbstractWorker:
         if self.worker_comms.has_progress_bar():
             (self.progress_bar_last_updated,
              self.progress_bar_n_tasks_completed) = self.worker_comms.task_completed_progress_bar(
-                self.progress_bar_last_updated, self.progress_bar_n_tasks_completed, force_update
+                self.worker_id, self.progress_bar_last_updated, self.progress_bar_n_tasks_completed, force_update
              )
 
     def _update_task_insights(self, force_update: bool = False) -> None:
