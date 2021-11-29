@@ -149,7 +149,7 @@ class WorkerComms:
         """
         return self._tasks_completed_array is not None
 
-    def task_completed_progress_bar(self, worker_id: int, progress_bar_last_updated: Optional[datetime] = None,
+    def task_completed_progress_bar(self, worker_id: int, progress_bar_last_updated: datetime,
                                     progress_bar_n_tasks_completed: Optional[int] = None,
                                     force_update: bool = False) -> Tuple[datetime, int]:
         """
