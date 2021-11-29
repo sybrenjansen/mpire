@@ -1,8 +1,10 @@
 Changelog
 =========
 
-Master
-------
+2.3.3
+-----
+
+*(2021-11-29)*
 
 * Changed progress bar handler process to thread, making it more stable (especially in notebooks)
 * Changed progress bar tasks completed queue to array, to make it more responsive and faster
