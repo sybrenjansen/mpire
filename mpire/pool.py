@@ -20,7 +20,7 @@ from mpire.context import DEFAULT_START_METHOD, RUNNING_WINDOWS
 from mpire.dashboard.connection_utils import get_dashboard_connection_details
 from mpire.insights import WorkerInsights
 from mpire.params import check_map_parameters, CPUList, WorkerMapParams, WorkerPoolParams
-from mpire.progress_bar import ProgressBarHandler
+from mpire.progress_bar import ProgressBarHandler, tqdm
 from mpire.signal import DisableKeyboardInterruptSignal
 from mpire.tqdm_utils import TqdmManager
 from mpire.utils import apply_numpy_chunking, chunk_tasks, set_cpu_affinity
@@ -82,7 +82,7 @@ class WorkerPool:
 
         # Container of the child processes and corresponding communication objects
         self._workers = []
-        self._worker_comms = WorkerComms(self.ctx, self.pool_params.n_jobs, use_dill, start_method == 'threading')
+        self._worker_comms = WorkerComms(self.ctx, self.pool_params.n_jobs)
         self._exit_results = None
 
         # Worker insights, used for profiling
@@ -251,7 +251,7 @@ class WorkerPool:
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
-        self._worker_comms.set_keep_order()
+        self._worker_comms.signal_keep_order()
 
         # If we're dealing with numpy arrays, we have to chunk them here already
         if NUMPY_INSTALLED and isinstance(iterable_of_args, np.ndarray):
@@ -370,7 +370,7 @@ class WorkerPool:
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
-        self._worker_comms.set_keep_order()
+        self._worker_comms.signal_keep_order()
 
         # If we're dealing with numpy arrays, we have to chunk them here already
         if NUMPY_INSTALLED and isinstance(iterable_of_args, np.ndarray):
@@ -485,29 +485,33 @@ class WorkerPool:
                           "constructor instead.", DeprecationWarning, stacklevel=2)
             self.pool_params.enable_insights = enable_insights
 
-        # Start tqdm manager if a progress bar is desired. Will only start one when not already started. This has to be
-        # done before starting the workers in case nested pools are used
-        tqdm_manager_owner = TqdmManager.start_manager() if progress_bar else False
-
         # Chunk the function arguments. Make single arguments when we're not dealing with numpy arrays
         if not numpy_chunking:
             iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size,
                                                    n_splits or self.pool_params.n_jobs * 64)
 
-        # Start workers if there aren't any. If they already exist check if we need to pass on new parameters
-        if self._workers and self.map_params != new_map_params:
-            self.map_params = new_map_params
-            self._worker_comms.add_new_map_params(new_map_params)
-        if not self._workers:
-            self.map_params = new_map_params
-            self._start_workers(progress_bar)
+        # Grab original lock in case we have a progress bar and we need to restore it
+        original_tqdm_lock = tqdm.get_lock()
+        tqdm_manager_owner = False
 
-        # Create progress bar handler, which receives progress updates from the workers and updates the progress bar
-        # accordingly
         try:
-            with ProgressBarHandler(self.ctx, self.pool_params, self.map_params, progress_bar, n_tasks,
-                                    progress_bar_position, self._worker_comms,
-                                    self._worker_insights) as progress_bar_handler:
+            # Start tqdm manager if a progress bar is desired. Will only start one when not already started. This has to
+            # be done before starting the workers in case nested pools are used
+            if progress_bar:
+                tqdm_manager_owner = TqdmManager.start_manager()
+
+            # Start workers if there aren't any. If they already exist check if we need to pass on new parameters
+            if self._workers and self.map_params != new_map_params:
+                self.map_params = new_map_params
+                self._worker_comms.add_new_map_params(new_map_params)
+            if not self._workers:
+                self.map_params = new_map_params
+                self._start_workers(progress_bar)
+
+            # Create progress bar handler, which receives progress updates from the workers and updates the progress bar
+            # accordingly
+            with ProgressBarHandler(self.pool_params, self.map_params, progress_bar, n_tasks, progress_bar_position,
+                                    self._worker_comms, self._worker_insights) as progress_bar_handler:
                 try:
                     # Process all args in the iterable
                     n_active = 0
@@ -554,13 +558,14 @@ class WorkerPool:
             # Join exception queue, if it hasn't already
             logger.debug("Joining exception queue")
             self._worker_comms.join_exception_queue(self.pool_params.keep_alive)
-            logger.debug("Done joining exception queue, now joining progress bar queue")
-            self._worker_comms.join_progress_bar_task_completed_queue(self.pool_params.keep_alive)
-            logger.debug("Done joining progress bar queue")
+            logger.debug("Done joining exception queue")
 
         finally:
             if tqdm_manager_owner:
+                logger.debug("Stopping TQDM manager")
+                tqdm.set_lock(original_tqdm_lock)
                 TqdmManager.stop_manager()
+                logger.debug("TQDM manager stopped")
 
         # Log insights
         if enable_insights:
@@ -580,7 +585,7 @@ class WorkerPool:
         with self._worker_comms.exception_lock:
             if not self._worker_comms.exception_thrown():
                 keyboard_interrupt = True
-                self._worker_comms.set_exception_thrown()
+                self._worker_comms.signal_exception_thrown()
                 if self._worker_comms.has_progress_bar() and progress_bar_handler is not None:
                     self._worker_comms.add_exception(KeyboardInterrupt, "KeyboardInterrupt")
 
@@ -596,9 +601,9 @@ class WorkerPool:
         logger.debug("Joining exception queue")
         self._worker_comms.join_exception_queue()
         logger.debug("Exception queue joined")
-        if progress_bar_handler and progress_bar_handler.process is not None:
+        if progress_bar_handler and progress_bar_handler.thread is not None:
             logger.debug("Joining progress bar handler")
-            progress_bar_handler.process.join()
+            progress_bar_handler.thread.join()
             logger.debug("Progress bar handler joined")
         self.terminate()
 
@@ -655,7 +660,7 @@ class WorkerPool:
             if not keep_alive and self.map_params.worker_exit:
                 logger.debug("Obtaining exit results")
                 self._exit_results.extend(self._worker_comms.get_exit_results_all_workers())
-                self._worker_comms.set_all_exit_results_obtained()
+                self._worker_comms.signal_all_exit_results_obtained()
                 logger.debug("Done obtaining exit results")
 
             # If an exception occurred in the exit function, we need to handle the exception (i.e., terminate and raise)
@@ -688,7 +693,7 @@ class WorkerPool:
         logger.debug("Terminating workers")
 
         # Set exception thrown so workers know to stop fetching new tasks
-        self._worker_comms.set_exception_thrown()
+        self._worker_comms.signal_exception_thrown()
 
         # When we're working with threads we have to wait for them to join. We can't kill threads in Python
         if self.pool_params.start_method == 'threading':

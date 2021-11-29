@@ -1,6 +1,13 @@
 Changelog
 =========
 
+Master
+------
+
+* Changed progress bar handler process to thread, making it more stable (especially in notebooks)
+* Changed progress bar tasks completed queue to array, to make it more responsive and faster
+* Disabled the tqdm monitor thread which, in combination with MPIRE's own tqdm lock, could result in deadlocks
+
 2.3.2
 -----
 

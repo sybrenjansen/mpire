@@ -1,3 +1,4 @@
+import logging
 from ctypes import c_char
 from multiprocessing import Array, Event, Lock
 from multiprocessing.managers import SyncManager
@@ -7,6 +8,8 @@ from typing import Optional, Tuple
 from mpire.signal import DisableKeyboardInterruptSignal
 
 TqdmConnectionDetails = Tuple[Optional[bytes], bool]
+
+logger = logging.getLogger(__name__)
 
 
 class TqdmPositionRegister:
@@ -101,6 +104,8 @@ class TqdmManager:
         # Don't do anything when there's already a connected tqdm manager
         if cls.MANAGER_STARTED.is_set():
             return False
+
+        logger.debug("Starting TQDM manager")
 
         # Create manager
         with DisableKeyboardInterruptSignal():

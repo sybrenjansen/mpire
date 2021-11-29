@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from mpire import cpu_count, WorkerPool
 from mpire.context import FORK_AVAILABLE, RUNNING_WINDOWS
+from mpire.tqdm_utils import TqdmLock
 
 # Skip start methods that use fork if it's not available
 if not FORK_AVAILABLE:
@@ -776,6 +777,15 @@ class ProgressBarTest(unittest.TestCase):
         self.test_desired_output_numpy = square_numpy(self.test_data_numpy)
         self.test_data_len_numpy = len(self.test_data_numpy)
 
+        # Get original tqdm lock
+        self.original_tqdm_lock = tqdm.get_lock()
+
+    def tearDown(self):
+        # The TQDM lock is temporarily changed when using a progress bar in MPIRE, here we check if it is restored
+        # correctly afterwards.
+        self.assertNotIsInstance(tqdm.get_lock(), TqdmLock)
+        self.assertEqual(tqdm.get_lock(), self.original_tqdm_lock)
+
     def test_valid_progress_bars_regular_input(self):
         """
         Valid progress bars are either False/True
@@ -1034,8 +1044,16 @@ class ExceptionTest(unittest.TestCase):
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.DEBUG)
 
+        # Get original tqdm lock
+        self.original_tqdm_lock = tqdm.get_lock()
+
     def tearDown(self):
         self.logger.setLevel(logging.NOTSET)
+
+        # The TQDM lock is temporarily changed when using a progress bar in MPIRE, here we check if it is restored
+        # correctly afterwards.
+        self.assertNotIsInstance(tqdm.get_lock(), TqdmLock)
+        self.assertEqual(tqdm.get_lock(), self.original_tqdm_lock)
 
     def test_exceptions(self):
         """
