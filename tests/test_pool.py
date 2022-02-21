@@ -1,4 +1,5 @@
 import logging
+import os
 import types
 import unittest
 import warnings
@@ -22,6 +23,10 @@ else:
 
 def square(idx, x):
     return idx, x * x
+
+
+def extremely_large_output(idx, x):
+    return idx, os.urandom(1024 * 1024)
 
 
 def square_numpy(x):
@@ -78,7 +83,8 @@ class MapTest(unittest.TestCase):
                                       chunk_size=chunk_size, n_splits=n_splits):
 
                         # Test if parallel map results in the same as ordinary map function. Should work both for
-                        # generators and iterators. Also check if an empty list works as desired.
+                        # generators and iterators. Also check if an empty list and extremely large output (exceeding
+                        # os.pipe limits) works as desired.
                         results_list = map_func(square, self.test_data, max_tasks_active=n_tasks_max_active,
                                                 worker_lifespan=worker_lifespan)
                         self.assertIsInstance(results_list, result_type)
@@ -103,6 +109,16 @@ class MapTest(unittest.TestCase):
                                                 worker_lifespan=worker_lifespan)
                         self.assertIsInstance(results_list, result_type)
                         self.assertEqual([], list(results_list))
+
+                    # When the os pipe capacity is exceeded, a worker restart based on worker lifespan would hang if we
+                    # not fetch all the results from a worker. We only verify the amount of data returned here.
+                    with self.subTest(map_func=map_func, output='data exceeding pipe limits', n_jobs=n_jobs,
+                                      n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
+                                      chunk_size=chunk_size, n_splits=n_splits):
+                        results_list = map_func(extremely_large_output, self.test_data,
+                                                max_tasks_active=n_tasks_max_active, worker_lifespan=worker_lifespan)
+                        self.assertIsInstance(results_list, result_type)
+                        self.assertEqual(len(self.test_desired_output), len(list(results_list)))
 
     def test_numpy_input(self):
         """
