@@ -1,6 +1,14 @@
 Changelog
 =========
 
+Dev
+---
+
+* Platform specific dependencies are now handled using environment markers as defined in PEP-508_ (`#30`_)
+
+.. _PEP-508: https://www.python.org/dev/peps/pep-0508/#environment-markers
+.. _#30: https://github.com/Slimmer-AI/mpire/issues/30
+
 2.3.3
 -----
 
