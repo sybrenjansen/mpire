@@ -1,8 +1,8 @@
 Changelog
 =========
 
-Dev
----
+2.3.4
+-----
 
 * Platform specific dependencies are now handled using environment markers as defined in PEP-508_ (`#30`_)
 * Fixes hanging ``WorkerPool`` when using ``worker_lifespan`` and returning results that exceed the pipe capacity
