@@ -60,7 +60,6 @@ class MapTest(unittest.TestCase):
             yield from iterable
 
         # Test results for different parameter settings
-        print()
         for n_jobs, n_tasks_max_active, worker_lifespan, chunk_size, n_splits in tqdm([
             (None, None, None, None, None),
             (1, None, None, None, None),

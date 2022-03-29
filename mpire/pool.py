@@ -166,7 +166,11 @@ class WorkerPool:
 
             # If we time-out, it means the worker still has data that needs to be send over
             while self._workers[worker_id].exitcode is None:
-                obtained_results.append(self._worker_comms.get_results(block=True))
+                try:
+                    obtained_results.append(self._worker_comms.get_results(block=True, timeout=0.01))
+                except queue.Empty:
+                    pass
+
                 self._workers[worker_id].join(timeout=0.01)
 
             # Start new worker
