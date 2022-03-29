@@ -164,7 +164,9 @@ class WorkerPool:
             self._worker_comms.reset_worker_restart(worker_id)
             self._workers[worker_id].join(timeout=0.01)
 
-            # If we time-out, it means the worker still has data that needs to be send over
+            # If we time-out, it means the worker still has data that needs to be send over. Note that on Windows, this
+            # is not necessarily the case. Windows is just a bit slow and thinks it cannot join yet, while in fact
+            # nothing is stoping it from joining. So, we just try it a few times ...
             while self._workers[worker_id].exitcode is None:
                 try:
                     obtained_results.append(self._worker_comms.get_results(block=True, timeout=0.01))

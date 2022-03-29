@@ -7,6 +7,7 @@ Dev
 * Platform specific dependencies are now handled using environment markers as defined in PEP-508_ (`#30`_)
 * Fixes hanging ``WorkerPool`` when using ``worker_lifespan`` and returning results that exceed the pipe capacity
   (`#32`_)
+* Fixes insights unit tests that could sometime fail because it was too fast
 
 .. _PEP-508: https://www.python.org/dev/peps/pep-0508/#environment-markers
 .. _#30: https://github.com/Slimmer-AI/mpire/issues/30
