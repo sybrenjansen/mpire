@@ -3,6 +3,7 @@ import multiprocessing as mp
 import unittest
 from datetime import datetime
 from multiprocessing import managers
+from time import sleep
 from unittest.mock import patch
 
 from mpire import WorkerPool
@@ -13,8 +14,7 @@ from tests.utils import MockDatetimeNow
 
 def square(x):
     # time.sleep is added for Windows compatibility, otherwise it says 0.0 time has passed
-    import time
-    time.sleep(0.1)
+    sleep(0.001)
     return x * x
 
 
@@ -126,7 +126,7 @@ class WorkerInsightsTest(unittest.TestCase):
             for idx in range(3):
                 with self.subTest('enabled', idx=idx):
 
-                    pool.map(square, range(10), worker_init=self._init, worker_exit=self._exit)
+                    pool.map(square, self._get_tasks(10), worker_init=self._init, worker_exit=self._exit)
 
                     # Basic sanity checks for the values. Some max task args can be empty, in that case the duration
                     # should be 0 (= no data)
@@ -376,11 +376,19 @@ class WorkerInsightsTest(unittest.TestCase):
             })
 
     @staticmethod
+    def _get_tasks(n):
+        """ Simulate that getting tasks takes some time """
+        for i in range(n):
+            # sleep is added for Windows compatibility, otherwise it says 0.0 time has passed
+            sleep(0.001)
+            yield i
+
+    @staticmethod
     def _init():
-        # It's just here so we have something to time
-        _ = [x ** x for x in range(1000)]
+        # sleep is added for Windows compatibility, otherwise it says 0.0 time has passed
+        sleep(0.001)
 
     @staticmethod
     def _exit():
-        # It's just here so we have something to time
-        return [x ** x for x in range(1000)]
+        # sleep is added for Windows compatibility, otherwise it says 0.0 time has passed
+        sleep(0.001)

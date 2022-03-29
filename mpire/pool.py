@@ -148,10 +148,13 @@ class WorkerPool:
             self._workers.append(self._start_worker(worker_id))
         logger.debug("Workers created")
 
-    def _restart_workers(self) -> None:
+    def _restart_workers(self) -> List[Any]:
         """
         Restarts workers that need to be restarted.
+
+        :return: List of unordered results produces by workers
         """
+        obtained_results = []
         for worker_id in self._worker_comms.get_worker_restarts():
             # Obtain results from exit results queue (should be done before joining the worker)
             if self.map_params.worker_exit:
@@ -159,10 +162,23 @@ class WorkerPool:
 
             # Join worker
             self._worker_comms.reset_worker_restart(worker_id)
-            self._workers[worker_id].join()
+            self._workers[worker_id].join(timeout=0.01)
+
+            # If we time-out, it means the worker still has data that needs to be send over. Note that on Windows, this
+            # is not necessarily the case. Windows is just a bit slow and thinks it cannot join yet, while in fact
+            # nothing is stoping it from joining. So, we just try it a few times ...
+            while self._workers[worker_id].exitcode is None:
+                try:
+                    obtained_results.append(self._worker_comms.get_results(block=True, timeout=0.01))
+                except queue.Empty:
+                    pass
+
+                self._workers[worker_id].join(timeout=0.01)
 
             # Start new worker
             self._workers[worker_id] = self._start_worker(worker_id)
+
+        return obtained_results
 
     def _start_worker(self, worker_id: int) -> mp.Process:
         """
@@ -531,8 +547,10 @@ class WorkerPool:
                         except queue.Empty:
                             pass
 
-                        # Restart workers if necessary
-                        self._restart_workers()
+                        # Restart workers if necessary. This can yield intermediate results
+                        for results in self._restart_workers():
+                            yield from results
+                            n_active -= 1
 
                     # Obtain the results not yet obtained
                     while not self._worker_comms.exception_thrown() and n_active != 0:
@@ -542,8 +560,10 @@ class WorkerPool:
                         except queue.Empty:
                             pass
 
-                        # Restart workers if necessary
-                        self._restart_workers()
+                        # Restart workers if necessary. This can yield intermediate results
+                        for results in self._restart_workers():
+                            yield from results
+                            n_active -= 1
 
                     # Terminate if exception has been thrown at this point
                     if self._worker_comms.exception_thrown():
