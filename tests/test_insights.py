@@ -3,6 +3,7 @@ import multiprocessing as mp
 import unittest
 from datetime import datetime
 from multiprocessing import managers
+from time import sleep
 from unittest.mock import patch
 
 from mpire import WorkerPool
@@ -378,9 +379,9 @@ class WorkerInsightsTest(unittest.TestCase):
     @staticmethod
     def _init():
         # It's just here so we have something to time
-        _ = [x ** x for x in range(1000)]
+        sleep(0.0001)
 
     @staticmethod
     def _exit():
         # It's just here so we have something to time
-        return [x ** x for x in range(1000)]
+        sleep(0.0001)
