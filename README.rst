@@ -187,7 +187,7 @@ respectively:
 
 See `worker insights`_ for a more detailed example and expected output.
 
-.. _worker insights: https://slimmer-ai.github.io/mpire/usage/map.html#worker-insights
+.. _worker insights: https://slimmer-ai.github.io/mpire/usage/workerpool/worker_insights.html
 
 
 Benchmarks
