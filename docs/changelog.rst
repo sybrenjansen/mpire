@@ -5,8 +5,10 @@ Master
 ------
 
 * MPIRE now handles defunct child processes properly, instead of deadlocking (`#34`_)
+* Added benchmark highlights to README (`#38`_)
 
 .. _#34: https://github.com/Slimmer-AI/mpire/issues/34
+.. _#38: https://github.com/Slimmer-AI/mpire/issues/38
 
 
 2.3.4

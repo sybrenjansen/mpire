@@ -197,6 +197,14 @@ MPIRE has been benchmarked on three different benchmarks: numerical computation,
 initialization. More details on these benchmarks can be found in this `blog post`_. All code for these benchmarks can
 be found in this project_.
 
+In short, the main reasons why MPIRE is faster are:
+
+- When ``fork`` is available we can make use of copy-on-write shared objects, which reduces the need to copy objects
+  that need to be shared over child processes
+- Workers can hold state over multiple tasks. Therefore you can choose to load a big file or send resources over only
+  once per worker
+- Automatic task chunking
+
 The following graph shows the average normalized results of all three benchmarks. Results for individual benchmarks
 can be found in the `blog post`_. The benchmarks were run on a Linux machine with 20 cores, with disabled hyperthreading
 and 200GB of RAM. For each task, experiments were run with different numbers of processes/workers and results were
