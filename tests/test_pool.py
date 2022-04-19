@@ -1163,6 +1163,9 @@ class ExceptionTest(unittest.TestCase):
         """
         for n_jobs, progress_bar, worker_lifespan, start_method in product([1, 4], [False, True], [None, 1],
                                                                            TEST_START_METHODS):
+            # Progress bar on Windows + threading is not supported right now
+            if RUNNING_WINDOWS and start_method == 'threading' and progress_bar:
+                continue
             with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar, worker_lifespan=worker_lifespan,
                               start_method=start_method), self.assertRaises(SystemExit), \
                     WorkerPool(n_jobs=n_jobs, start_method=start_method) as pool:
