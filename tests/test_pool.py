@@ -1,5 +1,6 @@
 import logging
 import os
+import signal
 import types
 import unittest
 import warnings
@@ -1161,15 +1162,17 @@ class ExceptionTest(unittest.TestCase):
         """
         Tests if MPIRE correctly shuts down after process becomes defunct using exit()
         """
-        for n_jobs, progress_bar, worker_lifespan, start_method in product([1, 4], [False, True], [None, 1],
-                                                                           TEST_START_METHODS):
-            # Progress bar on Windows + threading is not supported right now
-            if RUNNING_WINDOWS and start_method == 'threading' and progress_bar:
-                continue
-            with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar, worker_lifespan=worker_lifespan,
-                              start_method=start_method), self.assertRaises(SystemExit), \
-                    WorkerPool(n_jobs=n_jobs, start_method=start_method) as pool:
-                pool.map(self._exit, range(100), progress_bar=progress_bar, worker_lifespan=worker_lifespan)
+        for n_jobs, progress_bar, worker_lifespan in [(1, False, None),
+                                                      (3, True, 1),
+                                                      (3, False, 3)]:
+            for start_method in TEST_START_METHODS:
+                # Progress bar on Windows + threading is not supported right now
+                if RUNNING_WINDOWS and start_method == 'threading' and progress_bar:
+                    continue
+                with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar, worker_lifespan=worker_lifespan,
+                                  start_method=start_method), self.assertRaises(SystemExit), \
+                        WorkerPool(n_jobs=n_jobs, start_method=start_method) as pool:
+                    pool.map(self._exit, range(100), progress_bar=progress_bar, worker_lifespan=worker_lifespan)
 
     def test_defunct_processes_kill(self):
         """
@@ -1179,21 +1182,23 @@ class ExceptionTest(unittest.TestCase):
         thread waits until the event is set and then kills the worker. The other workers are also ensured to have done
         something so we can test what happens during restarts
         """
-        for n_jobs, progress_bar, worker_lifespan, start_method in product([1, 3], [False, True], [None, 1],
-                                                                           TEST_START_METHODS):
-            # Can't kill threads
-            if start_method == 'threading':
-                continue
+        for n_jobs, progress_bar, worker_lifespan in [(1, False, None),
+                                                      (3, True, 1),
+                                                      (3, False, 3)]:
+            for start_method in TEST_START_METHODS:
+                # Can't kill threads
+                if start_method == 'threading':
+                    continue
 
-            with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar, worker_lifespan=worker_lifespan,
-                              start_method=start_method), self.assertRaises(RuntimeError), \
-                    WorkerPool(n_jobs=n_jobs, pass_worker_id=True, start_method=start_method) as pool:
-                events = [pool.ctx.Event() for _ in range(n_jobs)]
-                kill_thread = Thread(target=self._kill_process, args=(events[0], pool))
-                kill_thread.start()
-                pool.set_shared_objects(events)
-                pool.map(self._worker_0_sleeps_others_square, range(1000), progress_bar=progress_bar,
-                         worker_lifespan=worker_lifespan, chunk_size=1)
+                with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar, worker_lifespan=worker_lifespan,
+                                  start_method=start_method), self.assertRaises(RuntimeError), \
+                        WorkerPool(n_jobs=n_jobs, pass_worker_id=True, start_method=start_method) as pool:
+                    events = [pool.ctx.Event() for _ in range(n_jobs)]
+                    kill_thread = Thread(target=self._kill_process, args=(events[0], pool))
+                    kill_thread.start()
+                    pool.set_shared_objects(events)
+                    pool.map(self._worker_0_sleeps_others_square, range(1000), progress_bar=progress_bar,
+                             worker_lifespan=worker_lifespan, chunk_size=1)
 
     @staticmethod
     def _square_raises(_, x):
@@ -1230,4 +1235,5 @@ class ExceptionTest(unittest.TestCase):
         Wait for event and kill
         """
         event.wait()
-        pool._workers[0].kill()
+        # Python 3.6 doesn't support pool._workers[0].kill()
+        os.kill(pool._workers[0].pid, signal.SIGKILL)
