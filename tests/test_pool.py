@@ -1161,9 +1161,11 @@ class ExceptionTest(unittest.TestCase):
         """
         Tests if MPIRE correctly shuts down after process becomes defunct using exit()
         """
-        for n_jobs, progress_bar, worker_lifespan in product([1, 2, 4], [False, True], [None, 1, 3]):
-            with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar, worker_lifespan=worker_lifespan), \
-                    self.assertRaises(SystemExit), WorkerPool(n_jobs=n_jobs) as pool:
+        for n_jobs, progress_bar, worker_lifespan, start_method in product([1, 4], [False, True], [None, 1],
+                                                                           TEST_START_METHODS):
+            with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar, worker_lifespan=worker_lifespan,
+                              start_method=start_method), self.assertRaises(SystemExit), \
+                    WorkerPool(n_jobs=n_jobs, start_method=start_method) as pool:
                 pool.map(self._exit, range(100), progress_bar=progress_bar, worker_lifespan=worker_lifespan)
 
     def test_defunct_processes_kill(self):
@@ -1174,9 +1176,15 @@ class ExceptionTest(unittest.TestCase):
         thread waits until the event is set and then kills the worker. The other workers are also ensured to have done
         something so we can test what happens during restarts
         """
-        for n_jobs, progress_bar, worker_lifespan in product([1, 3], [False, True], [None, 1]):
-            with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar, worker_lifespan=worker_lifespan), \
-                    self.assertRaises(RuntimeError), WorkerPool(n_jobs=n_jobs, pass_worker_id=True) as pool:
+        for n_jobs, progress_bar, worker_lifespan, start_method in product([1, 3], [False, True], [None, 1],
+                                                                           TEST_START_METHODS):
+            # Can't kill threads
+            if start_method == 'threading':
+                continue
+
+            with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar, worker_lifespan=worker_lifespan,
+                              start_method=start_method), self.assertRaises(RuntimeError), \
+                    WorkerPool(n_jobs=n_jobs, pass_worker_id=True, start_method=start_method) as pool:
                 events = [pool.ctx.Event() for _ in range(n_jobs)]
                 kill_thread = Thread(target=self._kill_process, args=(events[0], pool))
                 kill_thread.start()

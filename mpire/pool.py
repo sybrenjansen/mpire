@@ -151,11 +151,25 @@ class WorkerPool:
     def _check_worker_status(self) -> List[Any]:
         """
         Checks the worker status:
-        - Restarts workers that need to be restarted.
         - If the worker is supposed to be alive, but isn't, terminate.
+        - Restarts workers that need to be restarted.
 
         :return: List of unordered results produces by workers
         """
+        # Check that workers that are supposed to be alive, are actually alive. If not, then a worker died unexpectedly.
+        # For extremely slow machines it is possible for the worker alive Event to be True, while the check for
+        # process.is_alive() right after that is False. This happens when the worker actually terminated in the mean
+        # time. To avoid this scenario, we check the Event object before and after. In theory, it could happen that a
+        # new process started again, but what are the odds??
+        for worker_id in range(self.pool_params.n_jobs):
+            if (self._worker_comms.is_worker_alive(worker_id) and not self._workers[worker_id].is_alive() and
+                    self._worker_comms.is_worker_alive(worker_id)):
+                # We need to add an exception if we're using the progress bar handler
+                if self._worker_comms.has_progress_bar():
+                    self._worker_comms.add_exception(RuntimeError, f"Worker-{worker_id} died unexpectedly")
+                self.terminate()
+                raise RuntimeError(f"Worker-{worker_id} died unexpectedly")
+
         # Check restarts
         obtained_results = []
         for worker_id in self._worker_comms.get_worker_restarts():
@@ -180,15 +194,6 @@ class WorkerPool:
 
             # Start new worker
             self._workers[worker_id] = self._start_worker(worker_id)
-
-        # Check that workers that are supposed to be alive, are actually alive. If not, then a worker died unexpectedly
-        for worker_id in range(self.pool_params.n_jobs):
-            if self._worker_comms.is_worker_alive(worker_id) and not self._workers[worker_id].is_alive():
-                # We need to add an exception if we're using the progress bar handler
-                if self._worker_comms.has_progress_bar():
-                    self._worker_comms.add_exception(RuntimeError, f"Worker-{worker_id} died unexpectedly")
-                self.terminate()
-                raise RuntimeError(f"Worker-{worker_id} died unexpectedly")
 
         return obtained_results
 
