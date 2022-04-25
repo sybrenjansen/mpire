@@ -1,8 +1,10 @@
 Changelog
 =========
 
-Master
-------
+2.3.5
+-----
+
+*(2022-04-25)*
 
 * MPIRE now handles defunct child processes properly, instead of deadlocking (`#34`_)
 * Added benchmark highlights to README (`#38`_)
@@ -13,6 +15,8 @@ Master
 
 2.3.4
 -----
+
+*(2022-03-29)*
 
 * Platform specific dependencies are now handled using environment markers as defined in PEP-508_ (`#30`_)
 * Fixes hanging ``WorkerPool`` when using ``worker_lifespan`` and returning results that exceed the pipe capacity
