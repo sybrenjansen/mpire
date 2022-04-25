@@ -134,7 +134,8 @@ class AbstractWorker:
             t = Thread(target=self._exit_gracefully_windows)
             t.start()
 
-        self.worker_comms.signal_worker_alive(self.worker_id)
+        with self.worker_comms.get_worker_dead_lock(self.worker_id):
+            self.worker_comms.signal_worker_alive(self.worker_id)
 
         # Set tqdm and dashboard connection details. This is needed for nested pools and in the case forkserver or
         # spawn is used as start method
@@ -235,7 +236,8 @@ class AbstractWorker:
                 self.worker_comms.signal_worker_restart(self.worker_id)
 
         finally:
-            self.worker_comms.signal_worker_dead(self.worker_id)
+            with self.worker_comms.get_worker_dead_lock(self.worker_id):
+                self.worker_comms.signal_worker_dead(self.worker_id)
 
     def _get_func(self, additional_args: List) -> Callable:
         """

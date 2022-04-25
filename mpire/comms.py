@@ -58,8 +58,9 @@ class WorkerComms:
         # Array where the child processes can request a restart
         self._worker_done_array = None
 
-        # List of Event objects to indicate whether workers are alive
+        # List of Event objects to indicate whether workers are alive, together with accompanying locks
         self._workers_dead = None
+        self._workers_dead_locks = None
 
         # Queue where the child processes can pass on an encountered exception
         self._exception_queue = None
@@ -112,6 +113,7 @@ class WorkerComms:
         self._worker_done_array = self.ctx.Array('b', self.n_jobs, lock=False)
         self._workers_dead = [self.ctx.Event() for _ in range(self.n_jobs)]
         [worker_dead.set() for worker_dead in self._workers_dead]
+        self._workers_dead_locks = [self.ctx.Lock() for _ in range(self.n_jobs)]
 
         # Exception related
         self._exception_queue = self.ctx.JoinableQueue()
@@ -498,6 +500,15 @@ class WorkerComms:
         :param worker_id: Worker ID
         """
         self._worker_done_array[worker_id] = False
+
+    def get_worker_dead_lock(self, worker_id: int) -> mp.Lock:
+        """
+        Returns the worker dead lock for a specific worker
+
+        :param worker_id: Worker ID
+        :return: Lock object
+        """
+        return self._workers_dead_locks[worker_id]
 
     def signal_worker_alive(self, worker_id: int) -> None:
         """
