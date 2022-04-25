@@ -54,6 +54,7 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertListEqual(comms._exit_results_queues, [])
                 self.assertIsNone(comms._all_exit_results_obtained)
                 self.assertIsNone(comms._worker_done_array)
+                self.assertIsNone(comms._workers_dead_locks)
                 self.assertIsNone(comms._workers_dead)
                 self.assertIsNone(comms._exception_queue)
                 self.assertIsInstance(comms.exception_lock, lock_type)
@@ -82,6 +83,9 @@ class WorkerCommsTest(unittest.TestCase):
                 for worker_dead in comms._workers_dead:
                     self.assertIsInstance(worker_dead, event_type)
                     self.assertTrue(worker_dead.is_set())
+                self.assertEqual(len(comms._workers_dead_locks), n_jobs)
+                for worker_dead_lock in comms._workers_dead_locks:
+                    self.assertIsInstance(worker_dead_lock, lock_type)
                 self.assertIsInstance(comms._exception_queue, joinable_queue_type)
                 self.assertFalse(comms._exception_thrown.is_set())
                 self.assertFalse(comms._kill_signal_received.is_set())
@@ -142,6 +146,9 @@ class WorkerCommsTest(unittest.TestCase):
                 for worker_dead in comms._workers_dead:
                     self.assertIsInstance(worker_dead, event_type)
                     self.assertTrue(worker_dead.is_set())
+                self.assertEqual(len(comms._workers_dead_locks), n_jobs)
+                for worker_dead_lock in comms._workers_dead_locks:
+                    self.assertIsInstance(worker_dead_lock, lock_type)
                 self.assertIsInstance(comms._exception_queue, joinable_queue_type)
                 self.assertFalse(comms._exception_thrown.is_set())
                 self.assertFalse(comms._kill_signal_received.is_set())

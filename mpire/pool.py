@@ -148,12 +148,15 @@ class WorkerPool:
             self._workers.append(self._start_worker(worker_id))
         logger.debug("Workers created")
 
-    def _restart_workers(self) -> List[Any]:
+    def _check_worker_status(self) -> List[Any]:
         """
-        Restarts workers that need to be restarted.
+        Checks the worker status:
+        - If the worker is supposed to be alive, but isn't, terminate.
+        - Restarts workers that need to be restarted.
 
         :return: List of unordered results produces by workers
         """
+        # Check restarts
         obtained_results = []
         for worker_id in self._worker_comms.get_worker_restarts():
             # Obtain results from exit results queue (should be done before joining the worker)
@@ -177,6 +180,20 @@ class WorkerPool:
 
             # Start new worker
             self._workers[worker_id] = self._start_worker(worker_id)
+
+        # Check that workers that are supposed to be alive, are actually alive. If not, then a worker died unexpectedly.
+        # Note that a worker can be alive, but their alive status is still False. This doesn't really matter, because we
+        # know the worker is alive according to the OS. The only way we know that something bad happened is when a
+        # worker is supposed to be alive but according to the OS it's not.
+        for worker_id in range(self.pool_params.n_jobs):
+            with self._worker_comms.get_worker_dead_lock(worker_id):
+                worker_died = self._worker_comms.is_worker_alive(worker_id) and not self._workers[worker_id].is_alive()
+            if worker_died:
+                # We need to add an exception if we're using the progress bar handler
+                if self._worker_comms.has_progress_bar():
+                    self._worker_comms.add_exception(RuntimeError, f"Worker-{worker_id} died unexpectedly")
+                self.terminate()
+                raise RuntimeError(f"Worker-{worker_id} died unexpectedly")
 
         return obtained_results
 
@@ -547,8 +564,8 @@ class WorkerPool:
                         except queue.Empty:
                             pass
 
-                        # Restart workers if necessary. This can yield intermediate results
-                        for results in self._restart_workers():
+                        # Check worker status (e.g., restarts). This can yield intermediate results
+                        for results in self._check_worker_status():
                             yield from results
                             n_active -= 1
 
@@ -560,8 +577,8 @@ class WorkerPool:
                         except queue.Empty:
                             pass
 
-                        # Restart workers if necessary. This can yield intermediate results
-                        for results in self._restart_workers():
+                        # Check worker status (e.g., restarts). This can yield intermediate results
+                        for results in self._check_worker_status():
                             yield from results
                             n_active -= 1
 
@@ -668,7 +685,7 @@ class WorkerPool:
                 t.join(timeout=0.01)
                 if not t.is_alive():
                     break
-                self._restart_workers()
+                self._check_worker_status()
             logger.debug("Done joining task queues")
 
             # When an exception occurred in the above process (i.e., the worker init function raises), we need to handle

@@ -1,10 +1,12 @@
 import logging
 import os
+import signal
 import types
 import unittest
 import warnings
 from itertools import product, repeat
 from multiprocessing import Barrier, Value
+from threading import Thread
 from unittest.mock import patch
 
 import numpy as np
@@ -25,7 +27,7 @@ def square(idx, x):
     return idx, x * x
 
 
-def extremely_large_output(idx, x):
+def extremely_large_output(idx, _):
     return idx, os.urandom(1024 * 1024)
 
 
@@ -691,9 +693,9 @@ class DaemonTest(unittest.TestCase):
             pool.map(self._square_daemon, ((X,) for X in repeat(self.test_data, 3)), chunk_size=1)
 
     @staticmethod
-    def _square_daemon(X):
+    def _square_daemon(x):
         with WorkerPool(n_jobs=4) as pool:
-            return pool.map(square, X, chunk_size=1)
+            return pool.map(square, x, chunk_size=1)
 
 
 class CPUPinningTest(unittest.TestCase):
@@ -722,7 +724,7 @@ class CPUPinningTest(unittest.TestCase):
                                                (4, [[0, 3]], [[0, 3], [0, 3], [0, 3], [0, 3]])]:
             # The test has been designed for a system with at least 4 cores. We'll skip those test cases where the CPU
             # IDs exceed the number of CPUs.
-            if cpu_ids is not None and np.array(cpu_ids).max() >= cpu_count():
+            if cpu_ids is not None and np.array(cpu_ids).max(initial=0) >= cpu_count():
                 continue
 
             with self.subTest(n_jobs=n_jobs, cpu_ids=cpu_ids), patch('mpire.pool.set_cpu_affinity') as p, \
@@ -1156,6 +1158,52 @@ class ExceptionTest(unittest.TestCase):
                 with self.subTest(function='square_raises_on_idx', map='imap'), self.assertRaises(ValueError):
                     list(pool.imap_unordered(self._square_raises_on_idx, self.test_data, progress_bar=progress_bar))
 
+    def test_defunct_processes_exit(self):
+        """
+        Tests if MPIRE correctly shuts down after process becomes defunct using exit()
+        """
+        print()
+        for n_jobs, progress_bar, worker_lifespan in [(1, False, None),
+                                                      (3, True, 1),
+                                                      (3, False, 3)]:
+            for start_method in TEST_START_METHODS:
+                # Progress bar on Windows + threading is not supported right now
+                if RUNNING_WINDOWS and start_method == 'threading' and progress_bar:
+                    continue
+                self.logger.debug(f"========== {start_method}, {n_jobs}, {progress_bar}, {worker_lifespan} ==========")
+                with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar, worker_lifespan=worker_lifespan,
+                                  start_method=start_method), self.assertRaises(SystemExit), \
+                        WorkerPool(n_jobs=n_jobs, start_method=start_method) as pool:
+                    pool.map(self._exit, range(100), progress_bar=progress_bar, worker_lifespan=worker_lifespan)
+
+    def test_defunct_processes_kill(self):
+        """
+        Tests if MPIRE correctly shuts down after one process becomes defunct using os.kill().
+
+        We kill worker 0 and to be sure it's alive we set an event object and then go in an infinite loop. The kill
+        thread waits until the event is set and then kills the worker. The other workers are also ensured to have done
+        something so we can test what happens during restarts
+        """
+        print()
+        for n_jobs, progress_bar, worker_lifespan in [(1, False, None),
+                                                      (3, True, 1),
+                                                      (3, False, 3)]:
+            for start_method in TEST_START_METHODS:
+                # Can't kill threads
+                if start_method == 'threading':
+                    continue
+
+                self.logger.debug(f"========== {start_method}, {n_jobs}, {progress_bar}, {worker_lifespan} ==========")
+                with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar, worker_lifespan=worker_lifespan,
+                                  start_method=start_method), self.assertRaises(RuntimeError), \
+                        WorkerPool(n_jobs=n_jobs, pass_worker_id=True, start_method=start_method) as pool:
+                    events = [pool.ctx.Event() for _ in range(n_jobs)]
+                    kill_thread = Thread(target=self._kill_process, args=(events[0], pool))
+                    kill_thread.start()
+                    pool.set_shared_objects(events)
+                    pool.map(self._worker_0_sleeps_others_square, range(1000), progress_bar=progress_bar,
+                             worker_lifespan=worker_lifespan, chunk_size=1)
+
     @staticmethod
     def _square_raises(_, x):
         raise ValueError(x)
@@ -1166,3 +1214,29 @@ class ExceptionTest(unittest.TestCase):
             raise ValueError(x)
         else:
             return idx, x * x
+
+    @staticmethod
+    def _exit(_):
+        exit()
+
+    @staticmethod
+    def _worker_0_sleeps_others_square(worker_id, events, x):
+        """
+        Worker 0 waits until the other workers have at least spun up and then sets her event and sleeps
+        """
+        if worker_id == 0:
+            [event.wait() for event in events[1:]]
+            events[0].set()
+            while True:
+                pass
+        else:
+            events[worker_id].set()
+            return x * x
+
+    @staticmethod
+    def _kill_process(event, pool):
+        """
+        Wait for event and kill
+        """
+        event.wait()
+        pool._workers[0].terminate()

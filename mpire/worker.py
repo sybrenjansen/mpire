@@ -107,7 +107,7 @@ class AbstractWorker:
                 self.is_running = False
                 raise StopWorker
 
-    def _exit_gracefully_windows(self):
+    def _exit_gracefully_windows(self) -> None:
         """
         Windows doesn't fully support signals as Unix-based systems do. Therefore, we have to work around it. This
         function is started in a thread. We wait for a kill signal (Event object) and interrupt the main thread if we
@@ -134,7 +134,8 @@ class AbstractWorker:
             t = Thread(target=self._exit_gracefully_windows)
             t.start()
 
-        self.worker_comms.signal_worker_alive(self.worker_id)
+        with self.worker_comms.get_worker_dead_lock(self.worker_id):
+            self.worker_comms.signal_worker_alive(self.worker_id)
 
         # Set tqdm and dashboard connection details. This is needed for nested pools and in the case forkserver or
         # spawn is used as start method
@@ -235,7 +236,8 @@ class AbstractWorker:
                 self.worker_comms.signal_worker_restart(self.worker_id)
 
         finally:
-            self.worker_comms.signal_worker_dead(self.worker_id)
+            with self.worker_comms.get_worker_dead_lock(self.worker_id):
+                self.worker_comms.signal_worker_dead(self.worker_id)
 
     def _get_func(self, additional_args: List) -> Callable:
         """
@@ -327,7 +329,7 @@ class AbstractWorker:
                 # The main process tells us to stop working, shutting down
                 raise
 
-            except Exception as err:
+            except (Exception, SystemExit) as err:
                 # An exception occurred inside the provided function. Let the signal handler know it shouldn't raise any
                 # StopWorker exceptions from the parent process anymore, we got this.
                 with self.is_running_lock:
@@ -344,7 +346,7 @@ class AbstractWorker:
         # Carry on
         return results, False
 
-    def _raise(self, args: Any, no_args: bool, err: Exception) -> None:
+    def _raise(self, args: Any, no_args: bool, err: Union[Exception, SystemExit]) -> None:
         """
         Create exception and pass it to the parent process. Let other processes know an exception is set
 
