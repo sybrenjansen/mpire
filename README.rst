@@ -139,7 +139,7 @@ copying/serialization. Only when you alter the object in the worker function it 
 
 See shared_objects_ for more details.
 
-.. _shared_objects: https://slimmer-ai.github.io/mpire/usage/worker_pool.html#shared-objects
+.. _shared_objects: https://slimmer-ai.github.io/mpire/usage/workerpool/shared_objects.html
 
 Worker initialization
 ~~~~~~~~~~~~~~~~~~~~~
@@ -165,7 +165,7 @@ Similarly, you can use the ``worker_exit`` feature to let MPIRE call a function 
 even let this exit function return results, which can be obtained later on. See the `worker_init and worker_exit`_
 section for more information.
 
-.. _worker_init and worker_exit: https://slimmer-ai.github.io/mpire/usage/map.html#worker-init-and-exit
+.. _worker_init and worker_exit: https://slimmer-ai.github.io/mpire/usage/map/worker_init_exit.html
 
 
 Worker insights
@@ -188,7 +188,7 @@ respectively:
 
 See `worker insights`_ for a more detailed example and expected output.
 
-.. _worker insights: https://slimmer-ai.github.io/mpire/usage/map.html#worker-insights
+.. _worker insights: https://slimmer-ai.github.io/mpire/usage/workerpool/worker_insights.html
 
 
 Timeouts
