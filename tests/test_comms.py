@@ -4,7 +4,7 @@ import queue
 import threading
 import unittest
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 from itertools import product
 from unittest.mock import patch
 
@@ -657,9 +657,9 @@ class WorkerCommsTest(unittest.TestCase):
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5)
         comms.init_comms()
 
-        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0),
-                                         datetime(1970, 1, 2, 0, 0, 0, 0),
-                                         datetime(1970, 1, 3, 0, 0, 0, 0)]
+        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 2, 0, 0, 0, 0, tzinfo=timezone.utc),
+                                         datetime(1970, 1, 3, 0, 0, 0, 0, tzinfo=timezone.utc),
+                                         datetime(1970, 1, 4, 0, 0, 0, 0, tzinfo=timezone.utc)]
         MockDatetimeNow.CURRENT_IDX = 0
 
         # Signal workers started
@@ -673,11 +673,11 @@ class WorkerCommsTest(unittest.TestCase):
                     comms.signal_worker_task_started(worker_id)
                     comms.signal_worker_exit_started(worker_id)
                     self.assertListEqual(comms._workers_time_task_started[worker_id * 3: worker_id * 3 + 3],
-                                         [-3600.0, 82800.0, 169200.0])
+                                         [86400.0, 172800.0, 259200.0])
 
-        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 10, 0),
-                                         datetime(1970, 1, 2, 0, 0, 9, 0),
-                                         datetime(1970, 1, 3, 0, 0, 8, 0)]
+        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 2, 0, 0, 10, 0, tzinfo=timezone.utc),
+                                         datetime(1970, 1, 3, 0, 0, 9, 0, tzinfo=timezone.utc),
+                                         datetime(1970, 1, 4, 0, 0, 8, 0, tzinfo=timezone.utc)]
 
         # Check timeouts
         with patch('mpire.comms.datetime', new=MockDatetimeNow):
@@ -705,10 +705,10 @@ class WorkerCommsTest(unittest.TestCase):
             with self.subTest(worker_id=worker_id):
                 comms.signal_worker_init_completed(worker_id)
                 self.assertListEqual(comms._workers_time_task_started[worker_id * 3: worker_id * 3 + 3],
-                                     [0.0, 82800.0, 169200.0])
+                                     [0.0, 172800.0, 259200.0])
                 comms.signal_worker_task_completed(worker_id)
                 self.assertListEqual(comms._workers_time_task_started[worker_id * 3: worker_id * 3 + 3],
-                                     [0.0, 0.0, 169200.0])
+                                     [0.0, 0.0, 259200.0])
                 comms.signal_worker_exit_completed(worker_id)
                 self.assertListEqual(comms._workers_time_task_started[worker_id * 3: worker_id * 3 + 3],
                                      [0.0, 0.0, 0.0])

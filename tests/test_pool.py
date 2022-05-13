@@ -1313,7 +1313,7 @@ class TimeoutTest(unittest.TestCase):
 
     @staticmethod
     def _init2():
-        time.sleep(0.5)
+        time.sleep(1)
 
     @staticmethod
     def _f1(x):
@@ -1321,7 +1321,7 @@ class TimeoutTest(unittest.TestCase):
 
     @staticmethod
     def _f2(x):
-        time.sleep(0.5)
+        time.sleep(1)
         return x
 
     @staticmethod
@@ -1330,4 +1330,4 @@ class TimeoutTest(unittest.TestCase):
 
     @staticmethod
     def _exit2():
-        time.sleep(0.5)
+        time.sleep(1)
