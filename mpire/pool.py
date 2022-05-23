@@ -39,27 +39,36 @@ class WorkerPool:
                  start_method: str = DEFAULT_START_METHOD, keep_alive: bool = False, use_dill: bool = False,
                  enable_insights: bool = False) -> None:
         """
-        :param n_jobs: Number of workers to spawn. If ``None``, will use ``cpu_count()``
+        :param n_jobs: Number of workers to spawn. If ``None``, will use ``mpire.cpu_count()``
         :param daemon: Whether to start the child processes as daemon
         :param cpu_ids: List of CPU IDs to use for pinning child processes to specific CPUs. The list must be as long as
             the number of jobs used (if ``n_jobs`` equals ``None`` it must be equal to ``mpire.cpu_count()``), or the
-            list must have exactly one element. In the former case, element x specifies the CPU ID(s) to use for child
-            process x. In the latter case the single element specifies the CPU ID(s) for all child  processes to use. A
-            single element can be either a single integer specifying a single CPU ID, or a list of integers specifying
-            that a single child process can make use of multiple CPU IDs. If ``None``, CPU pinning will be disabled.
-            Note that CPU pinning may only work on Linux based systems
-        :param shared_objects: ``None`` or any other type of object (multiple objects can be wrapped in a single tuple).
-            Shared objects is only passed on to the user function when it's not ``None``
-        :param pass_worker_id: Whether to pass on a worker ID to the user function or not
-        :param use_worker_state: Whether to let a worker have a worker state or not
-        :param start_method: What process start method to use. Options for multiprocessing: ``'fork'`` (default, if
+            list must have exactly one element. In the former case, element `i` specifies the CPU ID(s) to use for child
+            process `i`. In the latter case the single element specifies the CPU ID(s) for all child  processes to use.
+            A single element can be either a single integer specifying a single CPU ID, or a list of integers specifying
+            that a single child process can make use of multiple CPU IDs. If ``None``, CPU pinning will be disabled
+        :param shared_objects: Objects to be passed on as shared objects to the workers once. It will be passed on to
+            the target, ``worker_init``, and ``worker_exit`` functions. ``shared_objects`` is only passed on when it's
+            not ``None``. Shared objects will be copy-on-write when using ``fork`` as start method. When enabled,
+            functions receive the shared objects as second argument, depending on other settings. The order is:
+            ``worker_id``, ``shared_objects``, ``worker_state``, and finally the arguments passed on from
+            ``iterable_of_args``
+        :param pass_worker_id: Whether to pass on a worker ID to the target, ``worker_init``, and ``worker_exit``
+            functions. When enabled, functions receive the worker ID as first argument, depending on other settings. The
+            order is: ``worker_id``, ``shared_objects``, ``worker_state``, and finally the arguments passed on from
+            ``iterable_of_args``
+        :param use_worker_state: Whether to let a worker have a worker state. The worker state will be passed on to the
+            target, ``worker_init``, and ``worker_exit`` functions. When enabled, functions receive the worker state as
+            third argument, depending on other settings. The order is: ``worker_id``,  ``shared_objects``,
+            ``worker_state``, and finally the arguments passed on from ``iterable_of_args``
+        :param start_method: Which process start method to use. Options for multiprocessing: ``'fork'`` (default, if
             available), ``'forkserver'`` and ``'spawn'`` (default, if ``'fork'`` isn't available). For multithreading
             use ``'threading'``. See https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
             for more information and
             https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods for some
             caveats when using the ``'spawn'`` or ``'forkserver'`` methods
-        :param keep_alive: When True it will keep workers alive after completing a map call, allowing to reuse workers
-            when map is called with the same function and worker lifespan multiple times in a row
+        :param keep_alive: When ``True`` it will keep workers alive after completing a map call, allowing to reuse
+            workers
         :param use_dill: Whether to use dill as serialization backend. Some exotic types (e.g., lambdas, nested
             functions) don't work well when using ``spawn`` as start method. In such cased, use ``dill`` (can be a bit
             slower sometimes)
@@ -92,9 +101,10 @@ class WorkerPool:
         """
         Set whether to pass on the worker ID to the function to be executed or not (default= ``False``).
 
-        The worker ID will be the first argument passed on to the function
-
-        :param pass_on: Whether to pass on a worker ID to the user function or not
+        :param pass_on: Whether to pass on a worker ID to the target, ``worker_init``, and ``worker_exit``
+            functions. When enabled, functions receive the worker ID depending on other settings. The order is:
+            ``worker_id``, ``shared_objects``, ``worker_state``, and finally the arguments passed on using
+            ``iterable_of_args``
         """
         self.pool_params.pass_worker_id = pass_on
 
@@ -102,13 +112,11 @@ class WorkerPool:
         """
         Set shared objects to pass to the workers.
 
-        Shared objects will be copy-on-write. Process-aware shared objects (e.g., ``multiprocessing.Array``) can be used
-        to write to the same object from multiple processes. When providing shared objects the provided function in the
-        ``map`` function should receive the shared objects as its first argument if the worker ID is not passed on. If
-        the worker ID is passed on the shared objects will be the second argument.
-
-        :param shared_objects: ``None`` or any other type of object (multiple objects can be wrapped in a single tuple).
-            Shared objects is only passed on to the user function when it's not ``None``
+        :param shared_objects: Objects to be passed on as shared objects to the workers once. It will be passed on to
+            the target, ``worker_init``, and ``worker_exit`` functions. ``shared_objects`` is only passed on when it's
+            not ``None``. Shared objects will be copy-on-write when using ``fork`` as start method. When enabled,
+            functions receive the shared objects depending on other settings. The order is: ``worker_id``,
+            ``shared_objects``, ``worker_state``, and finally the arguments passed on using ``iterable_of_args```
         """
         self.pool_params.shared_objects = shared_objects
 
@@ -117,7 +125,10 @@ class WorkerPool:
         Set whether or not each worker should have its own state variable. Each worker has its own state, so it's not
         shared between the workers.
 
-        :param use_worker_state: Whether to let a worker have a worker state or not
+        :param use_worker_state: Whether to let a worker have a worker state. The worker state will be passed on to the
+            target, ``worker_init``, and ``worker_exit`` functions. When enabled, functions receive the worker state
+            depending on other settings. The order is: ``worker_id``,  ``shared_objects``, ``worker_state``, and finally
+            the arguments passed on using ``iterable_of_args``
         """
         self.pool_params.use_worker_state = use_worker_state
 
@@ -126,7 +137,6 @@ class WorkerPool:
         Set whether workers should be kept alive in between consecutive map calls.
 
         :param keep_alive: When True it will keep workers alive after completing a map call, allowing to reuse workers
-            when map is called with the same function and worker lifespan multiple times in a row
         """
         self.pool_params.keep_alive = keep_alive
 

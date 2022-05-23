@@ -191,7 +191,7 @@ def make_single_arguments(iterable_of_args: Iterable, generator: bool = True) ->
 
 def format_seconds(seconds: Optional[Union[int, float]], with_milliseconds: bool) -> str:
     """
-    Format seconds to a string, without milliseconds
+    Format seconds to a string, optionally with or without milliseconds
 
     :param seconds: Number of seconds
     :param with_milliseconds: Whether to display milliseconds as well
