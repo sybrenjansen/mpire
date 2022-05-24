@@ -296,7 +296,7 @@ class WorkerComms:
         """
         self._results_queue.put((worker_id, results))
 
-    def get_results(self, block: bool = True, timeout: Optional[float] = None, in_thread: bool = False) -> Any:
+    def get_results(self, block: bool = True, timeout: Optional[float] = None) -> Any:
         """
         Obtain the next result from the results queue. We catch the queue.Empty and raise it again after the
         DelayedKeyboardInterrupt, to clean up the exception traceback whenever a keyboard interrupt is issued. If we
@@ -304,11 +304,10 @@ class WorkerComms:
 
         :param block: Whether to block (wait for results)
         :param timeout: How long to wait for results in case ``block==True``
-        :param in_thread: Whether this function is called from within a thread
         :return: The next result from the queue, which is the result of calling the function
         """
         queue_empty_error = None
-        with DelayedKeyboardInterrupt(in_thread=in_thread):
+        with DelayedKeyboardInterrupt():
             try:
                 self._last_completed_task_worker_id, results = self._results_queue.get(block=block, timeout=timeout)
                 self._results_queue.task_done()
@@ -325,7 +324,7 @@ class WorkerComms:
         """
         self._exit_results_queues[worker_id].put(results)
 
-    def get_exit_results(self, worker_id: int, block: bool = True, in_thread: bool = False) -> Any:
+    def get_exit_results(self, worker_id: int, block: bool = True) -> Any:
         """
         Obtain exit results from a specific worker. When block=False and the queue is empty we catch the queue.Empty and
         raise it again after the DelayedKeyboardInterrupt, to clean up the exception traceback whenever a keyboard
@@ -334,7 +333,6 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         :param block: Whether to block (wait for results)
-        :param in_thread: Whether this function is called from within a thread
         :return: Exit results
         """
         # We always check the queue when block=False. This is needed when keep_alive=True and the workers have not been
@@ -342,7 +340,7 @@ class WorkerComms:
         # drain the queue. When terminate is called the exception_thrown is set
         while not self.exception_thrown() or not block:
             queue_empty_error = None
-            with DelayedKeyboardInterrupt(in_thread=in_thread):
+            with DelayedKeyboardInterrupt():
                 try:
                     results = self._exit_results_queues[worker_id].get(block=block, timeout=0.01)
                     self._exit_results_queues[worker_id].task_done()
@@ -412,11 +410,11 @@ class WorkerComms:
         with DelayedKeyboardInterrupt():
             self._exception_queue.put((POISON_PILL, POISON_PILL))
 
-    def get_exception(self, in_thread: bool = False) -> Tuple[type, str]:
+    def get_exception(self) -> Tuple[type, str]:
         """
         :return: Tuple containing the type of the exception and the traceback string
         """
-        with DelayedKeyboardInterrupt(in_thread):
+        with DelayedKeyboardInterrupt():
             return self._exception_queue.get(block=True)
 
     def task_done_exception(self) -> None:
@@ -594,7 +592,7 @@ class WorkerComms:
         got_results = False
         try:
             while True:
-                self.get_results(block=False, in_thread=True)
+                self.get_results(block=False)
                 dont_wait_event.clear()
                 got_results = True
         except (queue.Empty, OSError):
@@ -606,7 +604,7 @@ class WorkerComms:
         if self._exit_results_queues:
             got_results = False
             try:
-                self.get_exit_results(worker_id, block=False, in_thread=True)
+                self.get_exit_results(worker_id, block=False)
                 dont_wait_event.clear()
                 got_results = True
             except (queue.Empty, OSError):

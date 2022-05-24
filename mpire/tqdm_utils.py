@@ -2,7 +2,6 @@ import logging
 from ctypes import c_char
 from multiprocessing import Array, Event, Lock
 from multiprocessing.managers import SyncManager
-
 from typing import Optional, Tuple
 
 from mpire.signal import DisableKeyboardInterruptSignal

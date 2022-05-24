@@ -163,7 +163,7 @@ class ProgressBarHandler:
                 if self.worker_comms.exception_thrown() or self.worker_comms.kill_signal_received():
                     progress_bar.set_description('Exception occurred, terminating ... ')
                     if self.worker_comms.exception_thrown():
-                        _, traceback_str = self.worker_comms.get_exception(in_thread=True)
+                        _, traceback_str = self.worker_comms.get_exception()
                         self._send_dashboard_update(progress_bar, failed=True, traceback_str=traceback_str)
                         self.worker_comms.task_done_exception()
                     elif self.worker_comms.kill_signal_received():

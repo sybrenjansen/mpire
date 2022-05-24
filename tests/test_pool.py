@@ -6,7 +6,7 @@ import unittest
 import warnings
 from itertools import product, repeat
 from multiprocessing import Barrier, Value
-from threading import Thread
+from threading import current_thread, main_thread, Thread
 from unittest.mock import patch
 
 import numpy as np
@@ -234,6 +234,38 @@ class MapTest(unittest.TestCase):
                 results_list = pool.imap_unordered(square, self.test_data)
                 self.assertIsInstance(results_list, types.GeneratorType)
                 self.assertEqual(self.test_desired_output, sorted(results_list, key=lambda tup: tup[0]))
+
+
+class PoolInThreadTest(unittest.TestCase):
+
+    def setUp(self):
+        self.test_data = [1, 2, 3, 5, 6, 9, 37, 42, 1337, 0, 3, 5, 0]
+        self.test_desired_output = [self._square(x) for x in self.test_data]
+
+    def test_start_methods(self):
+        """
+        Test that a WorkerPool can be started inside a thread, which isn't the main thread. Test for different start
+        methods. All should work just fine
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method):
+                t = Thread(target=self._map_thread, args=(start_method,))
+                t.start()
+                t.join()
+
+    def _map_thread(self, start_method):
+        """
+        This function is called from within a thread
+        """
+        self.assertNotEqual(current_thread(), main_thread())
+        with WorkerPool(2, start_method=start_method) as pool:
+            results_list = pool.map(self._square, self.test_data)
+            self.assertIsInstance(results_list, list)
+            self.assertListEqual(self.test_desired_output, results_list)
+
+    @staticmethod
+    def _square(x):
+        return x * x
 
 
 class WorkerIDTest(unittest.TestCase):
@@ -682,15 +714,9 @@ class DaemonTest(unittest.TestCase):
         Test for different start methods
         """
         for start_method in TEST_START_METHODS:
-            if start_method == 'threading':
-                continue
             with self.subTest(start_method=start_method), \
                     WorkerPool(n_jobs=2, daemon=False, start_method=start_method) as pool:
                 pool.map(self._square_daemon, ((X,) for X in repeat(self.test_data, 3)), chunk_size=1)
-
-        # This won't work for threading
-        with self.assertRaises(ValueError), WorkerPool(n_jobs=3, daemon=False, start_method='threading') as pool:
-            pool.map(self._square_daemon, ((X,) for X in repeat(self.test_data, 3)), chunk_size=1)
 
     @staticmethod
     def _square_daemon(x):

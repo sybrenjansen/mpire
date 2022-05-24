@@ -9,7 +9,7 @@ import traceback
 import _thread
 from datetime import datetime
 from functools import partial
-from threading import Thread
+from threading import current_thread, main_thread, Thread
 from typing import Any, Callable, List, Optional, Tuple, Union, Type
 
 try:
@@ -84,7 +84,7 @@ class AbstractWorker:
         self.is_running_lock = ctx.Lock()
 
         # Register handler for graceful shutdown. This doesn't work on Windows
-        if not RUNNING_WINDOWS:
+        if not RUNNING_WINDOWS and current_thread() == main_thread():
             signal.signal(signal.SIGUSR1, self._exit_gracefully)
 
     def _exit_gracefully(self, *_) -> None:
@@ -129,7 +129,7 @@ class AbstractWorker:
         life span is not yet reached it will execute the new task and put the results in the results queue.
         """
         # Enable graceful shutdown for Windows. Note that we can't kill threads in Python
-        if RUNNING_WINDOWS and self.pool_params.start_method != "threading":
+        if RUNNING_WINDOWS and self.pool_params.start_method != "threading" and current_thread() == main_thread():
             signal.signal(signal.SIGINT, self._exit_gracefully)
             t = Thread(target=self._exit_gracefully_windows)
             t.start()
