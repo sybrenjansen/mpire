@@ -4,10 +4,12 @@ Changelog
 Dev
 ---
 
+* A timeout for the target, ``worker_init``, and ``worker_exit`` functions can be specified after which a worker is
+  stopped (`#36`_)
 * A WorkerPool can now be started within a thread which isn't the main thread (`#44`_)
 
+.. _#36: https://github.com/Slimmer-AI/mpire/issues/36
 .. _#44: https://github.com/Slimmer-AI/mpire/issues/44
-
 
 2.3.5
 -----

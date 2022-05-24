@@ -182,7 +182,7 @@ class AbstractWorker:
                         if self.map_params.worker_exit:
                             self._run_exit_func(additional_args)
                             self.worker_comms.wait_until_all_exit_results_obtained()
-                        if self.worker_comms.has_progress_bar():
+                        if self.map_params.progress_bar:
                             self.worker_comms.wait_until_progress_bar_is_complete()
                         return
                     else:
@@ -261,7 +261,17 @@ class AbstractWorker:
             with TimeIt(self.worker_insights.worker_init_time, self.worker_id):
                 self.map_params.worker_init(*additional_args)
 
-        return self._run_safely(_init_func, no_args=True)[1]
+        # Optionally update timeout info
+        if self.map_params.worker_init_timeout is not None:
+            try:
+                self.worker_comms.signal_worker_init_started(self.worker_id)
+                should_return = self._run_safely(_init_func, no_args=True)[1]
+            finally:
+                self.worker_comms.signal_worker_init_completed(self.worker_id)
+        else:
+            should_return = self._run_safely(_init_func, no_args=True)[1]
+
+        return should_return
 
     def _run_func(self, func: Callable, args: List) -> Tuple[Any, bool]:
         """
@@ -275,11 +285,21 @@ class AbstractWorker:
         def _func():
             with TimeIt(self.worker_insights.worker_working_time, self.worker_id,
                         self.max_task_duration_list, lambda: self._format_args(args, separator=' | ')):
-                results = func(args)
+                _results = func(args)
             self.worker_insights.update_n_completed_tasks(self.worker_id)
-            return results
+            return _results
 
-        return self._run_safely(_func, args)
+        # Optionally update timeout info
+        if self.map_params.task_timeout is not None:
+            try:
+                self.worker_comms.signal_worker_task_started(self.worker_id)
+                results = self._run_safely(_func, args)
+            finally:
+                self.worker_comms.signal_worker_task_completed(self.worker_id)
+        else:
+            results = self._run_safely(_func, args)
+
+        return results
 
     def _run_exit_func(self, additional_args: List) -> bool:
         """
@@ -292,7 +312,15 @@ class AbstractWorker:
             with TimeIt(self.worker_insights.worker_exit_time, self.worker_id):
                 return self.map_params.worker_exit(*additional_args)
 
-        results, should_return = self._run_safely(_exit_func, no_args=True)
+        # Optionally update timeout info
+        if self.map_params.worker_exit_timeout is not None:
+            try:
+                self.worker_comms.signal_worker_exit_started(self.worker_id)
+                results, should_return = self._run_safely(_exit_func, no_args=True)
+            finally:
+                self.worker_comms.signal_worker_exit_completed(self.worker_id)
+        else:
+            results, should_return = self._run_safely(_exit_func, no_args=True)
 
         if should_return:
             return True
@@ -382,7 +410,7 @@ class AbstractWorker:
 
                 # Add exception. When we have a progress bar, we add an additional one
                 self.worker_comms.add_exception(type(err), traceback_str)
-                if self.worker_comms.has_progress_bar():
+                if self.map_params.progress_bar:
                     self.worker_comms.add_exception(type(err), traceback_str)
 
     def _format_args(self, args: Any, no_args: bool = False, separator: str = '\n') -> str:
@@ -449,7 +477,7 @@ class AbstractWorker:
 
         :param force_update: Whether to force an update
         """
-        if self.worker_comms.has_progress_bar():
+        if self.map_params.progress_bar:
             (self.progress_bar_last_updated,
              self.progress_bar_n_tasks_completed) = self.worker_comms.task_completed_progress_bar(
                 self.worker_id, self.progress_bar_last_updated, self.progress_bar_n_tasks_completed, force_update

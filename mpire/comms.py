@@ -4,7 +4,7 @@ import queue
 import threading
 import time
 from datetime import datetime
-from typing import Any, Generator, List, Optional, Tuple, Union
+from typing import Any, Generator, Optional, Tuple, Union
 
 from mpire.params import WorkerMapParams
 from mpire.signal import DelayedKeyboardInterrupt
@@ -62,6 +62,11 @@ class WorkerComms:
         self._workers_dead = None
         self._workers_dead_locks = None
 
+        # Array where the child processes indicate when they started a task, worker_init, and worker_exit used for
+        # checking timeouts. The array size is n_jobs * 3, where worker_id * 3 + i is used for indexing. i=0 is used for
+        # the worker_init, i=1 for the main task, and i=2 for the worker_exit function.
+        self._workers_time_task_started = None
+
         # Queue where the child processes can pass on an encountered exception
         self._exception_queue = None
 
@@ -84,7 +89,7 @@ class WorkerComms:
     # Initialization
     ################
 
-    def init_comms(self, has_worker_exit: bool, has_progress_bar: bool) -> None:
+    def init_comms(self) -> None:
         """
         Initialize/Reset comms containers.
 
@@ -92,9 +97,6 @@ class WorkerComms:
         instead. However, in the (unlikely) scenario that threading does get one, we explicitly switch to a
         multiprocessing.JoinableQueue for both the exception queue and progress bar tasks completed queue, because the
         progress bar handler needs process-aware objects.
-
-        :param has_worker_exit: Whether there's a worker_exit function provided
-        :param has_progress_bar: Whether there's a progress bar
         """
         # Task related
         self._task_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
@@ -102,18 +104,15 @@ class WorkerComms:
 
         # Results related
         self._results_queue = self.ctx.JoinableQueue()
-        if has_worker_exit:
-            self._exit_results_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
-            self._all_exit_results_obtained = self.ctx.Event()
-        else:
-            self._exit_results_queues = []
-            self._all_exit_results_obtained = None
+        self._exit_results_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
+        self._all_exit_results_obtained = self.ctx.Event()
 
         # Worker status
         self._worker_done_array = self.ctx.Array('b', self.n_jobs, lock=False)
         self._workers_dead = [self.ctx.Event() for _ in range(self.n_jobs)]
         [worker_dead.set() for worker_dead in self._workers_dead]
         self._workers_dead_locks = [self.ctx.Lock() for _ in range(self.n_jobs)]
+        self._workers_time_task_started = self.ctx.Array('d', self.n_jobs * 3, lock=True)
 
         # Exception related
         self._exception_queue = self.ctx.JoinableQueue()
@@ -121,18 +120,11 @@ class WorkerComms:
         self._kill_signal_received.clear()
 
         # Progress bar related
-        if has_progress_bar:
-            self._tasks_completed_array = self.ctx.Array('L', self.n_jobs, lock=False)  # ULong (should be enough)
-            self._tasks_completed_locks = [self.ctx.Lock() for _ in range(self.n_jobs)]
-            self._progress_bar_last_updated = datetime.now()
-            self._progress_bar_shutdown = self.ctx.Event()
-            self._progress_bar_complete = self.ctx.Event()
-        else:
-            self._tasks_completed_array = None
-            self._tasks_completed_locks = None
-            self._progress_bar_last_updated = None
-            self._progress_bar_shutdown = None
-            self._progress_bar_complete = None
+        self._tasks_completed_array = self.ctx.Array('L', self.n_jobs, lock=False)  # ULong (should be enough)
+        self._tasks_completed_locks = [self.ctx.Lock() for _ in range(self.n_jobs)]
+        self._progress_bar_last_updated = datetime.now()
+        self._progress_bar_shutdown = self.ctx.Event()
+        self._progress_bar_complete = self.ctx.Event()
 
     def reset_last_completed_task_info(self) -> None:
         """
@@ -144,12 +136,6 @@ class WorkerComms:
     ################
     # Progress bar
     ################
-
-    def has_progress_bar(self) -> bool:
-        """
-        :return: Whether we have a progress bar
-        """
-        return self._tasks_completed_array is not None
 
     def task_completed_progress_bar(self, worker_id: int, progress_bar_last_updated: datetime,
                                     progress_bar_n_tasks_completed: Optional[int] = None,
@@ -324,7 +310,7 @@ class WorkerComms:
         """
         self._exit_results_queues[worker_id].put(results)
 
-    def get_exit_results(self, worker_id: int, block: bool = True) -> Any:
+    def get_exit_results(self, worker_id: int, timeout: Optional[float], block: bool = True) -> Any:
         """
         Obtain exit results from a specific worker. When block=False and the queue is empty we catch the queue.Empty and
         raise it again after the DelayedKeyboardInterrupt, to clean up the exception traceback whenever a keyboard
@@ -332,6 +318,7 @@ class WorkerComms:
         which we don't want.
 
         :param worker_id: Worker ID
+        :param timeout: Timeout in seconds for the worker_exit function
         :param block: Whether to block (wait for results)
         :return: Exit results
         """
@@ -339,6 +326,8 @@ class WorkerComms:
         # explicitly stopped and joined. In that case terminate() is called from WorkerPool.__exit__ and we need to
         # drain the queue. When terminate is called the exception_thrown is set
         while not self.exception_thrown() or not block:
+            if timeout is not None and self.has_worker_exit_timed_out(worker_id, timeout):
+                raise TimeoutError
             queue_empty_error = None
             with DelayedKeyboardInterrupt():
                 try:
@@ -350,21 +339,6 @@ class WorkerComms:
                         queue_empty_error = e
             if queue_empty_error is not None:
                 raise queue_empty_error
-
-    def get_exit_results_all_workers(self) -> List[Any]:
-        """
-        Obtain results from the exit results queues (should be done before joining the workers). When an error occurred
-        inside the exit function we return immediately. There's always exactly one entry in a queue.
-
-        :return: Exit results
-        """
-        exit_results = []
-        for worker_id in range(self.n_jobs):
-            results = self.get_exit_results(worker_id)
-            if self.exception_thrown():
-                return exit_results
-            exit_results.append(results)
-        return exit_results
 
     def signal_all_exit_results_obtained(self) -> None:
         """
@@ -601,15 +575,14 @@ class WorkerComms:
 
         # Get results from the exit results queue. If we got any, keep going and inform the other termination threads to
         # wait until this one's finished
-        if self._exit_results_queues:
-            got_results = False
-            try:
-                self.get_exit_results(worker_id, block=False)
-                dont_wait_event.clear()
-                got_results = True
-            except (queue.Empty, OSError):
-                if got_results:
-                    dont_wait_event.set()
+        got_results = False
+        try:
+            self.get_exit_results(worker_id, timeout=None, block=False)
+            dont_wait_event.clear()
+            got_results = True
+        except (queue.Empty, OSError):
+            if got_results:
+                dont_wait_event.set()
 
     def drain_queues(self) -> None:
         """
@@ -678,3 +651,96 @@ class WorkerComms:
                 q.join_thread()
             except OSError:
                 pass
+
+    ################
+    # Timeouts
+    ################
+
+    def signal_worker_init_started(self, worker_id: int) -> None:
+        """
+        Sets the worker_init started timestamp for a specific worker
+
+        :param worker_id: Worker ID
+        """
+        self._workers_time_task_started[worker_id * 3 + 0] = datetime.now().timestamp()
+
+    def signal_worker_task_started(self, worker_id: int) -> None:
+        """
+        Sets the task started timestamp for a specific worker
+
+        :param worker_id: Worker ID
+        """
+        self._workers_time_task_started[worker_id * 3 + 1] = datetime.now().timestamp()
+
+    def signal_worker_exit_started(self, worker_id: int) -> None:
+        """
+        Sets the worker_exit started timestamp for a specific worker
+
+        :param worker_id: Worker ID
+        """
+        self._workers_time_task_started[worker_id * 3 + 2] = datetime.now().timestamp()
+
+    def signal_worker_init_completed(self, worker_id: int) -> None:
+        """
+        Resets the worker_init started timestamp for a specific worker
+
+        :param worker_id: Worker ID
+        """
+        self._workers_time_task_started[worker_id * 3 + 0] = 0
+
+    def signal_worker_task_completed(self, worker_id: int) -> None:
+        """
+        Resets the task started timestamp for a specific worker
+
+        :param worker_id: Worker ID
+        """
+        self._workers_time_task_started[worker_id * 3 + 1] = 0
+
+    def signal_worker_exit_completed(self, worker_id: int) -> None:
+        """
+        Resets the worker_exit started timestamp for a specific worker
+
+        :param worker_id: Worker ID
+        """
+        self._workers_time_task_started[worker_id * 3 + 2] = 0
+
+    def has_worker_init_timed_out(self, worker_id: int, timeout: float) -> bool:
+        """
+        Checks whether a worker_init takes longer than the timeout value
+
+        :param worker_id: Worker ID
+        :param timeout: Timeout in seconds
+        :return: True when time has expired, False otherwise
+        """
+        return self._has_worker_timed_out(self._workers_time_task_started[worker_id * 3 + 0], timeout)
+
+    def has_worker_task_timed_out(self, worker_id: int, timeout: float) -> bool:
+        """
+        Checks whether a worker task takes longer than the timeout value
+
+        :param worker_id: Worker ID
+        :param timeout: Timeout in seconds
+        :return: True when time has expired, False otherwise
+        """
+        return self._has_worker_timed_out(self._workers_time_task_started[worker_id * 3 + 1], timeout)
+
+    def has_worker_exit_timed_out(self, worker_id: int, timeout: float) -> bool:
+        """
+        Checks whether a worker_exit takes longer than the timeout value
+
+        :param worker_id: Worker ID
+        :param timeout: Timeout in seconds
+        :return: True when time has expired, False otherwise
+        """
+        return self._has_worker_timed_out(self._workers_time_task_started[worker_id * 3 + 2], timeout)
+
+    @staticmethod
+    def _has_worker_timed_out(started_time: float, timeout: float) -> bool:
+        """
+        Checks whether time has passed beyond the timeout
+
+        :param started_time: Timestamp
+        :param timeout: Timeout in seconds
+        :return: True when time has expired, False otherwise
+        """
+        return False if started_time == 0.0 else (datetime.now().timestamp() - started_time) >= timeout

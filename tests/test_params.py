@@ -77,29 +77,40 @@ class WorkerMapParamsTest(unittest.TestCase):
         """
         Test equality
         """
-        params = WorkerMapParams(lambda x: x, None, None, None)
+        params = WorkerMapParams(lambda x: x, None, None, None, False, None, None, None)
 
         with self.subTest('not initialized'), warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            for func, worker_init, worker_exit, worker_lifespan in product(
+            for (func, worker_init, worker_exit, worker_lifespan, progress_bar,
+                 task_timeout, worker_init_timeout, worker_exit_timeout) in product(
                     [self._f1, self._f2],
                     [None, self._init1, self._init2],
                     [None, self._exit1, self._exit2],
-                    [None, 42, 1337]
+                    [None, 42, 1337],
+                    [False, True],
+                    [None, 30],
+                    [None, 42],
+                    [None, 37],
             ):
-                self.assertNotEqual(params, WorkerMapParams(func, worker_init, worker_exit, worker_lifespan))
+                self.assertNotEqual(params, WorkerMapParams(func, worker_init, worker_exit, worker_lifespan,
+                                                            progress_bar, task_timeout, worker_init_timeout,
+                                                            worker_exit_timeout))
 
-        params = WorkerMapParams(self._f1, self._init1, self._exit1, 42)
+        params = WorkerMapParams(self._f1, self._init1, self._exit1, 42, True, 1, 2, 3)
 
         with self.subTest('initialized and nothing changed'):
-            self.assertEqual(params, WorkerMapParams(self._f1, self._init1, self._exit1, 42))
+            self.assertEqual(params, WorkerMapParams(self._f1, self._init1, self._exit1, 42, True, 1, 2, 3))
 
         with self.subTest('initialized and a parameter changed'), warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            self.assertNotEqual(params, WorkerMapParams(self._f2, self._init1, self._exit1, 42))
-            self.assertNotEqual(params, WorkerMapParams(self._f1, self._init2, self._exit1, 42))
-            self.assertNotEqual(params, WorkerMapParams(self._f1, self._init1, self._exit2, 42))
-            self.assertNotEqual(params, WorkerMapParams(self._f1, self._init1, self._exit1, 1337))
+            self.assertNotEqual(params, WorkerMapParams(self._f2, self._init1, self._exit1, 42, True, 1, 2, 3))
+            self.assertNotEqual(params, WorkerMapParams(self._f1, self._init2, self._exit1, 42, True, 1, 2, 3))
+            self.assertNotEqual(params, WorkerMapParams(self._f1, self._init1, self._exit2, 42, True, 1, 2, 3))
+            self.assertNotEqual(params, WorkerMapParams(self._f1, self._init1, self._exit1, 1337, True, 1, 2, 3))
+            self.assertNotEqual(params, WorkerMapParams(self._f1, self._init1, self._exit1, 42, False, 1, 2, 3))
+            self.assertNotEqual(params, WorkerMapParams(self._f1, self._init1, self._exit1, 42, True, 2, 2, 3))
+            self.assertNotEqual(params, WorkerMapParams(self._f1, self._init1, self._exit1, 42, True, 1, 3, 3))
+            self.assertNotEqual(params, WorkerMapParams(self._f1, self._init1, self._exit1, 42, True, 1, 2, 4))
 
     @staticmethod
     def _init1():
@@ -138,19 +149,22 @@ class CheckMapParametersTest(unittest.TestCase):
         with self.subTest('get n_tasks', iterable_len=100):
             n_tasks, *_ = check_map_parameters(
                 pool_params, iterable_of_args=(x for x in []), iterable_len=100, max_tasks_active=None, chunk_size=None,
-                n_splits=None, worker_lifespan=None, progress_bar=False, progress_bar_position=0
+                n_splits=None, worker_lifespan=None, progress_bar=False, progress_bar_position=0, task_timeout=None,
+                worker_init_timeout=None, worker_exit_timeout=None
             )
             self.assertEqual(n_tasks, 100)
         with self.subTest('get n_tasks, __len__ implemented', iterable_len=100):
             n_tasks, *_ = check_map_parameters(
                 pool_params, iterable_of_args=[1, 2, 3], iterable_len=100, max_tasks_active=None, chunk_size=None,
-                n_splits=None, worker_lifespan=None, progress_bar=False, progress_bar_position=0
+                n_splits=None, worker_lifespan=None, progress_bar=False, progress_bar_position=0, task_timeout=None,
+                worker_init_timeout=None, worker_exit_timeout=None
             )
             self.assertEqual(n_tasks, 100)
         with self.subTest('get n_tasks, __len__ implemented', iterable_len=None):
             n_tasks, *_ = check_map_parameters(
                 pool_params, iterable_of_args=[1, 2, 3], iterable_len=None, max_tasks_active=None, chunk_size=None,
-                n_splits=None, worker_lifespan=None, progress_bar=False, progress_bar_position=0
+                n_splits=None, worker_lifespan=None, progress_bar=False, progress_bar_position=0, task_timeout=None,
+                worker_init_timeout=None, worker_exit_timeout=None
             )
             self.assertEqual(n_tasks, 3)
 
@@ -162,7 +176,8 @@ class CheckMapParametersTest(unittest.TestCase):
             with self.subTest('no iterable_len', chunk_size=None):
                 n_tasks, max_tasks_active, chunk_size, progress_bar = check_map_parameters(
                     pool_params, iterable_of_args=(x for x in []), iterable_len=None, max_tasks_active=None,
-                    chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False, progress_bar_position=0
+                    chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False, progress_bar_position=0,
+                    task_timeout=None, worker_init_timeout=None, worker_exit_timeout=None
                 )
                 self.assertIsNone(n_tasks)
                 self.assertEqual(chunk_size, 1)
@@ -170,7 +185,8 @@ class CheckMapParametersTest(unittest.TestCase):
             with self.subTest('no iterable_len', progress_bar=True):
                 n_tasks, max_tasks_active, chunk_size, progress_bar = check_map_parameters(
                     pool_params, iterable_of_args=(x for x in []), iterable_len=None, max_tasks_active=None,
-                    chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=True, progress_bar_position=0
+                    chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=True, progress_bar_position=0,
+                    task_timeout=None, worker_init_timeout=None, worker_exit_timeout=None
                 )
                 self.assertIsNone(n_tasks)
                 self.assertEqual(chunk_size, 1)
@@ -187,21 +203,24 @@ class CheckMapParametersTest(unittest.TestCase):
             with self.subTest(chunk_size=chunk_size):
                 check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
                                      chunk_size=chunk_size, n_splits=None, worker_lifespan=None,
-                                     progress_bar=False, progress_bar_position=0)
+                                     progress_bar=False, progress_bar_position=0, task_timeout=None,
+                                     worker_init_timeout=None, worker_exit_timeout=None)
 
-        # chunk_size should be an integer or None
+        # chunk_size should be an integer, float, or None
         for chunk_size in ['3', {8}]:
             with self.subTest(chunk_size=chunk_size), self.assertRaises(TypeError):
                 check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
                                      chunk_size=chunk_size, n_splits=None, worker_lifespan=None, progress_bar=False,
-                                     progress_bar_position=0)
+                                     progress_bar_position=0, task_timeout=None, worker_init_timeout=None,
+                                     worker_exit_timeout=None)
 
         # chunk_size should be positive > 0
         for chunk_size in [0, -5]:
             with self.subTest(chunk_size=chunk_size), self.assertRaises(ValueError):
                 check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
-                                     chunk_size=chunk_size, n_splits=None, worker_lifespan=None,
-                                     progress_bar=False, progress_bar_position=0)
+                                     chunk_size=chunk_size, n_splits=None, worker_lifespan=None, progress_bar=False,
+                                     progress_bar_position=0, task_timeout=None, worker_init_timeout=None,
+                                     worker_exit_timeout=None)
 
     def test_n_splits(self):
         """
@@ -214,21 +233,24 @@ class CheckMapParametersTest(unittest.TestCase):
             with self.subTest(n_splits=n_splits):
                 check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
                                      chunk_size=None, n_splits=n_splits, worker_lifespan=None, progress_bar=False,
-                                     progress_bar_position=0)
+                                     progress_bar_position=0, task_timeout=None, worker_init_timeout=None,
+                                     worker_exit_timeout=None)
 
-        # n_splits should be an integer, float, or None
-        for n_splits in ['3', {8}]:
+        # n_splits should be an integer or None
+        for n_splits in ['3', 3.14, {8}]:
             with self.subTest(n_splits=n_splits), self.assertRaises(TypeError):
                 check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
                                      chunk_size=None, n_splits=n_splits, worker_lifespan=None, progress_bar=False,
-                                     progress_bar_position=0)
+                                     progress_bar_position=0, task_timeout=None, worker_init_timeout=None,
+                                     worker_exit_timeout=None)
 
         # n_splits should be positive > 0
         for n_splits in [0, -5]:
             with self.subTest(n_splits=n_splits), self.assertRaises(ValueError):
                 check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
                                      chunk_size=None, n_splits=n_splits, worker_lifespan=None, progress_bar=False,
-                                     progress_bar_position=0)
+                                     progress_bar_position=0, task_timeout=None, worker_init_timeout=None,
+                                     worker_exit_timeout=None)
 
     def test_max_tasks_active(self):
         """
@@ -243,23 +265,25 @@ class CheckMapParametersTest(unittest.TestCase):
                     _, new_max_tasks_active, *_ = check_map_parameters(
                         pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=max_tasks_active,
                         chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
-                        progress_bar_position=0
+                        progress_bar_position=0, task_timeout=None, worker_init_timeout=None, worker_exit_timeout=None
                     )
                     self.assertEqual(new_max_tasks_active, max_tasks_active or n_jobs * 2)
 
-            # max_tasks_active should be an integer, float, or None
-            for max_tasks_active in ['3', {8}]:
+            # max_tasks_active should be an integer or None
+            for max_tasks_active in ['3', 3.14, {8}]:
                 with self.subTest(n_jobs=n_jobs, max_tasks_active=max_tasks_active), self.assertRaises(TypeError):
                     check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None,
                                          max_tasks_active=max_tasks_active, chunk_size=None, n_splits=None,
-                                         worker_lifespan=None, progress_bar=False, progress_bar_position=0)
+                                         worker_lifespan=None, progress_bar=False, progress_bar_position=0,
+                                         task_timeout=None, worker_init_timeout=None, worker_exit_timeout=None)
 
             # max_tasks_active should be positive > 0
             for max_tasks_active in [0, -5]:
                 with self.subTest(n_jobs=n_jobs, max_tasks_active=max_tasks_active), self.assertRaises(ValueError):
                     check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None,
                                          max_tasks_active=max_tasks_active, chunk_size=None, n_splits=None,
-                                         worker_lifespan=None, progress_bar=False, progress_bar_position=0)
+                                         worker_lifespan=None, progress_bar=False, progress_bar_position=0,
+                                         task_timeout=None, worker_init_timeout=None, worker_exit_timeout=None)
 
     def test_worker_lifespan(self):
         """
@@ -272,21 +296,24 @@ class CheckMapParametersTest(unittest.TestCase):
             with self.subTest(worker_lifespan=worker_lifespan):
                 check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
                                      chunk_size=None, n_splits=None, worker_lifespan=worker_lifespan,
-                                     progress_bar=False, progress_bar_position=0)
+                                     progress_bar=False, progress_bar_position=0, task_timeout=None,
+                                     worker_init_timeout=None, worker_exit_timeout=None)
 
-        # max_tasks_active should be an integer, float, or None
-        for worker_lifespan in ['3', {8}]:
+        # worker_lifespan should be an integer or None
+        for worker_lifespan in ['3', 3.14, {8}]:
             with self.subTest(worker_lifespan=worker_lifespan), self.assertRaises(TypeError):
                 check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
                                      chunk_size=None, n_splits=None, worker_lifespan=worker_lifespan,
-                                     progress_bar=False, progress_bar_position=0)
+                                     progress_bar=False, progress_bar_position=0, task_timeout=None,
+                                     worker_init_timeout=None, worker_exit_timeout=None)
 
         # max_tasks_active should be positive > 0
         for worker_lifespan in [0, -5]:
             with self.subTest(worker_lifespan=worker_lifespan), self.assertRaises(ValueError):
                 check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
                                      chunk_size=None, n_splits=None, worker_lifespan=worker_lifespan,
-                                     progress_bar=False, progress_bar_position=0)
+                                     progress_bar=False, progress_bar_position=0, task_timeout=None,
+                                     worker_init_timeout=None, worker_exit_timeout=None)
 
     def test_progress_bar_position(self):
         """
@@ -299,18 +326,82 @@ class CheckMapParametersTest(unittest.TestCase):
             with self.subTest(progress_bar_position=progress_bar_position):
                 check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
                                      chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
-                                     progress_bar_position=progress_bar_position)
+                                     progress_bar_position=progress_bar_position, task_timeout=None,
+                                     worker_init_timeout=None, worker_exit_timeout=None)
 
-        # progress_bar_position should be an integer, float, or None
-        for progress_bar_position in ['3', {8}, None]:
+        # progress_bar_position should be an integer
+        for progress_bar_position in ['3', {8}, 3.14, None]:
             with self.subTest(progress_bar_position=progress_bar_position), self.assertRaises(TypeError):
                 check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
                                      chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
-                                     progress_bar_position=progress_bar_position)
+                                     progress_bar_position=progress_bar_position, task_timeout=None,
+                                     worker_init_timeout=None, worker_exit_timeout=None)
 
         # progress_bar_position should be positive >= 0
         for progress_bar_position in [-1, -5]:
             with self.subTest(progress_bar_position=progress_bar_position), self.assertRaises(ValueError):
                 check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
                                      chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
-                                     progress_bar_position=progress_bar_position)
+                                     progress_bar_position=progress_bar_position, task_timeout=None,
+                                     worker_init_timeout=None, worker_exit_timeout=None)
+
+    def test_timeout(self):
+        """
+        Check task_timeout, worker_init_timeout, and worker_exit_timeout. Should raise when wrong parameter values are
+        used.
+        """
+        pool_params = WorkerPoolParams(None, None)
+
+        # Should work fine
+        for timeout in [None, 0.5, 1, 100.5, int(1e8)]:
+            with self.subTest(task_timeout=timeout):
+                check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
+                                     chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
+                                     progress_bar_position=0, task_timeout=timeout, worker_init_timeout=None,
+                                     worker_exit_timeout=None)
+            with self.subTest(worker_init_timeout=timeout):
+                check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
+                                     chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
+                                     progress_bar_position=0, task_timeout=None, worker_init_timeout=timeout,
+                                     worker_exit_timeout=None)
+            with self.subTest(worker_exit_timeout=timeout):
+                check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
+                                     chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
+                                     progress_bar_position=0, task_timeout=None, worker_init_timeout=None,
+                                     worker_exit_timeout=timeout)
+
+        # timeout should be an integer, float, or None
+        for timeout in ['3', {8}]:
+            with self.subTest(task_timeout=timeout), self.assertRaises(TypeError):
+                check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
+                                     chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
+                                     progress_bar_position=0, task_timeout=timeout, worker_init_timeout=None,
+                                     worker_exit_timeout=None)
+            with self.subTest(worker_init_timeout=timeout), self.assertRaises(TypeError):
+                check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
+                                     chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
+                                     progress_bar_position=0, task_timeout=None, worker_init_timeout=timeout,
+                                     worker_exit_timeout=None)
+            with self.subTest(worker_exit_timeout=timeout), self.assertRaises(TypeError):
+                check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
+                                     chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
+                                     progress_bar_position=0, task_timeout=None, worker_init_timeout=None,
+                                     worker_exit_timeout=timeout)
+
+        # timeout should be positive > 0
+        for timeout in [0, -1.337, -5]:
+            with self.subTest(task_timeout=timeout), self.assertRaises(ValueError):
+                check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
+                                     chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
+                                     progress_bar_position=0, task_timeout=timeout, worker_init_timeout=None,
+                                     worker_exit_timeout=None)
+            with self.subTest(worker_init_timeout=timeout), self.assertRaises(ValueError):
+                check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
+                                     chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
+                                     progress_bar_position=0, task_timeout=None, worker_init_timeout=timeout,
+                                     worker_exit_timeout=None)
+            with self.subTest(worker_exit_timeout=timeout), self.assertRaises(ValueError):
+                check_map_parameters(pool_params, iterable_of_args=[], iterable_len=None, max_tasks_active=None,
+                                     chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
+                                     progress_bar_position=0, task_timeout=None, worker_init_timeout=None,
+                                     worker_exit_timeout=timeout)

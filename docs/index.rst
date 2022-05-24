@@ -21,6 +21,7 @@ Features
 - Progress dashboard support
 - Worker insights to provide insight into your multiprocessing efficiency
 - Graceful and user-friendly exception handling
+- Timeouts, including for worker init and exit functions
 - Automatic task chunking for all available map functions to speed up processing of small task queues (including numpy
   arrays)
 - Adjustable maximum number of active tasks to avoid memory problems

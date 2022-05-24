@@ -1,13 +1,10 @@
-import _thread
 import ctypes
-import multiprocess as mp_dill
 import multiprocessing as mp
-import multiprocessing.synchronize
 import queue
 import threading
 import unittest
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 from itertools import product
 from unittest.mock import patch
 
@@ -42,9 +39,8 @@ class WorkerCommsTest(unittest.TestCase):
 
             event_type = type(ctx.Event())
             lock_type = type(ctx.Lock())
-            joinable_queue_type = type(ctx.JoinableQueue())
 
-            with self.subTest('__init__ called', n_jobs=n_jobs):
+            with self.subTest('__init__ called', n_jobs=n_jobs, ctx=ctx):
                 self.assertIsInstance(comms._keep_order, event_type)
                 self.assertFalse(comms._keep_order.is_set())
                 self.assertIsNone(comms._task_queues)
@@ -54,8 +50,9 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertListEqual(comms._exit_results_queues, [])
                 self.assertIsNone(comms._all_exit_results_obtained)
                 self.assertIsNone(comms._worker_done_array)
-                self.assertIsNone(comms._workers_dead_locks)
                 self.assertIsNone(comms._workers_dead)
+                self.assertIsNone(comms._workers_dead_locks)
+                self.assertIsNone(comms._workers_time_task_started)
                 self.assertIsNone(comms._exception_queue)
                 self.assertIsInstance(comms.exception_lock, lock_type)
                 self.assertIsInstance(comms._exception_thrown, event_type)
@@ -69,113 +66,91 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertIsNone(comms._progress_bar_complete)
                 self.assertIsNone(comms._all_exit_results_obtained)
 
-            with self.subTest('without initial values', n_jobs=n_jobs, has_worker_exit=False, has_progress_bar=False):
-                comms.init_comms(has_worker_exit=False, has_progress_bar=False)
-                self.assertFalse(comms._keep_order.is_set())
-                self.assertEqual(len(comms._task_queues), n_jobs)
-                for q in comms._task_queues:
-                    self.assertIsInstance(q, joinable_queue_type)
-                self.assertIsNone(comms._last_completed_task_worker_id)
-                self.assertIsInstance(comms._results_queue, joinable_queue_type)
-                self.assertListEqual(comms._exit_results_queues, [])
-                self.assertIsInstance(comms._worker_done_array, ctypes.Array)
-                self.assertEqual(len(comms._workers_dead), n_jobs)
-                for worker_dead in comms._workers_dead:
-                    self.assertIsInstance(worker_dead, event_type)
-                    self.assertTrue(worker_dead.is_set())
-                self.assertEqual(len(comms._workers_dead_locks), n_jobs)
-                for worker_dead_lock in comms._workers_dead_locks:
-                    self.assertIsInstance(worker_dead_lock, lock_type)
-                self.assertIsInstance(comms._exception_queue, joinable_queue_type)
-                self.assertFalse(comms._exception_thrown.is_set())
-                self.assertFalse(comms._kill_signal_received.is_set())
-                self.assertIsNone(comms._tasks_completed_array)
-                self.assertIsNone(comms._tasks_completed_locks)
-                self.assertIsNone(comms._progress_bar_last_updated)
-                self.assertIsNone(comms._progress_bar_shutdown)
-                self.assertIsNone(comms._progress_bar_complete)
-
-                # Basic sanity checks for the values
-                self.assertEqual(comms._task_idx, 0)
-                self.assertEqual(list(comms._worker_done_array), [False for _ in range(n_jobs)])
-
             MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0)]
             MockDatetimeNow.CURRENT_IDX = 0
 
-            with self.subTest('without initial values', n_jobs=n_jobs, has_worker_exit=True, has_progress_bar=True), \
+            with self.subTest('without initial values', n_jobs=n_jobs, ctx=ctx), \
                     patch('mpire.comms.datetime', new=MockDatetimeNow):
-                comms.init_comms(has_worker_exit=True, has_progress_bar=True)
-                self.assertEqual(len(comms._exit_results_queues), n_jobs)
-                for q in comms._exit_results_queues:
-                    self.assertIsInstance(q, joinable_queue_type)
-                self.assertIsInstance(comms._all_exit_results_obtained, event_type)
-                self.assertFalse(comms._all_exit_results_obtained.is_set())
-                self.assertIsInstance(comms._tasks_completed_array, ctypes.Array)
-                self.assertEqual(len(comms._tasks_completed_locks), n_jobs)
-                for lock in comms._tasks_completed_locks:
-                    self.assertIsInstance(lock, lock_type)
-                self.assertEqual(comms._progress_bar_last_updated, datetime(1970, 1, 1, 0, 0, 0, 0))
-                self.assertIsInstance(comms._progress_bar_shutdown, event_type)
-                self.assertFalse(comms._progress_bar_shutdown.is_set())
-                self.assertIsInstance(comms._progress_bar_complete, event_type)
-                self.assertFalse(comms._progress_bar_complete.is_set())
+                comms.init_comms()
+                self._check_comms_are_initialized(comms, n_jobs)
 
-                # Basic sanity checks for the values
-                self.assertEqual(list(comms._tasks_completed_array), [0 for _ in range(n_jobs)])
-
-            # Set some values so we can test if the containers will be properly resetted
-            comms._keep_order.set()
+            # Set values so we can test if the containers will be properly resetted
             comms._task_idx = 4
             comms._last_completed_task_worker_id = 2
+            comms._all_exit_results_obtained.set()
             comms._worker_done_array[:] = [False, True, False, True][:n_jobs]
             [worker_dead.clear() for worker_dead in comms._workers_dead]
+            comms._workers_time_task_started[:] = [i + 1 for i in range(n_jobs * 3)]
             comms._exception_thrown.set()
             comms._kill_signal_received.set()
+            comms._tasks_completed_array[:] = [i + 1 for i in range(n_jobs)]
+            comms._progress_bar_last_updated = 3
+            comms._progress_bar_shutdown.set()
+            comms._progress_bar_complete.set()
 
-            # Note that threading doesn't have a JoinableQueue, so they're taken from multiprocessing
-            with self.subTest('with initial values', n_jobs=n_jobs, has_worker_exit=False, has_progress_bar=False):
-                comms.init_comms(has_worker_exit=False, has_progress_bar=False)
-                self.assertEqual(len(comms._task_queues), n_jobs)
-                for q in comms._task_queues:
-                    self.assertIsInstance(q, joinable_queue_type)
-                self.assertIsNone(comms._last_completed_task_worker_id)
-                self.assertIsInstance(comms._results_queue, joinable_queue_type)
-                self.assertListEqual(comms._exit_results_queues, [])
-                self.assertIsInstance(comms._worker_done_array, ctypes.Array)
-                self.assertEqual(len(comms._workers_dead), n_jobs)
-                for worker_dead in comms._workers_dead:
-                    self.assertIsInstance(worker_dead, event_type)
-                    self.assertTrue(worker_dead.is_set())
-                self.assertEqual(len(comms._workers_dead_locks), n_jobs)
-                for worker_dead_lock in comms._workers_dead_locks:
-                    self.assertIsInstance(worker_dead_lock, lock_type)
-                self.assertIsInstance(comms._exception_queue, joinable_queue_type)
-                self.assertFalse(comms._exception_thrown.is_set())
-                self.assertFalse(comms._kill_signal_received.is_set())
-                self.assertIsNone(comms._tasks_completed_array)
-                self.assertIsNone(comms._tasks_completed_locks)
-                self.assertIsNone(comms._progress_bar_last_updated)
-                self.assertIsNone(comms._progress_bar_shutdown)
-                self.assertIsNone(comms._progress_bar_complete)
+            MockDatetimeNow.CURRENT_IDX = 0
 
-                # Some variables are not reset by this function, but are reset otherwise
-                self.assertIsInstance(comms._keep_order, event_type)
-                self.assertTrue(comms._keep_order.is_set())
+            with self.subTest('with initial values', n_jobs=n_jobs, ctx=ctx), \
+                    patch('mpire.comms.datetime', new=MockDatetimeNow):
+                comms.init_comms()
+                self._check_comms_are_initialized(comms, n_jobs)
 
-                # Basic sanity checks for the values
-                self.assertEqual(comms._task_idx, 0)
-                self.assertEqual(list(comms._worker_done_array), [False for _ in range(n_jobs)])
+    def _check_comms_are_initialized(self, comms: WorkerComms, n_jobs: int) -> None:
+        """
+        Checks if the WorkerComms have been properly initialized
+
+        :param comms: WorkerComms object
+        :param n_jobs: Number of jobs
+        """
+        event_type = type(comms.ctx.Event())
+        lock_type = type(comms.ctx.Lock())
+        joinable_queue_type = type(comms.ctx.JoinableQueue())
+        array_with_locks_type = type(comms.ctx.Array('i', 0))
+
+        self.assertEqual(len(comms._task_queues), n_jobs)
+        for q in comms._task_queues:
+            self.assertIsInstance(q, joinable_queue_type)
+        self.assertIsNone(comms._last_completed_task_worker_id)
+        self.assertIsInstance(comms._results_queue, joinable_queue_type)
+        self.assertEqual(len(comms._exit_results_queues), n_jobs)
+        for q in comms._exit_results_queues:
+            self.assertIsInstance(q, joinable_queue_type)
+        self.assertIsInstance(comms._all_exit_results_obtained, event_type)
+        self.assertFalse(comms._all_exit_results_obtained.is_set())
+        self.assertIsInstance(comms._worker_done_array, ctypes.Array)
+        self.assertEqual(len(comms._workers_dead), n_jobs)
+        for worker_dead in comms._workers_dead:
+            self.assertIsInstance(worker_dead, event_type)
+            self.assertTrue(worker_dead.is_set())
+        self.assertEqual(len(comms._workers_dead_locks), n_jobs)
+        for worker_dead_lock in comms._workers_dead_locks:
+            self.assertIsInstance(worker_dead_lock, lock_type)
+        self.assertIsInstance(comms._workers_time_task_started, array_with_locks_type)
+        self.assertIsInstance(comms._exception_queue, joinable_queue_type)
+        self.assertFalse(comms._exception_thrown.is_set())
+        self.assertFalse(comms._kill_signal_received.is_set())
+        self.assertIsInstance(comms._tasks_completed_array, ctypes.Array)
+        self.assertEqual(len(comms._tasks_completed_locks), n_jobs)
+        for lock in comms._tasks_completed_locks:
+            self.assertIsInstance(lock, lock_type)
+        self.assertEqual(comms._progress_bar_last_updated, datetime(1970, 1, 1, 0, 0, 0, 0))
+        self.assertIsInstance(comms._progress_bar_shutdown, event_type)
+        self.assertFalse(comms._progress_bar_shutdown.is_set())
+        self.assertIsInstance(comms._progress_bar_complete, event_type)
+        self.assertFalse(comms._progress_bar_complete.is_set())
+
+        # Basic sanity checks for the values
+        self.assertEqual(comms._task_idx, 0)
+        self.assertEqual(list(comms._worker_done_array), [False for _ in range(n_jobs)])
+        self.assertEqual(list(comms._workers_time_task_started), [0.0 for _ in range(n_jobs * 3)])
+        self.assertEqual(list(comms._tasks_completed_array), [0 for _ in range(n_jobs)])
 
     def test_progress_bar(self):
         """
         Test progress bar related functions
         """
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
-
-        # Has progress bar
-        self.assertFalse(comms.has_progress_bar())
-        comms.init_comms(False, True)
-        self.assertTrue(comms.has_progress_bar())
+        comms.init_comms()
 
         # Nothing available yet
         self.assertEqual(sum(comms._tasks_completed_array), 0)
@@ -242,7 +217,7 @@ class WorkerCommsTest(unittest.TestCase):
         Test progress bar complete related functions
         """
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
-        comms.init_comms(False, True)
+        comms.init_comms()
 
         self.assertFalse(comms._progress_bar_shutdown.is_set())
         comms.signal_progress_bar_shutdown()
@@ -253,7 +228,7 @@ class WorkerCommsTest(unittest.TestCase):
         Test progress bar complete related functions
         """
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
-        comms.init_comms(False, True)
+        comms.init_comms()
 
         self.assertFalse(comms._progress_bar_complete.is_set())
         comms.signal_progress_bar_complete()
@@ -280,7 +255,7 @@ class WorkerCommsTest(unittest.TestCase):
         Test task related functions
         """
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3)
-        comms.init_comms(False, False)
+        comms.init_comms()
 
         # Nothing available yet
         for worker_id in range(3):
@@ -304,7 +279,7 @@ class WorkerCommsTest(unittest.TestCase):
         # When workers have completed tasks, it depends on the last one who gets the new task. After giving a task to
         # that worker the worker ID that last completed a task is reset again. So, it should continue with the normal
         # order
-        comms.init_comms(False, False)
+        comms.init_comms()
         comms.add_task(12)
         comms.add_task('hello world')
         comms.add_task({'foo': 'bar'})
@@ -338,7 +313,7 @@ class WorkerCommsTest(unittest.TestCase):
         Test results related functions
         """
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
-        comms.init_comms(False, False)
+        comms.init_comms()
 
         # Nothing available yet
         with self.assertRaises(queue.Empty):
@@ -373,23 +348,36 @@ class WorkerCommsTest(unittest.TestCase):
         Test exit results related functions
         """
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3)
-        comms.init_comms(True, False)
+        comms.init_comms()
 
-        # Nothing available yet
-        for worker_id in range(3):
-            with self.assertRaises(queue.Empty):
-                comms.get_exit_results(worker_id, block=False)
+        # Nothing available yet. Timeout related function should only be called when timeout != None
+        with patch.object(comms, 'has_worker_exit_timed_out', side_effect=lambda *_: False) as p:
+            for worker_id in range(3):
+                with self.assertRaises(queue.Empty):
+                    comms.get_exit_results(worker_id, timeout=None, block=False)
+            self.assertEqual(p.call_count, 0)
+
+            for worker_id in range(3):
+                with self.assertRaises(queue.Empty):
+                    comms.get_exit_results(worker_id, timeout=100, block=False)
+            self.assertEqual(p.call_count, 3)
+
+        # When timeout is used and function returns True, it should raise a TimeoutError
+        with patch.object(comms, 'has_worker_exit_timed_out', side_effect=lambda *_: True):
+            for worker_id in range(3):
+                with self.assertRaises(TimeoutError):
+                    comms.get_exit_results(worker_id, timeout=100, block=False)
 
         # Add a few results. Note that `get_exit_results` calls `task_done`
         for worker_id in range(3):
             comms.add_exit_results(worker_id, worker_id)
             comms.add_exit_results(worker_id, 'hello world')
             comms.add_exit_results(worker_id, {'foo': 'bar'})
-        self.assertListEqual([comms.get_exit_results(worker_id=0) for _ in range(3)],
+        self.assertListEqual([comms.get_exit_results(worker_id=0,  timeout=None) for _ in range(3)],
                              [0, 'hello world', {'foo': 'bar'}])
-        self.assertListEqual([comms.get_exit_results(worker_id=1) for _ in range(3)],
+        self.assertListEqual([comms.get_exit_results(worker_id=1, timeout=None) for _ in range(3)],
                              [1, 'hello world', {'foo': 'bar'}])
-        self.assertListEqual([comms.get_exit_results(worker_id=2) for _ in range(3)],
+        self.assertListEqual([comms.get_exit_results(worker_id=2, timeout=None) for _ in range(3)],
                              [2, 'hello world', {'foo': 'bar'}])
 
         # When an exception is thrown it should return directly. However, when block=False it should still get it. We
@@ -397,10 +385,10 @@ class WorkerCommsTest(unittest.TestCase):
         # terminate().
         comms.add_exit_results(0, 'hello world')
         comms.signal_exception_thrown()
-        self.assertIsNone(comms.get_exit_results(0))
+        self.assertIsNone(comms.get_exit_results(0, timeout=None))
         while True:
             try:
-                self.assertEqual(comms.get_exit_results(0, block=False), 'hello world')
+                self.assertEqual(comms.get_exit_results(0, timeout=None, block=False), 'hello world')
                 break
             except queue.Empty:
                 pass
@@ -410,7 +398,7 @@ class WorkerCommsTest(unittest.TestCase):
         comms.join_results_queues(keep_alive=True)
         for worker_id in range(3):
             comms.add_exit_results(worker_id, 'hello world')
-            comms.get_exit_results(worker_id)
+            comms.get_exit_results(worker_id, timeout=None)
         comms.join_results_queues(keep_alive=False)
 
         # Depending on Python version it either throws AssertionError or ValueError
@@ -418,51 +406,12 @@ class WorkerCommsTest(unittest.TestCase):
             with self.assertRaises((AssertionError, ValueError)):
                 comms.add_exit_results(worker_id, 'hello world')
 
-    def test_exit_results_all_workers(self):
-        """
-        Test exit results related functions
-        """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 4)
-        comms.init_comms(True, False)
-
-        # Add a few results. Every worker will always have a return value (even if it's the implicit None). Note that
-        # `get_exit_results` calls `task_done`
-        for worker_id in range(3):
-            comms.add_exit_results(worker_id, worker_id)
-        comms.add_exit_results(3, None)
-        self.assertListEqual(comms.get_exit_results_all_workers(), [0, 1, 2, None])
-
-        # Should be joinable
-        comms.join_results_queues()
-
-    def test_exit_results_all_workers_exception_thrown(self):
-        """
-        Test exit results related functions. When an exception occurred, it should return an empty list
-        """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3)
-        comms.init_comms(True, False)
-
-        # Add a few results.
-        for worker_id in range(3):
-            comms.add_exit_results(worker_id, worker_id)
-
-        # Set exception
-        comms.signal_exception_thrown()
-
-        # Should return empty list
-        self.assertListEqual(comms.get_exit_results_all_workers(), [])
-
-        # Drain and join
-        comms._exception_thrown.clear()
-        comms.get_exit_results_all_workers()
-        comms.join_results_queues()
-
     def test_all_exit_results_obtained(self):
         """
         Test all exit results obtained related functions
         """
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
-        comms.init_comms(True, False)
+        comms.init_comms()
 
         self.assertFalse(comms._all_exit_results_obtained.is_set())
         comms.signal_all_exit_results_obtained()
@@ -477,7 +426,7 @@ class WorkerCommsTest(unittest.TestCase):
         Test new map parameters function
         """
         comms = WorkerComms(MP_CONTEXTS['mp_dill'][DEFAULT_START_METHOD], 2)
-        comms.init_comms(False, False)
+        comms.init_comms()
 
         map_params = WorkerMapParams(_f1, None, None, 1)
         comms.add_new_map_params(map_params)
@@ -504,7 +453,7 @@ class WorkerCommsTest(unittest.TestCase):
         Test exception related functions
         """
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
-        comms.init_comms(False, False)
+        comms.init_comms()
 
         # Nothing available yet
         with self.assertRaises(queue.Empty):
@@ -565,7 +514,7 @@ class WorkerCommsTest(unittest.TestCase):
         for n_jobs in [1, 2, 4]:
             with self.subTest(n_jobs=n_jobs):
                 comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs)
-                comms.init_comms(False, False)
+                comms.init_comms()
                 comms.insert_poison_pill()
                 for worker_id in range(n_jobs):
                     self.assertEqual(comms.get_task(worker_id), POISON_PILL)
@@ -582,7 +531,7 @@ class WorkerCommsTest(unittest.TestCase):
         for n_jobs in [1, 2, 4]:
             with self.subTest(n_jobs=n_jobs):
                 comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs)
-                comms.init_comms(False, False)
+                comms.init_comms()
                 comms.insert_non_lethal_poison_pill()
                 for worker_id in range(n_jobs):
                     self.assertEqual(comms.get_task(worker_id), NON_LETHAL_POISON_PILL)
@@ -594,7 +543,7 @@ class WorkerCommsTest(unittest.TestCase):
         Test worker restart related functions
         """
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5)
-        comms.init_comms(False, False)
+        comms.init_comms()
 
         # No restarts yet
         self.assertListEqual(list(comms.get_worker_restarts()), [])
@@ -623,7 +572,7 @@ class WorkerCommsTest(unittest.TestCase):
         Test worker alive related functions
         """
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5)
-        comms.init_comms(False, False)
+        comms.init_comms()
 
         # Signal some workers are alive
         comms.signal_worker_alive(0)
@@ -658,38 +607,9 @@ class WorkerCommsTest(unittest.TestCase):
         dont_wait_event = threading.Event()
         dont_wait_event.set()
 
-        comms.init_comms(has_worker_exit=False, has_progress_bar=False)
-        with self.subTest(has_worker_exit=False, has_progress_bar=False), \
-                patch.object(comms, 'get_results', side_effect=comms.get_results) as p1, \
-                patch.object(comms, 'get_exit_results') as p2:
-            comms.drain_queues_terminate_worker(0, dont_wait_event)
-            self.assertEqual(p1.call_count, 1)
-            self.assertEqual(p2.call_count, 0)
-            self.assertTrue(dont_wait_event.is_set())
-
-        comms.init_comms(has_worker_exit=True, has_progress_bar=False)
+        comms.init_comms()
         for worker_id in range(5):
-            with self.subTest(has_worker_exit=True, has_progress_bar=False, worker_id=worker_id), \
-                    patch.object(comms, 'get_results', side_effect=comms.get_results) as p1, \
-                    patch.object(comms, 'get_exit_results', side_effect=comms.get_exit_results) as p2:
-                comms.drain_queues_terminate_worker(worker_id, dont_wait_event)
-                self.assertEqual(p1.call_count, 1)
-                self.assertEqual(p2.call_count, 1)
-                self.assertEqual(p2.call_args_list[0][0][0], worker_id)
-                self.assertTrue(dont_wait_event.is_set())
-
-        comms.init_comms(has_worker_exit=False, has_progress_bar=True)
-        with self.subTest(has_worker_exit=False, has_progress_bar=True), \
-                patch.object(comms, 'get_results', side_effect=comms.get_results) as p1, \
-                patch.object(comms, 'get_exit_results') as p2:
-            comms.drain_queues_terminate_worker(0, dont_wait_event)
-            self.assertEqual(p1.call_count, 1)
-            self.assertEqual(p2.call_count, 0)
-            self.assertTrue(dont_wait_event.is_set())
-
-        comms.init_comms(has_worker_exit=True, has_progress_bar=True)
-        for worker_id in range(5):
-            with self.subTest(has_worker_exit=True, has_progress_bar=True, worker_id=worker_id), \
+            with self.subTest(worker_id=worker_id), \
                     patch.object(comms, 'get_results', side_effect=comms.get_results) as p1, \
                     patch.object(comms, 'get_exit_results', side_effect=comms.get_exit_results) as p2:
                 comms.drain_queues_terminate_worker(worker_id, dont_wait_event)
@@ -704,15 +624,12 @@ class WorkerCommsTest(unittest.TestCase):
         1 results queue, if a worker_exit function has been provided as many exit results queues as workers, and if a
         progress bar has been enabled one queu for the progress bar.
         """
-        for n_jobs, has_worker_exit, has_progress_bar in product([1, 2, 4], [False, True], [False, True]):
+        for n_jobs in [1, 2, 4]:
             comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs)
-            comms.init_comms(has_worker_exit=has_worker_exit, has_progress_bar=has_progress_bar)
-
-            with self.subTest(n_jobs=n_jobs, has_worker_exit=has_worker_exit, has_progress_bar=has_progress_bar), \
-                    patch.object(comms, 'drain_and_join_queue') as p:
+            comms.init_comms()
+            with self.subTest(n_jobs=n_jobs), patch.object(comms, 'drain_and_join_queue') as p:
                 comms.drain_queues()
-                self.assertEqual(p.call_count,
-                                 n_jobs + 1 + (n_jobs if has_worker_exit else 0))
+                self.assertEqual(p.call_count, n_jobs + 1 + n_jobs)
 
     def test__drain_and_join_queue(self):
         """
@@ -732,3 +649,72 @@ class WorkerCommsTest(unittest.TestCase):
         # Depending on Python version it either throws OSError or ValueError
         with self.assertRaises((OSError, ValueError)):
             q.get(block=False)
+
+    def test_timeouts(self):
+        """
+        Tests timeout related function
+        """
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5)
+        comms.init_comms()
+
+        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 2, 0, 0, 0, 0, tzinfo=timezone.utc),
+                                         datetime(1970, 1, 3, 0, 0, 0, 0, tzinfo=timezone.utc),
+                                         datetime(1970, 1, 4, 0, 0, 0, 0, tzinfo=timezone.utc)]
+        MockDatetimeNow.CURRENT_IDX = 0
+
+        # Signal workers started
+        with patch('mpire.comms.datetime', new=MockDatetimeNow):
+            for worker_id in range(5):
+                with self.subTest(worker_id=worker_id):
+                    MockDatetimeNow.CURRENT_IDX = 0
+                    self.assertListEqual(comms._workers_time_task_started[worker_id * 3: worker_id * 3 + 3],
+                                         [0.0, 0.0, 0.0])
+                    comms.signal_worker_init_started(worker_id)
+                    comms.signal_worker_task_started(worker_id)
+                    comms.signal_worker_exit_started(worker_id)
+                    self.assertListEqual(comms._workers_time_task_started[worker_id * 3: worker_id * 3 + 3],
+                                         [86400.0, 172800.0, 259200.0])
+
+        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 2, 0, 0, 10, 0, tzinfo=timezone.utc),
+                                         datetime(1970, 1, 3, 0, 0, 9, 0, tzinfo=timezone.utc),
+                                         datetime(1970, 1, 4, 0, 0, 8, 0, tzinfo=timezone.utc)]
+
+        # Check timeouts
+        with patch('mpire.comms.datetime', new=MockDatetimeNow):
+            for worker_id in range(5):
+                # worker_init, times out at > 10
+                for timeout, has_timed_out in [(8, True), (9, True), (10, True), (11, False)]:
+                    with self.subTest(timeout=timeout, worker_id=worker_id):
+                        MockDatetimeNow.CURRENT_IDX = 0
+                        self.assertEqual(comms.has_worker_init_timed_out(worker_id, timeout), has_timed_out)
+
+                # task, times out at > 9
+                for timeout, has_timed_out in [ (8, True), (9, True), (10, False), (11, False)]:
+                    with self.subTest(timeout=timeout, worker_id=worker_id):
+                        MockDatetimeNow.CURRENT_IDX = 1
+                        self.assertEqual(comms.has_worker_task_timed_out(worker_id, timeout), has_timed_out)
+
+                # worker_exit, times out at > 8
+                for timeout, has_timed_out in [(8, True), (9, False), (10, False), (11, False)]:
+                    with self.subTest(timeout=timeout, worker_id=worker_id):
+                        MockDatetimeNow.CURRENT_IDX = 2
+                        self.assertEqual(comms.has_worker_exit_timed_out(worker_id, timeout), has_timed_out)
+
+        # Reset
+        for worker_id in range(5):
+            with self.subTest(worker_id=worker_id):
+                comms.signal_worker_init_completed(worker_id)
+                self.assertListEqual(comms._workers_time_task_started[worker_id * 3: worker_id * 3 + 3],
+                                     [0.0, 172800.0, 259200.0])
+                comms.signal_worker_task_completed(worker_id)
+                self.assertListEqual(comms._workers_time_task_started[worker_id * 3: worker_id * 3 + 3],
+                                     [0.0, 0.0, 259200.0])
+                comms.signal_worker_exit_completed(worker_id)
+                self.assertListEqual(comms._workers_time_task_started[worker_id * 3: worker_id * 3 + 3],
+                                     [0.0, 0.0, 0.0])
+
+        # Check timeouts. Should be False because nothing started
+        for worker_id in range(5):
+            for timeout in [0, 0.1, 3]:
+                with self.subTest(worker_id=worker_id, timeout=timeout):
+                    self.assertFalse(comms.has_worker_init_timed_out(worker_id, timeout))

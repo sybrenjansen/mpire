@@ -12,4 +12,5 @@ This section describes the different ways of interacting with a :obj:`mpire.Work
     task_chunking
     max_tasks_active
     worker_lifespan
+    timeouts
     numpy
