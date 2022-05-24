@@ -111,6 +111,14 @@ class WorkerMapParams:
     # Number of (chunks of) jobs a child process can process before requesting a restart
     worker_lifespan: Optional[int] = None
 
+    # Progress bar
+    progress_bar: bool = False
+
+    # Timeout in seconds for a single task, worker_init, and worker_exit
+    task_timeout: Optional[float] = None
+    worker_init_timeout: Optional[float] = None
+    worker_exit_timeout: Optional[float] = None
+
     def __eq__(self, other: 'WorkerMapParams') -> bool:
         """
         :param other: Other WorkerMapConfig
@@ -125,13 +133,19 @@ class WorkerMapParams:
         return (other.func == self.func and
                 other.worker_init == self.worker_init and
                 other.worker_exit == self.worker_exit and
-                other.worker_lifespan == self.worker_lifespan)
+                other.worker_lifespan == self.worker_lifespan and
+                other.progress_bar == self.progress_bar and
+                other.task_timeout == self.task_timeout and
+                other.worker_init_timeout == self.worker_init_timeout and
+                other.worker_exit_timeout == self.worker_exit_timeout)
 
 
 def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[Sized, Iterable],
                          iterable_len: Optional[int], max_tasks_active: Optional[int],
                          chunk_size: Optional[Union[int, float]], n_splits: Optional[int],
-                         worker_lifespan: Optional[int], progress_bar: bool, progress_bar_position: int) \
+                         worker_lifespan: Optional[int], progress_bar: bool, progress_bar_position: int,
+                         task_timeout: Optional[float], worker_init_timeout: Optional[float],
+                         worker_exit_timeout: Optional[float]) \
         -> Tuple[Optional[int], int, Optional[int], Union[bool, tqdm]]:
     """
     Check the parameters provided to any (i)map function. Also extracts the number of tasks and can modify the
@@ -152,6 +166,9 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
     :param progress_bar: When ``True`` it will display a progress bar
     :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
         multiple progress bars at the same time
+    :param task_timeout: Timeout in seconds for a single task
+    :param worker_init_timeout: Timeout in seconds for the ``worker_init`` function
+    :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function
     :return: Number of tasks, max tasks active, chunk size, progress bar
     """
     # Get number of tasks
@@ -171,25 +188,25 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
     # Check chunk_size parameter
     if chunk_size is not None:
         if not isinstance(chunk_size, (int, float)):
-            raise TypeError('chunk_size should be either None or an integer value')
+            raise TypeError('chunk_size should be either None or a positive integer/float (> 0)')
         elif chunk_size <= 0:
-            raise ValueError('chunk_size should be a positive integer > 0')
+            raise ValueError('chunk_size should be either None or a positive integer/float (> 0)')
 
     # Check n_splits parameter (only when chunk_size is None)
     else:
         if not (isinstance(n_splits, int) or n_splits is None):
-            raise TypeError('n_splits should be either None or an integer value')
+            raise TypeError('n_splits should be either None or a positive integer (> 0)')
         if isinstance(n_splits, int) and n_splits <= 0:
-            raise ValueError('n_splits should be a positive integer > 0')
+            raise ValueError('n_splits should be either None or a positive integer (> 0)')
 
     # Check max_tasks_active parameter
     if max_tasks_active is None:
         max_tasks_active = pool_params.n_jobs * 2
     elif isinstance(max_tasks_active, int):
         if max_tasks_active <= 0:
-            raise ValueError('max_tasks_active should be a positive integer or None')
+            raise ValueError('max_tasks_active should be either None or a positive integer (> 0)')
     else:
-        raise TypeError('max_tasks_active should be a positive integer or None')
+        raise TypeError('max_tasks_active should be a either None or a positive integer (> 0)')
 
     # If worker lifespan is not None or not a positive integer, raise
     if isinstance(worker_lifespan, int):
@@ -208,5 +225,15 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
         raise TypeError('progress_bar_position should be a positive integer (>= 0)')
     if progress_bar_position < 0:
         raise ValueError('progress_bar_position should be a positive integer (>= 0)')
+
+    # Timeout parameters can't be negative
+    for timeout_var, timeout_var_name in [(task_timeout, 'task_timeout'),
+                                          (worker_init_timeout, 'worker_init_timeout'),
+                                          (worker_exit_timeout, 'worker_exit_timeout')]:
+        if timeout_var is not None:
+            if not isinstance(timeout_var, (int, float)):
+                raise TypeError(f'{timeout_var_name} should be either None or a positive integer/float (> 0)')
+            if timeout_var <= 0:
+                raise ValueError(f"{timeout_var_name} should be either None or a positive integer/float (> 0)")
 
     return n_tasks, max_tasks_active, chunk_size, progress_bar

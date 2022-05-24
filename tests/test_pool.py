@@ -1,6 +1,6 @@
 import logging
 import os
-import signal
+import time
 import types
 import unittest
 import warnings
@@ -1240,3 +1240,94 @@ class ExceptionTest(unittest.TestCase):
         """
         event.wait()
         pool._workers[0].terminate()
+
+
+class TimeoutTest(unittest.TestCase):
+
+    def setUp(self):
+        # Create some test data
+        self.test_data = [1, 2, 3]
+
+    def test_worker_init_timeout(self):
+        """
+        Checks if the worker_init timeout is properly triggered
+        """
+        for start_method in TEST_START_METHODS:
+
+            with self.subTest('Well below timeout', start_method=start_method), \
+                    WorkerPool(2, start_method=start_method) as pool:
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1,
+                                              worker_init_timeout=100), self.test_data)
+
+            with self.subTest('Exceeding timeout, map', start_method=start_method), \
+                    WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
+                pool.map(self._f1, self.test_data, worker_init=self._init2, worker_init_timeout=0.1)
+
+            with self.subTest('Exceeding timeout, imap', start_method=start_method), \
+                    WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
+                for _ in pool.imap(self._f1, self.test_data, worker_init=self._init2, worker_init_timeout=0.1):
+                    pass
+
+    def test_worker_task_timeout(self):
+        """
+        Checks if the worker_init timeout is properly triggered
+        """
+        for start_method in TEST_START_METHODS:
+
+            with self.subTest('Well below timeout', start_method=start_method), \
+                    WorkerPool(2, start_method=start_method) as pool:
+                self.assertListEqual(pool.map(self._f1, self.test_data, task_timeout=100), self.test_data)
+
+            with self.subTest('Exceeding timeout, map', start_method=start_method), \
+                    WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
+                pool.map(self._f2, self.test_data, task_timeout=0.1)
+
+            with self.subTest('Exceeding timeout, imap', start_method=start_method), \
+                    WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
+                for _ in pool.imap(self._f2, self.test_data, task_timeout=0.1):
+                    pass
+
+    def test_worker_exit_timeout(self):
+        """
+        Checks if the worker_exit timeout is properly triggered
+        """
+        for start_method in TEST_START_METHODS:
+
+            with self.subTest('Well below timeout', start_method=start_method), \
+                    WorkerPool(2, start_method=start_method) as pool:
+                self.assertListEqual(pool.map(self._f1, self.test_data, worker_exit=self._exit1,
+                                              worker_exit_timeout=100), self.test_data)
+
+            with self.subTest('Exceeding timeout, map', start_method=start_method), \
+                    WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
+                pool.map(self._f1, self.test_data, worker_exit=self._exit2, worker_exit_timeout=0.1)
+
+            with self.subTest('Exceeding timeout, imap', start_method=start_method), \
+                    WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
+                for _ in pool.imap(self._f1, self.test_data, worker_exit=self._exit2, worker_exit_timeout=0.1):
+                    pass
+
+    @staticmethod
+    def _init1():
+        pass
+
+    @staticmethod
+    def _init2():
+        time.sleep(1)
+
+    @staticmethod
+    def _f1(x):
+        return x
+
+    @staticmethod
+    def _f2(x):
+        time.sleep(1)
+        return x
+
+    @staticmethod
+    def _exit1():
+        pass
+
+    @staticmethod
+    def _exit2():
+        time.sleep(1)

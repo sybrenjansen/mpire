@@ -30,6 +30,7 @@ Features
 - Progress dashboard support
 - Worker insights to provide insight into your multiprocessing efficiency
 - Graceful and user-friendly exception handling
+- Timeouts, including for worker init and exit functions
 - Automatic task chunking for all available map functions to speed up processing of small task queues (including numpy
   arrays)
 - Adjustable maximum number of active tasks to avoid memory problems
@@ -138,7 +139,7 @@ copying/serialization. Only when you alter the object in the worker function it 
 
 See shared_objects_ for more details.
 
-.. _shared_objects: https://slimmer-ai.github.io/mpire/usage/worker_pool.html#shared-objects
+.. _shared_objects: https://slimmer-ai.github.io/mpire/usage/workerpool/shared_objects.html
 
 Worker initialization
 ~~~~~~~~~~~~~~~~~~~~~
@@ -164,7 +165,7 @@ Similarly, you can use the ``worker_exit`` feature to let MPIRE call a function 
 even let this exit function return results, which can be obtained later on. See the `worker_init and worker_exit`_
 section for more information.
 
-.. _worker_init and worker_exit: https://slimmer-ai.github.io/mpire/usage/map.html#worker-init-and-exit
+.. _worker_init and worker_exit: https://slimmer-ai.github.io/mpire/usage/map/worker_init_exit.html
 
 
 Worker insights
@@ -187,8 +188,34 @@ respectively:
 
 See `worker insights`_ for a more detailed example and expected output.
 
-.. _worker insights: https://slimmer-ai.github.io/mpire/usage/map.html#worker-insights
+.. _worker insights: https://slimmer-ai.github.io/mpire/usage/workerpool/worker_insights.html
 
+
+Timeouts
+~~~~~~~~
+
+Timeouts can be set separately for the target, ``worker_init`` and ``worker_exit`` functions. When a timeout has been
+set and reached, it will throw a ``TimeoutError``:
+
+.. code-block:: python
+
+    # Will raise TimeoutError, provided that the target function takes longer
+    # than half a second to complete
+    with WorkerPool(n_jobs=5) as pool:
+        pool.map(time_consuming_function, range(10), task_timeout=0.5)
+
+    # Will raise TimeoutError, provided that the worker_init function takes longer
+    # than 3 seconds to complete or the worker_exit function takes longer than
+    # 150.5 seconds to complete
+    with WorkerPool(n_jobs=5) as pool:
+        pool.map(time_consuming_function, range(10), worker_init=init, worker_exit=exit_,
+                 worker_init_timeout=3.0, worker_exit_timeout=150.5)
+
+When using ``threading`` as start method MPIRE won't be able to interrupt certain functions, like ``time.sleep``.
+
+See timeouts_ for more details.
+
+.. _timeouts: https://slimmer-ai.github.io/mpire/usage/map/timeouts.html
 
 Benchmarks
 ----------

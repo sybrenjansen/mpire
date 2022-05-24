@@ -39,27 +39,36 @@ class WorkerPool:
                  start_method: str = DEFAULT_START_METHOD, keep_alive: bool = False, use_dill: bool = False,
                  enable_insights: bool = False) -> None:
         """
-        :param n_jobs: Number of workers to spawn. If ``None``, will use ``cpu_count()``
+        :param n_jobs: Number of workers to spawn. If ``None``, will use ``mpire.cpu_count()``
         :param daemon: Whether to start the child processes as daemon
         :param cpu_ids: List of CPU IDs to use for pinning child processes to specific CPUs. The list must be as long as
             the number of jobs used (if ``n_jobs`` equals ``None`` it must be equal to ``mpire.cpu_count()``), or the
-            list must have exactly one element. In the former case, element x specifies the CPU ID(s) to use for child
-            process x. In the latter case the single element specifies the CPU ID(s) for all child  processes to use. A
-            single element can be either a single integer specifying a single CPU ID, or a list of integers specifying
-            that a single child process can make use of multiple CPU IDs. If ``None``, CPU pinning will be disabled.
-            Note that CPU pinning may only work on Linux based systems
-        :param shared_objects: ``None`` or any other type of object (multiple objects can be wrapped in a single tuple).
-            Shared objects is only passed on to the user function when it's not ``None``
-        :param pass_worker_id: Whether to pass on a worker ID to the user function or not
-        :param use_worker_state: Whether to let a worker have a worker state or not
-        :param start_method: What process start method to use. Options for multiprocessing: ``'fork'`` (default, if
+            list must have exactly one element. In the former case, element `i` specifies the CPU ID(s) to use for child
+            process `i`. In the latter case the single element specifies the CPU ID(s) for all child  processes to use.
+            A single element can be either a single integer specifying a single CPU ID, or a list of integers specifying
+            that a single child process can make use of multiple CPU IDs. If ``None``, CPU pinning will be disabled
+        :param shared_objects: Objects to be passed on as shared objects to the workers once. It will be passed on to
+            the target, ``worker_init``, and ``worker_exit`` functions. ``shared_objects`` is only passed on when it's
+            not ``None``. Shared objects will be copy-on-write when using ``fork`` as start method. When enabled,
+            functions receive the shared objects as second argument, depending on other settings. The order is:
+            ``worker_id``, ``shared_objects``, ``worker_state``, and finally the arguments passed on from
+            ``iterable_of_args``
+        :param pass_worker_id: Whether to pass on a worker ID to the target, ``worker_init``, and ``worker_exit``
+            functions. When enabled, functions receive the worker ID as first argument, depending on other settings. The
+            order is: ``worker_id``, ``shared_objects``, ``worker_state``, and finally the arguments passed on from
+            ``iterable_of_args``
+        :param use_worker_state: Whether to let a worker have a worker state. The worker state will be passed on to the
+            target, ``worker_init``, and ``worker_exit`` functions. When enabled, functions receive the worker state as
+            third argument, depending on other settings. The order is: ``worker_id``,  ``shared_objects``,
+            ``worker_state``, and finally the arguments passed on from ``iterable_of_args``
+        :param start_method: Which process start method to use. Options for multiprocessing: ``'fork'`` (default, if
             available), ``'forkserver'`` and ``'spawn'`` (default, if ``'fork'`` isn't available). For multithreading
             use ``'threading'``. See https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
             for more information and
             https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods for some
             caveats when using the ``'spawn'`` or ``'forkserver'`` methods
-        :param keep_alive: When True it will keep workers alive after completing a map call, allowing to reuse workers
-            when map is called with the same function and worker lifespan multiple times in a row
+        :param keep_alive: When ``True`` it will keep workers alive after completing a map call, allowing to reuse
+            workers
         :param use_dill: Whether to use dill as serialization backend. Some exotic types (e.g., lambdas, nested
             functions) don't work well when using ``spawn`` as start method. In such cased, use ``dill`` (can be a bit
             slower sometimes)
@@ -92,9 +101,10 @@ class WorkerPool:
         """
         Set whether to pass on the worker ID to the function to be executed or not (default= ``False``).
 
-        The worker ID will be the first argument passed on to the function
-
-        :param pass_on: Whether to pass on a worker ID to the user function or not
+        :param pass_on: Whether to pass on a worker ID to the target, ``worker_init``, and ``worker_exit``
+            functions. When enabled, functions receive the worker ID depending on other settings. The order is:
+            ``worker_id``, ``shared_objects``, ``worker_state``, and finally the arguments passed on using
+            ``iterable_of_args``
         """
         self.pool_params.pass_worker_id = pass_on
 
@@ -102,13 +112,11 @@ class WorkerPool:
         """
         Set shared objects to pass to the workers.
 
-        Shared objects will be copy-on-write. Process-aware shared objects (e.g., ``multiprocessing.Array``) can be used
-        to write to the same object from multiple processes. When providing shared objects the provided function in the
-        ``map`` function should receive the shared objects as its first argument if the worker ID is not passed on. If
-        the worker ID is passed on the shared objects will be the second argument.
-
-        :param shared_objects: ``None`` or any other type of object (multiple objects can be wrapped in a single tuple).
-            Shared objects is only passed on to the user function when it's not ``None``
+        :param shared_objects: Objects to be passed on as shared objects to the workers once. It will be passed on to
+            the target, ``worker_init``, and ``worker_exit`` functions. ``shared_objects`` is only passed on when it's
+            not ``None``. Shared objects will be copy-on-write when using ``fork`` as start method. When enabled,
+            functions receive the shared objects depending on other settings. The order is: ``worker_id``,
+            ``shared_objects``, ``worker_state``, and finally the arguments passed on using ``iterable_of_args```
         """
         self.pool_params.shared_objects = shared_objects
 
@@ -117,7 +125,10 @@ class WorkerPool:
         Set whether or not each worker should have its own state variable. Each worker has its own state, so it's not
         shared between the workers.
 
-        :param use_worker_state: Whether to let a worker have a worker state or not
+        :param use_worker_state: Whether to let a worker have a worker state. The worker state will be passed on to the
+            target, ``worker_init``, and ``worker_exit`` functions. When enabled, functions receive the worker state
+            depending on other settings. The order is: ``worker_id``,  ``shared_objects``, ``worker_state``, and finally
+            the arguments passed on using ``iterable_of_args``
         """
         self.pool_params.use_worker_state = use_worker_state
 
@@ -126,19 +137,16 @@ class WorkerPool:
         Set whether workers should be kept alive in between consecutive map calls.
 
         :param keep_alive: When True it will keep workers alive after completing a map call, allowing to reuse workers
-            when map is called with the same function and worker lifespan multiple times in a row
         """
         self.pool_params.keep_alive = keep_alive
 
-    def _start_workers(self, progress_bar: bool) -> None:
+    def _start_workers(self) -> None:
         """
         Spawns the workers and starts them so they're ready to start reading from the tasks queue.
-
-        :param progress_bar: Whether there's a progress bar
         """
         # Init communication primitives
         logger.debug("Initializing comms")
-        self._worker_comms.init_comms(self.map_params.worker_exit is not None, progress_bar)
+        self._worker_comms.init_comms()
         self._worker_insights.reset_insights(self.pool_params.enable_insights)
         self._exit_results = []
 
@@ -161,7 +169,7 @@ class WorkerPool:
         for worker_id in self._worker_comms.get_worker_restarts():
             # Obtain results from exit results queue (should be done before joining the worker)
             if self.map_params.worker_exit:
-                self._exit_results.append(self._worker_comms.get_exit_results(worker_id))
+                self._get_exit_result_from_worker(worker_id)
 
             # Join worker
             self._worker_comms.reset_worker_restart(worker_id)
@@ -190,10 +198,25 @@ class WorkerPool:
                 worker_died = self._worker_comms.is_worker_alive(worker_id) and not self._workers[worker_id].is_alive()
             if worker_died:
                 # We need to add an exception if we're using the progress bar handler
-                if self._worker_comms.has_progress_bar():
-                    self._worker_comms.add_exception(RuntimeError, f"Worker-{worker_id} died unexpectedly")
+                err_msg = f"Worker-{worker_id} died unexpectedly"
+                if self.map_params.progress_bar:
+                    self._worker_comms.add_exception(RuntimeError, err_msg)
                 self.terminate()
-                raise RuntimeError(f"Worker-{worker_id} died unexpectedly")
+                raise RuntimeError(err_msg)
+
+        # Check for worker_init/task/worker_exit timeouts
+        for timeout_var, has_timed_out_func, timeout_func_name in [
+                (self.map_params.worker_init_timeout, self._worker_comms.has_worker_init_timed_out, 'worker_init'),
+                (self.map_params.task_timeout, self._worker_comms.has_worker_task_timed_out, 'task')]:
+            if timeout_var is not None:
+                for worker_id in range(self.pool_params.n_jobs):
+                    if has_timed_out_func(worker_id, timeout_var):
+                        # We need to add an exception if we're using the progress bar handler
+                        err_msg = f"Worker-{worker_id} {timeout_func_name} timed out"
+                        if self.map_params.progress_bar:
+                            self._worker_comms.add_exception(TimeoutError, err_msg)
+                        self.terminate()
+                        raise TimeoutError(err_msg)
 
         return obtained_results
 
@@ -226,6 +249,24 @@ class WorkerPool:
         """
         return self._exit_results
 
+    def _get_exit_result_from_worker(self, worker_id) -> None:
+        """
+        Obtains exit results from a single worker. When timeout is reached, it will terminate and raise
+
+        :param worker_id: Worker ID
+        """
+        try:
+            self._exit_results.append(
+                self._worker_comms.get_exit_results(worker_id, self.map_params.worker_exit_timeout)
+            )
+        except TimeoutError:
+            # We need to add an exception if we're using the progress bar handler
+            err_msg = f"Worker-{worker_id} worker_exit timed out"
+            if self.map_params.progress_bar:
+                self._worker_comms.add_exception(TimeoutError, err_msg)
+            self.terminate()
+            raise TimeoutError(err_msg)
+
     def __enter__(self) -> 'WorkerPool':
         """
         Enable the use of the ``with`` statement.
@@ -243,7 +284,9 @@ class WorkerPool:
             max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
             worker_lifespan: Optional[int] = None, progress_bar: bool = False, progress_bar_position: int = 0,
             concatenate_numpy_output: bool = True, enable_insights: Optional[bool] = None,
-            worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None) -> Any:
+            worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
+            task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
+            worker_exit_timeout: Optional[float] = None) -> Any:
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
@@ -281,6 +324,13 @@ class WorkerPool:
             through :obj:`mpire.WorkerPool.get_exit_results`. When passing on the worker ID the function should receive
             the worker ID as its first argument. If shared objects are provided the function should receive those as the
             next argument. If the worker state has been enabled it should receive a state variable as the next argument
+        :param task_timeout: Timeout in seconds for a single task. When the timeout is exceeded, MPIRE will raise a
+            ``TimeoutError``. Use ``None`` to disable (default). Note: the timeout doesn't apply to ``worker_init`` and
+            ``worker_exit`` functions, use `worker_init_timeout` and `worker_exit_timeout` for that, respectively
+        :param worker_init_timeout: Timeout in seconds for the ``worker_init`` function. When the timeout is exceeded,
+            MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
+        :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function. When the timeout is exceeded,
+            MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
@@ -297,7 +347,8 @@ class WorkerPool:
             iterable_len = len(iterable_of_args)
         results = self.map_unordered(func, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)),
                                      iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan,
-                                     progress_bar, progress_bar_position, enable_insights, worker_init, worker_exit)
+                                     progress_bar, progress_bar_position, enable_insights, worker_init, worker_exit,
+                                     task_timeout, worker_init_timeout, worker_exit_timeout)
 
         # Notify workers to forget about order
         self._worker_comms.clear_keep_order()
@@ -314,7 +365,9 @@ class WorkerPool:
                       chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                       worker_lifespan: Optional[int] = None, progress_bar: bool = False,
                       progress_bar_position: int = 0, enable_insights: Optional[bool] = None,
-                      worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None) -> Any:
+                      worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
+                      task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
+                      worker_exit_timeout: Optional[float] = None) -> Any:
         """
         Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
@@ -351,19 +404,28 @@ class WorkerPool:
             through :obj:`mpire.WorkerPool.get_exit_results`. When passing on the worker ID the function should receive
             the worker ID as its first argument. If shared objects are provided the function should receive those as the
             next argument. If the worker state has been enabled it should receive a state variable as the next argument
+        :param task_timeout: Timeout in seconds for a single task. When the timeout is exceeded, MPIRE will raise a
+            ``TimeoutError``. Use ``None`` to disable (default). Note: the timeout doesn't apply to ``worker_init`` and
+            ``worker_exit`` functions, use `worker_init_timeout` and `worker_exit_timeout` for that, respectively
+        :param worker_init_timeout: Timeout in seconds for the ``worker_init`` function. When the timeout is exceeded,
+            MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
+        :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function. When the timeout is exceeded,
+            MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
         :return: List with unordered results
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
         return list(self.imap_unordered(func, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
                                         n_splits, worker_lifespan, progress_bar, progress_bar_position,
-                                        enable_insights, worker_init, worker_exit))
+                                        enable_insights, worker_init, worker_exit, task_timeout, worker_init_timeout,
+                                        worker_exit_timeout))
 
     def imap(self, func: Callable, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int] = None,
              max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
              worker_lifespan: Optional[int] = None, progress_bar: bool = False,
              progress_bar_position: int = 0, enable_insights: Optional[bool] = None,
-             worker_init: Optional[Callable] = None,
-             worker_exit: Optional[Callable] = None) -> Generator[Any, None, None]:
+             worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
+             task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
+             worker_exit_timeout: Optional[float] = None) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``, but ordered. Also allows a user to set the maximum number of
         tasks available in the queue.
@@ -400,6 +462,13 @@ class WorkerPool:
             through :obj:`mpire.WorkerPool.get_exit_results`. When passing on the worker ID the function should receive
             the worker ID as its first argument. If shared objects are provided the function should receive those as the
             next argument. If the worker state has been enabled it should receive a state variable as the next argument
+        :param task_timeout: Timeout in seconds for a single task. When the timeout is exceeded, MPIRE will raise a
+            ``TimeoutError``. Use ``None`` to disable (default). Note: the timeout doesn't apply to ``worker_init`` and
+            ``worker_exit`` functions, use `worker_init_timeout` and `worker_exit_timeout` for that, respectively
+        :param worker_init_timeout: Timeout in seconds for the ``worker_init`` function. When the timeout is exceeded,
+            MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
+        :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function. When the timeout is exceeded,
+            MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
@@ -420,7 +489,8 @@ class WorkerPool:
                                                              in enumerate(iterable_of_args)), iterable_len,
                                                       max_tasks_active, chunk_size, n_splits, worker_lifespan,
                                                       progress_bar, progress_bar_position, enable_insights, worker_init,
-                                                      worker_exit):
+                                                      worker_exit, task_timeout, worker_init_timeout,
+                                                      worker_exit_timeout):
 
             # Check if the next one(s) to return is/are temporarily stored. We use a while-true block with dict.pop() to
             # keep the temporary store as small as possible
@@ -451,8 +521,9 @@ class WorkerPool:
                        chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                        worker_lifespan: Optional[int] = None, progress_bar: bool = False,
                        progress_bar_position: int = 0, enable_insights: Optional[bool] = None,
-                       worker_init: Optional[Callable] = None,
-                       worker_exit: Optional[Callable] = None) -> Generator[Any, None, None]:
+                       worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
+                       task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
+                       worker_exit_timeout: Optional[float] = None) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``. Also allows a user to set the maximum number of tasks available in
         the queue.
@@ -489,6 +560,13 @@ class WorkerPool:
             through :obj:`mpire.WorkerPool.get_exit_results`. When passing on the worker ID the function should receive
             the worker ID as its first argument. If shared objects are provided the function should receive those as the
             next argument. If the worker state has been enabled it should receive a state variable as the next argument
+        :param task_timeout: Timeout in seconds for a single task. When the timeout is exceeded, MPIRE will raise a
+            ``TimeoutError``. Use ``None`` to disable (default). Note: the timeout doesn't apply to ``worker_init`` and
+            ``worker_exit`` functions, use `worker_init_timeout` and `worker_exit_timeout` for that, respectively
+        :param worker_init_timeout: Timeout in seconds for the ``worker_init`` function. When the timeout is exceeded,
+            MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
+        :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function. When the timeout is exceeded,
+            MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
         :return: Generator yielding unordered results
         """
         # If we're dealing with numpy arrays, we have to chunk them here already
@@ -504,9 +582,10 @@ class WorkerPool:
         # modified as well
         n_tasks, max_tasks_active, chunk_size, progress_bar = check_map_parameters(
             self.pool_params, iterable_of_args, iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan,
-            progress_bar, progress_bar_position
+            progress_bar, progress_bar_position, task_timeout, worker_init_timeout, worker_exit_timeout
         )
-        new_map_params = WorkerMapParams(func, worker_init, worker_exit, worker_lifespan)
+        new_map_params = WorkerMapParams(func, worker_init, worker_exit, worker_lifespan, progress_bar, task_timeout,
+                                         worker_init_timeout, worker_exit_timeout)
 
         # enable_insights is deprecated as a map parameter
         if (self._workers and enable_insights is not None and self.pool_params.enable_insights is not None and
@@ -539,7 +618,7 @@ class WorkerPool:
                 self._worker_comms.add_new_map_params(new_map_params)
             if not self._workers:
                 self.map_params = new_map_params
-                self._start_workers(progress_bar)
+                self._start_workers()
 
             # Create progress bar handler, which receives progress updates from the workers and updates the progress bar
             # accordingly
@@ -623,7 +702,7 @@ class WorkerPool:
             if not self._worker_comms.exception_thrown():
                 keyboard_interrupt = True
                 self._worker_comms.signal_exception_thrown()
-                if self._worker_comms.has_progress_bar() and progress_bar_handler is not None:
+                if self.map_params.progress_bar and progress_bar_handler is not None:
                     self._worker_comms.add_exception(KeyboardInterrupt, "KeyboardInterrupt")
 
         # When we're not dealing with a KeyboardInterrupt, obtain the exception thrown by a worker
@@ -696,7 +775,10 @@ class WorkerPool:
             # Obtain results from the exit results queues (should be done before joining the workers)
             if not keep_alive and self.map_params.worker_exit:
                 logger.debug("Obtaining exit results")
-                self._exit_results.extend(self._worker_comms.get_exit_results_all_workers())
+                for worker_id in range(self.pool_params.n_jobs):
+                    self._get_exit_result_from_worker(worker_id)
+                    if self._worker_comms.exception_thrown():
+                        break
                 self._worker_comms.signal_all_exit_results_obtained()
                 logger.debug("Done obtaining exit results")
 
