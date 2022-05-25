@@ -1,8 +1,10 @@
 Changelog
 =========
 
-Dev
----
+2.4.0
+-----
+
+*(2022-05-25)*
 
 * A timeout for the target, ``worker_init``, and ``worker_exit`` functions can be specified after which a worker is
   stopped (`#36`_)
@@ -10,6 +12,7 @@ Dev
 
 .. _#36: https://github.com/Slimmer-AI/mpire/issues/36
 .. _#44: https://github.com/Slimmer-AI/mpire/issues/44
+
 
 2.3.5
 -----
