@@ -41,7 +41,7 @@ class DelayedKeyboardInterruptTest(unittest.TestCase):
         Should be affected by interrupt
         """
         try:
-            with DelayedKeyboardInterrupt(in_thread=False):
+            with DelayedKeyboardInterrupt():
                 started_event.set()
                 quit_event.wait()
                 value.value = 1
