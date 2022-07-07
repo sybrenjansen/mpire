@@ -20,7 +20,7 @@ if __name__ == '__main__':
         scripts=['bin/mpire-dashboard'],
         install_requires=['dataclasses; python_version<"3.7"',
                           'pywin32==225; platform_system=="Windows"',
-                          'tqdm'],
+                          'tqdm>=4.27'],
         include_package_data=True,
         extras_require={
             'dashboard': ['flask'],
