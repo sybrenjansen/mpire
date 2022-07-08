@@ -48,7 +48,7 @@ class WorkerPoolParamsTest(unittest.TestCase):
                                                (4, [[0, 3]], [[0, 3], [0, 3], [0, 3], [0, 3]])]:
             # The test has been designed for a system with at least 4 cores. We'll skip those test cases where the CPU
             # IDs exceed the number of CPUs.
-            if cpu_ids is not None and np.array(cpu_ids).max() >= cpu_count():
+            if cpu_ids is not None and np.array(cpu_ids).max(initial=0) >= cpu_count():
                 continue
 
             with self.subTest(n_jobs=n_jobs, cpu_ids=cpu_ids):

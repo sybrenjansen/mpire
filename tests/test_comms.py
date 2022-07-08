@@ -32,15 +32,16 @@ class WorkerCommsTest(unittest.TestCase):
         if FORK_AVAILABLE:
             test_ctx.extend([MP_CONTEXTS['mp_dill']['fork'], MP_CONTEXTS['mp']['forkserver']])
 
-        for n_jobs, ctx in product([1, 2, 4], test_ctx):
-            comms = WorkerComms(ctx, n_jobs)
-            self.assertEqual(comms.ctx, ctx)
-            self.assertEqual(comms.n_jobs, n_jobs)
-
+        for ctx, n_jobs, order_tasks in product(test_ctx, [1, 2, 4], [False, True]):
+            comms = WorkerComms(ctx, n_jobs, order_tasks)
             event_type = type(ctx.Event())
             lock_type = type(ctx.Lock())
 
-            with self.subTest('__init__ called', n_jobs=n_jobs, ctx=ctx):
+            with self.subTest('__init__ called', ctx=ctx, n_jobs=n_jobs, order_tasks=order_tasks):
+                self.assertEqual(comms.ctx, ctx)
+                self.assertEqual(comms.n_jobs, n_jobs)
+                self.assertEqual(comms.order_tasks, order_tasks)
+                self.assertFalse(comms.is_initialized())
                 self.assertIsInstance(comms._keep_order, event_type)
                 self.assertFalse(comms._keep_order.is_set())
                 self.assertIsNone(comms._task_queues)
@@ -69,7 +70,7 @@ class WorkerCommsTest(unittest.TestCase):
             MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0)]
             MockDatetimeNow.CURRENT_IDX = 0
 
-            with self.subTest('without initial values', n_jobs=n_jobs, ctx=ctx), \
+            with self.subTest('without initial values', ctx=ctx, n_jobs=n_jobs, order_tasks=order_tasks), \
                     patch('mpire.comms.datetime', new=MockDatetimeNow):
                 comms.init_comms()
                 self._check_comms_are_initialized(comms, n_jobs)
@@ -87,13 +88,18 @@ class WorkerCommsTest(unittest.TestCase):
             comms._progress_bar_last_updated = 3
             comms._progress_bar_shutdown.set()
             comms._progress_bar_complete.set()
+            comms.reset()
 
             MockDatetimeNow.CURRENT_IDX = 0
 
-            with self.subTest('with initial values', n_jobs=n_jobs, ctx=ctx), \
+            with self.subTest('with initial values', ctx=ctx, n_jobs=n_jobs, order_tasks=order_tasks), \
                     patch('mpire.comms.datetime', new=MockDatetimeNow):
                 comms.init_comms()
                 self._check_comms_are_initialized(comms, n_jobs)
+
+            # Reset initialized flag
+            comms.reset()
+            self.assertFalse(comms.is_initialized())
 
     def _check_comms_are_initialized(self, comms: WorkerComms, n_jobs: int) -> None:
         """
@@ -138,6 +144,7 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertFalse(comms._progress_bar_shutdown.is_set())
         self.assertIsInstance(comms._progress_bar_complete, event_type)
         self.assertFalse(comms._progress_bar_complete.is_set())
+        self.assertTrue(comms.is_initialized())
 
         # Basic sanity checks for the values
         self.assertEqual(comms._task_idx, 0)
@@ -149,7 +156,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test progress bar related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False)
         comms.init_comms()
 
         # Nothing available yet
@@ -216,7 +223,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test progress bar complete related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False)
         comms.init_comms()
 
         self.assertFalse(comms._progress_bar_shutdown.is_set())
@@ -227,7 +234,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test progress bar complete related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False)
         comms.init_comms()
 
         self.assertFalse(comms._progress_bar_complete.is_set())
@@ -242,7 +249,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test keep_order related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False)
 
         self.assertFalse(comms.keep_order())
         comms.signal_keep_order()
@@ -254,7 +261,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test task related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3, False)
         comms.init_comms()
 
         # Nothing available yet
@@ -276,29 +283,34 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertListEqual(tasks, [12, 'hello world', {'foo': 'bar'}, {'foo': 'baz'}, 34.43,
                                      datetime(2000, 1, 1, 1, 2, 3)])
 
-        # When workers have completed tasks, it depends on the last one who gets the new task. After giving a task to
-        # that worker the worker ID that last completed a task is reset again. So, it should continue with the normal
-        # order
-        comms.init_comms()
-        comms.add_task(12)
-        comms.add_task('hello world')
-        comms.add_task({'foo': 'bar'})
-        comms._last_completed_task_worker_id = 2
-        comms.add_task({'foo': 'baz'})
-        comms._last_completed_task_worker_id = 1
-        comms.add_task(34.43)
-        comms._last_completed_task_worker_id = 0
-        comms.add_task(datetime(2000, 1, 1, 1, 2, 3))
-        comms._last_completed_task_worker_id = 2
-        comms.add_task('123')
-        comms.add_task(123)
-        comms.add_task(1337)
-        tasks = []
-        for worker_id in [0, 1, 2, 2, 1, 0, 2, 0, 1]:
-            tasks.append(comms.get_task(worker_id))
-            comms.task_done(worker_id)
-        self.assertListEqual(tasks, [12, 'hello world', {'foo': 'bar'}, {'foo': 'baz'}, 34.43,
-                                     datetime(2000, 1, 1, 1, 2, 3), '123', 123, 1337])
+        # When order_tasks is set it should give the tasks to the workers in the order they were added, independent of
+        # workers that have completed tasks. If set to False and workers have completed tasks, it depends on the last
+        # one who gets the new task. After giving a task to that worker the worker ID that last completed a task is
+        # reset again. So, it should continue with the normal order
+        for order_tasks, worker_order in [(False, [0, 1, 2, 2, 1, 0, 2, 0, 1]),
+                                          (True, [0, 1, 2, 0, 1, 2, 0, 1, 2])]:
+            with self.subTest(order_tasks=order_tasks):
+                comms.order_tasks = order_tasks
+                comms.init_comms()
+                comms.add_task(12)
+                comms.add_task('hello world')
+                comms.add_task({'foo': 'bar'})
+                comms._last_completed_task_worker_id = 2
+                comms.add_task({'foo': 'baz'})
+                comms._last_completed_task_worker_id = 1
+                comms.add_task(34.43)
+                comms._last_completed_task_worker_id = 0
+                comms.add_task(datetime(2000, 1, 1, 1, 2, 3))
+                comms._last_completed_task_worker_id = 2
+                comms.add_task('123')
+                comms.add_task(123)
+                comms.add_task(1337)
+                tasks = []
+                for worker_id in worker_order:
+                    tasks.append(comms.get_task(worker_id))
+                    comms.task_done(worker_id)
+                self.assertListEqual(tasks, [12, 'hello world', {'foo': 'bar'}, {'foo': 'baz'}, 34.43,
+                                             datetime(2000, 1, 1, 1, 2, 3), '123', 123, 1337])
 
         # Throw in an exception. Should return None
         comms.signal_exception_thrown()
@@ -312,7 +324,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test results related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False)
         comms.init_comms()
 
         # Nothing available yet
@@ -347,7 +359,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test exit results related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 3, False)
         comms.init_comms()
 
         # Nothing available yet. Timeout related function should only be called when timeout != None
@@ -410,7 +422,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test all exit results obtained related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False)
         comms.init_comms()
 
         self.assertFalse(comms._all_exit_results_obtained.is_set())
@@ -425,7 +437,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test new map parameters function
         """
-        comms = WorkerComms(MP_CONTEXTS['mp_dill'][DEFAULT_START_METHOD], 2)
+        comms = WorkerComms(MP_CONTEXTS['mp_dill'][DEFAULT_START_METHOD], 2, False)
         comms.init_comms()
 
         map_params = WorkerMapParams(_f1, None, None, 1)
@@ -452,7 +464,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test exception related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False)
         comms.init_comms()
 
         # Nothing available yet
@@ -487,7 +499,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test exception thrown related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False)
 
         self.assertFalse(comms.exception_thrown())
         comms.signal_exception_thrown()
@@ -499,7 +511,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test kill signal received related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False)
 
         self.assertFalse(comms.kill_signal_received())
         comms.signal_kill_signal_received()
@@ -513,7 +525,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         for n_jobs in [1, 2, 4]:
             with self.subTest(n_jobs=n_jobs):
-                comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs)
+                comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs, False)
                 comms.init_comms()
                 comms.insert_poison_pill()
                 for worker_id in range(n_jobs):
@@ -530,7 +542,7 @@ class WorkerCommsTest(unittest.TestCase):
 
         for n_jobs in [1, 2, 4]:
             with self.subTest(n_jobs=n_jobs):
-                comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs)
+                comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs, False)
                 comms.init_comms()
                 comms.insert_non_lethal_poison_pill()
                 for worker_id in range(n_jobs):
@@ -542,7 +554,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test worker restart related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5, False)
         comms.init_comms()
 
         # No restarts yet
@@ -571,7 +583,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test worker alive related functions
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5, False)
         comms.init_comms()
 
         # Signal some workers are alive
@@ -603,7 +615,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         get_results should be called once, get_exit_results should be called when exit function is defined
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5, False)
         dont_wait_event = threading.Event()
         dont_wait_event.set()
 
@@ -625,7 +637,7 @@ class WorkerCommsTest(unittest.TestCase):
         progress bar has been enabled one queu for the progress bar.
         """
         for n_jobs in [1, 2, 4]:
-            comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs)
+            comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], n_jobs, False)
             comms.init_comms()
             with self.subTest(n_jobs=n_jobs), patch.object(comms, 'drain_and_join_queue') as p:
                 comms.drain_queues()
@@ -635,7 +647,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Test draining queues
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False)
 
         # Create a custom queue with some data
         q = mp.JoinableQueue()
@@ -654,7 +666,7 @@ class WorkerCommsTest(unittest.TestCase):
         """
         Tests timeout related function
         """
-        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5)
+        comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5, False)
         comms.init_comms()
 
         MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 2, 0, 0, 0, 0, tzinfo=timezone.utc),

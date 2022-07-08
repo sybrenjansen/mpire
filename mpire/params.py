@@ -29,6 +29,7 @@ class WorkerPoolParams:
     keep_alive: bool = False
     use_dill: bool = False
     enable_insights: bool = False
+    order_tasks: bool = False
 
     @property
     def n_jobs(self) -> Optional[int]:

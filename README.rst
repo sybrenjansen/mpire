@@ -59,6 +59,12 @@ Through pip (PyPi):
 
     pip install mpire
 
+MPIRE is also available through conda-forge:
+
+.. code-block:: bash
+
+    conda install -c conda-forge mpire
+
 
 Getting started
 ---------------

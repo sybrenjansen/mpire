@@ -1357,3 +1357,73 @@ class TimeoutTest(unittest.TestCase):
     @staticmethod
     def _exit2():
         time.sleep(1)
+
+
+class OrderTasksTest(unittest.TestCase):
+    """
+    Tests if the tasks are properly ordered
+    """
+
+    def setUp(self):
+        # Create some test data
+        self.test_data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+
+    def test_order_tasks(self):
+        """
+        Checks if the tasks are properly ordered
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method, chunk_size=1), \
+                    WorkerPool(4, start_method=start_method, pass_worker_id=True, use_worker_state=True,
+                               order_tasks=True) as pool:
+                pool.map_unordered(self._f, self.test_data, worker_init=self._init, worker_exit=self._exit,
+                                   chunk_size=1)
+                exit_results = sorted(pool.get_exit_results(), key=lambda state: state['worker_id'])
+                self.assertListEqual(exit_results, [{'worker_id': 0, 'tasks': [1, 5, 9, 13, 17]},
+                                                    {'worker_id': 1, 'tasks': [2, 6, 10, 14, 18]},
+                                                    {'worker_id': 2, 'tasks': [3, 7, 11, 15, 19]},
+                                                    {'worker_id': 3, 'tasks': [4, 8, 12, 16, 20]}])
+
+            with self.subTest(start_method=start_method, chunk_size=3), \
+                    WorkerPool(4, start_method=start_method, pass_worker_id=True, use_worker_state=True,
+                               order_tasks=True) as pool:
+                pool.map_unordered(self._f, self.test_data, worker_init=self._init, worker_exit=self._exit,
+                                   chunk_size=3)
+                exit_results = sorted(pool.get_exit_results(), key=lambda state: state['worker_id'])
+                self.assertListEqual(exit_results, [{'worker_id': 0, 'tasks': [1, 2, 3, 13, 14, 15]},
+                                                    {'worker_id': 1, 'tasks': [4, 5, 6, 16, 17, 18]},
+                                                    {'worker_id': 2, 'tasks': [7, 8, 9, 19, 20]},
+                                                    {'worker_id': 3, 'tasks': [10, 11, 12]}])
+
+    def test_order_tasks_twice(self):
+        """
+        Checks if the tasks are properly ordered the second time around as well.
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method, chunk_size=3, keep_alive=True), \
+                    WorkerPool(4, start_method=start_method, pass_worker_id=True, use_worker_state=True,
+                               order_tasks=True, keep_alive=True) as pool:
+                pool.map_unordered(self._f, self.test_data, worker_init=self._init, worker_exit=self._exit,
+                                   chunk_size=3)
+                pool.map_unordered(self._f, self.test_data, worker_init=self._init, worker_exit=self._exit,
+                                   chunk_size=3)
+                pool.stop_and_join()
+                exit_results = sorted(pool.get_exit_results(), key=lambda state: state['worker_id'])
+                self.assertListEqual(exit_results,
+                                     [{'worker_id': 0, 'tasks': [1, 2, 3, 13, 14, 15, 1, 2, 3, 13, 14, 15]},
+                                      {'worker_id': 1, 'tasks': [4, 5, 6, 16, 17, 18, 4, 5, 6, 16, 17, 18]},
+                                      {'worker_id': 2, 'tasks': [7, 8, 9, 19, 20, 7, 8, 9, 19, 20]},
+                                      {'worker_id': 3, 'tasks': [10, 11, 12, 10, 11, 12]}])
+
+    @staticmethod
+    def _init(wid, state):
+        state['worker_id'] = wid
+        state['tasks'] = []
+
+    @staticmethod
+    def _f(wid, state, x):
+        state['tasks'].append(x)
+
+    @staticmethod
+    def _exit(wid, state):
+        return state

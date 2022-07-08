@@ -37,7 +37,7 @@ class WorkerPool:
     def __init__(self, n_jobs: Optional[int] = None, daemon: bool = True, cpu_ids: CPUList = None,
                  shared_objects: Any = None, pass_worker_id: bool = False, use_worker_state: bool = False,
                  start_method: str = DEFAULT_START_METHOD, keep_alive: bool = False, use_dill: bool = False,
-                 enable_insights: bool = False) -> None:
+                 enable_insights: bool = False, order_tasks: bool = False) -> None:
         """
         :param n_jobs: Number of workers to spawn. If ``None``, will use ``mpire.cpu_count()``
         :param daemon: Whether to start the child processes as daemon
@@ -74,10 +74,12 @@ class WorkerPool:
             slower sometimes)
         :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
             neglible)
+        :param order_tasks: Whether to provide tasks to the workers in order, such that worker 0 will get chunk 0,
+            worker 1 will get chunk 1, etc.
         """
         # Set parameters
         self.pool_params = WorkerPoolParams(n_jobs, cpu_ids, daemon, shared_objects, pass_worker_id, use_worker_state,
-                                            start_method, keep_alive, use_dill, enable_insights)
+                                            start_method, keep_alive, use_dill, enable_insights, order_tasks)
         self.map_params = None  # type: Optional[WorkerMapParams]
 
         # Worker factory
@@ -91,7 +93,7 @@ class WorkerPool:
 
         # Container of the child processes and corresponding communication objects
         self._workers = []
-        self._worker_comms = WorkerComms(self.ctx, self.pool_params.n_jobs)
+        self._worker_comms = WorkerComms(self.ctx, self.pool_params.n_jobs, self.pool_params.order_tasks)
         self._exit_results = None
 
         # Worker insights, used for profiling
@@ -106,6 +108,8 @@ class WorkerPool:
             ``worker_id``, ``shared_objects``, ``worker_state``, and finally the arguments passed on using
             ``iterable_of_args``
         """
+        if pass_on != self.pool_params.pass_worker_id:
+            self._worker_comms.reset()
         self.pool_params.pass_worker_id = pass_on
 
     def set_shared_objects(self, shared_objects: Any = None) -> None:
@@ -118,6 +122,8 @@ class WorkerPool:
             functions receive the shared objects depending on other settings. The order is: ``worker_id``,
             ``shared_objects``, ``worker_state``, and finally the arguments passed on using ``iterable_of_args```
         """
+        if shared_objects != self.pool_params.shared_objects:
+            self._worker_comms.reset()
         self.pool_params.shared_objects = shared_objects
 
     def set_use_worker_state(self, use_worker_state: bool = True) -> None:
@@ -130,6 +136,8 @@ class WorkerPool:
             depending on other settings. The order is: ``worker_id``,  ``shared_objects``, ``worker_state``, and finally
             the arguments passed on using ``iterable_of_args``
         """
+        if use_worker_state != self.pool_params.use_worker_state:
+            self._worker_comms.reset()
         self.pool_params.use_worker_state = use_worker_state
 
     def set_keep_alive(self, keep_alive: bool = True) -> None:
@@ -139,6 +147,16 @@ class WorkerPool:
         :param keep_alive: When True it will keep workers alive after completing a map call, allowing to reuse workers
         """
         self.pool_params.keep_alive = keep_alive
+
+    def set_order_tasks(self, order_tasks: bool = True) -> None:
+        """
+        Set whether to provide tasks to the workers in order, such that worker 0 will get chunk 0, worker 1 will get
+        chunk 1, etc.
+
+        :param order_tasks: Whether to provide tasks to the workers in order, such that worker 0 will get chunk 0,
+            worker 1 will get chunk 1, etc.
+        """
+        self.pool_params.order_tasks = order_tasks
 
     def _start_workers(self) -> None:
         """
@@ -613,7 +631,10 @@ class WorkerPool:
                 tqdm_manager_owner = TqdmManager.start_manager()
 
             # Start workers if there aren't any. If they already exist check if we need to pass on new parameters
-            if self._workers and self.map_params != new_map_params:
+            if self._workers and not self._worker_comms.is_initialized():
+                logger.warning("WorkerPool parameters changed while keep_alive=True. Restarting workers.")
+                self.stop_and_join(keep_alive=False)
+            if self._workers and (self.map_params != new_map_params):
                 self.map_params = new_map_params
                 self._worker_comms.add_new_map_params(new_map_params)
             if not self._workers:

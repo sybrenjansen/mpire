@@ -1,6 +1,15 @@
 Changelog
 =========
 
+Dev
+---
+
+*(2022-07-08)*
+
+* Added the option to fix the order of tasks given to the workers (`#46`_)
+
+.. _#46: https://github.com/Slimmer-AI/mpire/issues/46
+
 2.4.0
 -----
 

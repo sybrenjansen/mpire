@@ -15,3 +15,4 @@ This section describes how to setup a :obj:`mpire.WorkerPool` instance.
     keep_alive
     worker_insights
     dill
+    order_tasks

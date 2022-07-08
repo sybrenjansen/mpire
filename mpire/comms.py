@@ -32,13 +32,17 @@ class WorkerComms:
     # Amount of time in between each progress bar update
     progress_bar_update_interval = 0.1
 
-    def __init__(self, ctx: mp.context.BaseContext, n_jobs: int) -> None:
+    def __init__(self, ctx: mp.context.BaseContext, n_jobs: int, order_tasks: bool) -> None:
         """
         :param ctx: Multiprocessing context
         :param n_jobs: Number of workers
+        :param order_tasks: Whether to provide tasks to the workers in order, such that worker 0 will get chunk 0,
+            worker 1 will get chunk 1, etc.
         """
         self.ctx = ctx
         self.n_jobs = n_jobs
+        self.order_tasks = order_tasks
+        self._initialized = False
 
         # Whether or not to inform the child processes to keep order in mind (for the map functions)
         self._keep_order = self.ctx.Event()
@@ -89,6 +93,18 @@ class WorkerComms:
     # Initialization
     ################
 
+    def is_initialized(self) -> bool:
+        """
+        :return: Whether the comms have been initialized
+        """
+        return self._initialized
+
+    def reset(self) -> None:
+        """
+        Resets initialization state. Note: doesn't actually reset the comms, just resets the state.
+        """
+        self._initialized = False
+
     def init_comms(self) -> None:
         """
         Initialize/Reset comms containers.
@@ -125,6 +141,8 @@ class WorkerComms:
         self._progress_bar_last_updated = datetime.now()
         self._progress_bar_shutdown = self.ctx.Event()
         self._progress_bar_complete = self.ctx.Event()
+
+        self._initialized = True
 
     def reset_last_completed_task_info(self) -> None:
         """
@@ -240,15 +258,16 @@ class WorkerComms:
         :param task: A tuple of arguments to pass to a worker, which acts upon it
         :param worker_id: If provided, give the task to the worker ID
         """
-        # When a worker ID is not present, we check whether we got results already. If so, we give the next task to the
-        # worker who completed that task. Otherwise, we decide based on order
+        # When a worker ID is not present, we first check if we need to pass on the tasks in order. If not, we check
+        # whether we got results already. If so, we give the next task to the worker who completed that task. Otherwise,
+        # we decide based on order
         if worker_id is None:
-            if self._last_completed_task_worker_id is not None:
-                worker_id = self._last_completed_task_worker_id
-                self._last_completed_task_worker_id = None
-            else:
+            if self.order_tasks or self._last_completed_task_worker_id is None:
                 worker_id = self._task_idx % self.n_jobs
                 self._task_idx += 1
+            else:
+                worker_id = self._last_completed_task_worker_id
+                self._last_completed_task_worker_id = None
 
         with DelayedKeyboardInterrupt():
             self._task_queues[worker_id].put(task, block=True)
