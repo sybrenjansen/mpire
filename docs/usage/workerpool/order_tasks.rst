@@ -5,9 +5,9 @@ Order tasks
     :depth: 2
     :local:
 
-In some settings it can be useful to supply the tasks to workers in order. This means worker 0 will get task 0, worker
-1 will get task 1, etc. After each worker got a task, we start with worker 0 again instead of picking the worker that
-has most recently completed a task.
+In some settings it can be useful to supply the tasks to workers in a round-robin fashion. This means worker 0 will get
+task 0, worker 1 will get task 1, etc. After each worker got a task, we start with worker 0 again instead of picking the
+worker that has most recently completed a task.
 
 When the chunk size is larger than 1, the tasks are distributed to the workers in order, but in chunks. I.e., when
 ``chunk_size=3`` tasks 0, 1, and 2 will be assigned to worker 0, tasks 3, 4, and 5 to worker 1, and so on.
@@ -15,7 +15,13 @@ When the chunk size is larger than 1, the tasks are distributed to the workers i
 When ``keep_alive`` is set to ``True`` and the second ``map`` call is made, MPIRE resets the worker order and starts at
 worker 0 again.
 
-You can enable/disable this by setting the ``order_tasks`` flag:
+.. warning::
+
+    When tasks vary in execution time, the default task scheduler makes sure each worker is busy for approximately the
+    same amount of time. This can mean that some workers execute more tasks than others. When using ``order_tasks`` this
+    is no longer the case and therefore the total execution time is likely to be higher.
+
+You can enable/disable task ordering by setting the ``order_tasks`` flag:
 
 .. code-block:: python
 
