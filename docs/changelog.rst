@@ -1,6 +1,16 @@
 Changelog
 =========
 
+Dev
+---
+
+*(2022-07-08)*
+
+* Added the option to fix the order of tasks given to the workers (`#46`_)
+* Fixed a bug where updated WorkerPool parameters aren't used in subsequent ``map`` calls when ``keep_alive`` is enabled
+
+.. _#46: https://github.com/Slimmer-AI/mpire/issues/46
+
 2.4.0
 -----
 

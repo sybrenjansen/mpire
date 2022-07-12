@@ -36,6 +36,9 @@ Instead of passing the flag to the :obj:`mpire.WorkerPool` constructor you can a
 Caveats
 -------
 
+Changing some WorkerPool init parameters do require a restart. These include ``pass_worker_id``, ``shared_objects``, and
+``use_worker_state``.
+
 Keeping workers alive works even when the function to be called or any other parameter passed on to the ``map`` function
 changes.
 

@@ -11,6 +11,13 @@ MPIRE can be installed through pip:
 
     pip install mpire
 
+and is available through conda-forge:
+
+.. code-block:: bash
+
+    conda install -c conda-forge mpire
+
+
 .. note::
 
     MPIRE is only available for Python >= 3.6.
