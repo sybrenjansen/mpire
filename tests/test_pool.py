@@ -1227,7 +1227,7 @@ class ExceptionTest(unittest.TestCase):
                     kill_thread = Thread(target=self._kill_process, args=(events[0], pool))
                     kill_thread.start()
                     pool.set_shared_objects(events)
-                    pool.map(self._worker_0_sleeps_others_square, range(1000), progress_bar=progress_bar,
+                    pool.map(self._worker_0_sleeps_others_square, range(100), progress_bar=progress_bar,
                              worker_lifespan=worker_lifespan, chunk_size=1)
 
     @staticmethod
