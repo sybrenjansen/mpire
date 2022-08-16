@@ -1230,6 +1230,16 @@ class ExceptionTest(unittest.TestCase):
                     pool.map(self._worker_0_sleeps_others_square, range(100), progress_bar=progress_bar,
                              worker_lifespan=worker_lifespan, chunk_size=1)
 
+    def test_dill_deadlock(self):
+        """
+        Exceptions on the queue need to be flushed before the worker is terminated. This is one example where it used
+        to cause a deadlock (https://github.com/Slimmer-AI/mpire/issues/56)
+        """
+        data = [(x, y, z) for x, y, z in zip(range(0, 100), range(42, 142), range(10, -90, -1))]
+        with self.assertRaises(ZeroDivisionError), WorkerPool(n_jobs=5, use_dill=True) as pool:
+            for res in pool.imap(lambda x, y, z: x * y / z, data):
+                pass
+
     @staticmethod
     def _square_raises(_, x):
         raise ValueError(x)

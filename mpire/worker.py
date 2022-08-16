@@ -383,6 +383,7 @@ class AbstractWorker:
         :param err: Exception that should be passed on to parent process
         """
         # Only one process can throw at a time
+        error_thrown = False
         with self.worker_comms.exception_lock:
 
             # Only raise an exception when this process is the first one to raise. We do this because when the first
@@ -412,6 +413,13 @@ class AbstractWorker:
                 self.worker_comms.add_exception(type(err), traceback_str)
                 if self.map_params.progress_bar:
                     self.worker_comms.add_exception(type(err), traceback_str)
+                error_thrown = True
+
+        # We wait until the exceptions are received before killing the worker
+        if error_thrown:
+            if self.map_params.progress_bar:
+                self.worker_comms.wait_for_exception_progress_bar_received()
+            self.worker_comms.wait_for_exception_received()
 
     def _format_args(self, args: Any, no_args: bool = False, separator: str = '\n') -> str:
         """

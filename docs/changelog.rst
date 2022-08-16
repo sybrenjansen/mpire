@@ -1,6 +1,14 @@
 Changelog
 =========
 
+Dev
+---
+
+* Fixed a bug where a deadlock could occur when an exception was raised from a worker. When the exception payload was
+  bigger than the buffer, the worker could exit before everything was send over the queue (`#56`_)
+
+.. _#56: https://github.com/Slimmer-AI/mpire/issues/56
+
 2.5.0
 -----
 

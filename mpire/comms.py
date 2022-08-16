@@ -4,7 +4,7 @@ import queue
 import threading
 import time
 from datetime import datetime
-from typing import Any, Generator, Optional, Tuple, Union
+from typing import Any, Dict, Generator, Optional, Tuple, Union
 
 from mpire.params import WorkerMapParams
 from mpire.signal import DelayedKeyboardInterrupt
@@ -73,10 +73,10 @@ class WorkerComms:
 
         # Queue where the child processes can pass on an encountered exception
         self._exception_queue = None
+        self._exception_received = None
 
         # Lock object such that child processes can only throw one at a time. The Event object ensures only one
-        # exception can be thrown. When the threading backend is used we switch to a multiprocessing Event, because the
-        # progress bar handler needs a process-aware object
+        # exception can be thrown
         self.exception_lock = self.ctx.Lock()
         self._exception_thrown = self.ctx.Event()
         self._kill_signal_received = self.ctx.Event()
@@ -132,6 +132,7 @@ class WorkerComms:
 
         # Exception related
         self._exception_queue = self.ctx.JoinableQueue()
+        self._exception_received = self.ctx.Event(), self.ctx.Event()
         self._exception_thrown.clear()
         self._kill_signal_received.clear()
 
@@ -410,11 +411,26 @@ class WorkerComms:
         with DelayedKeyboardInterrupt():
             return self._exception_queue.get(block=True)
 
-    def task_done_exception(self) -> None:
+    def task_done_exception(self, progress_bar: bool = False) -> None:
         """
         Signal that we've completed a task for the exception queue
+
+        :param progress_bar: Whether the exception was handled for the progress bar
         """
         self._exception_queue.task_done()
+        self._exception_received[0].set() if not progress_bar else self._exception_received[1].set()
+
+    def wait_for_exception_received(self) -> bool:
+        """
+        :return: Wait until an exception has been received
+        """
+        return self._exception_received[0].wait()
+
+    def wait_for_exception_progress_bar_received(self) -> bool:
+        """
+        :return: Wait until an exception has been received for the progress bar
+        """
+        return self._exception_received[1].wait()
 
     def signal_exception_thrown(self) -> None:
         """
