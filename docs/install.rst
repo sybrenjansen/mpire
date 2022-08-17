@@ -31,6 +31,7 @@ Python packages (installed automatically when installing MPIRE):
 
 - tqdm
 - dataclasses (Python 3.6 only)
+- pygments
 - pywin32 (Windows only)
 
 .. _dilldep:

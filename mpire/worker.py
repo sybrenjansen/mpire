@@ -406,13 +406,16 @@ class AbstractWorker:
                 # cannot catch it.
                 try:
                     pickle.dumps(type(err))
+                    pickle.dumps(err.args)
+                    pickle.dumps(err.__dict__)
                 except pickle.PicklingError:
-                    err = CannotPickleExceptionError()
+                    err = CannotPickleExceptionError(repr(err))
 
+                # Put exception in queue
                 # Add exception. When we have a progress bar, we add an additional one
-                self.worker_comms.add_exception(type(err), traceback_str)
+                self.worker_comms.add_exception(type(err), err.args, err.__dict__, traceback_str)
                 if self.map_params.progress_bar:
-                    self.worker_comms.add_exception(type(err), traceback_str)
+                    self.worker_comms.add_exception(type(err), err.args, err.__dict__, traceback_str)
                 error_thrown = True
 
         # We wait until the exceptions are received before killing the worker

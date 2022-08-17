@@ -4,7 +4,7 @@ import queue
 import threading
 import time
 from datetime import datetime
-from typing import Any, Dict, Generator, Optional, Tuple, Union
+from typing import Any, Dict, Generator, Iterable, Optional, Tuple, Union
 
 from mpire.params import WorkerMapParams
 from mpire.signal import DelayedKeyboardInterrupt
@@ -388,23 +388,25 @@ class WorkerComms:
     # Exceptions
     ################
 
-    def add_exception(self, err_type: type, traceback_str: str) -> None:
+    def add_exception(self, err_type: type, err_args: Iterable, err_state: Dict, traceback_str: str) -> None:
         """
         Add exception details to the queue and set the exception event
 
         :param err_type: Type of the exception
+        :param err_args: Arguments of the exception
+        :param err_state: State dict of the exception
         :param traceback_str: Traceback string
         """
-        self._exception_queue.put((err_type, traceback_str))
+        self._exception_queue.put((err_type, err_args, err_state, traceback_str))
 
     def add_exception_poison_pill(self) -> None:
         """
         Signals the exception handling thread to shut down
         """
         with DelayedKeyboardInterrupt():
-            self._exception_queue.put((POISON_PILL, POISON_PILL))
+            self._exception_queue.put((POISON_PILL, (), {}, ''))
 
-    def get_exception(self) -> Tuple[type, str]:
+    def get_exception(self) -> Tuple[type, Iterable, Dict, str]:
         """
         :return: Tuple containing the type of the exception and the traceback string
         """

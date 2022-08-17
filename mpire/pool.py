@@ -19,6 +19,7 @@ except ImportError:
 from mpire.comms import WorkerComms
 from mpire.context import DEFAULT_START_METHOD, RUNNING_WINDOWS
 from mpire.dashboard.connection_utils import get_dashboard_connection_details
+from mpire.exception import highlight_traceback
 from mpire.insights import WorkerInsights
 from mpire.params import check_map_parameters, CPUList, WorkerMapParams, WorkerPoolParams
 from mpire.progress_bar import ProgressBarHandler, tqdm
@@ -219,7 +220,7 @@ class WorkerPool:
                 # We need to add an exception if we're using the progress bar handler
                 err_msg = f"Worker-{worker_id} died unexpectedly"
                 if self.map_params.progress_bar:
-                    self._worker_comms.add_exception(RuntimeError, err_msg)
+                    self._worker_comms.add_exception(RuntimeError, (), {}, err_msg)
                 self.terminate()
                 raise RuntimeError(err_msg)
 
@@ -233,7 +234,7 @@ class WorkerPool:
                         # We need to add an exception if we're using the progress bar handler
                         err_msg = f"Worker-{worker_id} {timeout_func_name} timed out"
                         if self.map_params.progress_bar:
-                            self._worker_comms.add_exception(TimeoutError, err_msg)
+                            self._worker_comms.add_exception(TimeoutError, (), {}, err_msg)
                         self.terminate()
                         raise TimeoutError(err_msg)
 
@@ -282,7 +283,7 @@ class WorkerPool:
             # We need to add an exception if we're using the progress bar handler
             err_msg = f"Worker-{worker_id} worker_exit timed out"
             if self.map_params.progress_bar:
-                self._worker_comms.add_exception(TimeoutError, err_msg)
+                self._worker_comms.add_exception(TimeoutError, (), {}, err_msg)
             self.terminate()
             raise TimeoutError(err_msg)
 
@@ -750,15 +751,15 @@ class WorkerPool:
                 keyboard_interrupt = True
                 self._worker_comms.signal_exception_thrown()
                 if self.map_params.progress_bar and progress_bar_handler is not None:
-                    self._worker_comms.add_exception(KeyboardInterrupt, "KeyboardInterrupt")
+                    self._worker_comms.add_exception(KeyboardInterrupt, (), {}, "KeyboardInterrupt")
 
         # When we're not dealing with a KeyboardInterrupt, obtain the exception thrown by a worker
         if keyboard_interrupt:
-            err, traceback_str = KeyboardInterrupt, ""
+            err_type, err_args, err_state, traceback_str = KeyboardInterrupt, (), {}, ""
         else:
-            err, traceback_str = self._worker_comms.get_exception()
+            err_type, err_args, err_state, traceback_str = self._worker_comms.get_exception()
             self._worker_comms.task_done_exception()
-        logger.debug(f"Exception obtained: {err}")
+        logger.debug(f"Exception obtained: {err_type}")
 
         # Join exception queue and progress bar, and terminate workers
         logger.debug("Joining exception queue")
@@ -775,7 +776,10 @@ class WorkerPool:
 
         # Raise
         logger.debug("Re-raising obtained exception")
-        raise err(traceback_str)
+        err = err_type.__new__(err_type)
+        err.args = err_args
+        err.__dict__.update(err_state)
+        raise err from Exception(highlight_traceback(traceback_str))
 
     def stop_and_join(self, progress_bar_handler: Optional[ProgressBarHandler] = None,
                       keep_alive: bool = False) -> None:

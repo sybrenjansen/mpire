@@ -472,28 +472,30 @@ class WorkerCommsTest(unittest.TestCase):
             comms._exception_queue.get(block=False)
 
         # Add a few exceptions
-        comms.add_exception(TypeError, 'TypeError')
-        comms.add_exception(ValueError, 'ValueError')
-        comms.add_exception(RuntimeError, 'RuntimeError')
+        comms.add_exception(TypeError, ("hello", "world"), {}, 'TypeError')
+        comms.add_exception(ValueError, (), {"a": "b"}, 'ValueError')
+        comms.add_exception(RuntimeError, (), {}, 'RuntimeError')
         self.assertListEqual([comms.get_exception() for _ in range(3)],
-                             [(TypeError, 'TypeError'), (ValueError, 'ValueError'), (RuntimeError, 'RuntimeError')])
+                             [(TypeError, ("hello", "world"), {}, 'TypeError'),
+                              (ValueError, (), {"a": "b"}, 'ValueError'),
+                              (RuntimeError, (), {}, 'RuntimeError')])
         [comms.task_done_exception() for _ in range(3)]
 
         # Add poison pill
         comms.add_exception_poison_pill()
-        self.assertEqual(comms.get_exception(), (POISON_PILL, POISON_PILL))
+        self.assertEqual(comms.get_exception(), (POISON_PILL, (), {}, ''))
         comms.task_done_exception()
 
         # Should be joinable. When using keep_alive, it should still be open
         comms.join_exception_queue(keep_alive=True)
-        comms.add_exception(TypeError, 'TypeError')
+        comms.add_exception(TypeError, (), {}, 'TypeError')
         comms.get_exception()
         comms.task_done_exception()
         comms.join_exception_queue(keep_alive=False)
 
         # Depending on Python version it either throws AssertionError or ValueError
         with self.assertRaises((AssertionError, ValueError)):
-            comms.add_exception(TypeError, 'TypeError')
+            comms.add_exception(TypeError, (), {}, 'TypeError')
 
     def test_exception_thrown(self):
         """
