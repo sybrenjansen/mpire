@@ -37,21 +37,19 @@ DATETIME_FORMAT = "%Y-%m-%d, %H:%M:%S"
 class ProgressBarHandler:
 
     def __init__(self, pool_params: WorkerPoolParams, map_params: WorkerMapParams, show_progress_bar: bool,
-                 progress_bar_total: int, progress_bar_position: int, worker_comms: WorkerComms,
+                 progress_bar_options: Dict[str, Any], worker_comms: WorkerComms,
                  worker_insights: WorkerInsights) -> None:
         """
         :param pool_params: WorkerPool parameters
         :param map_params: Map parameters
         :param show_progress_bar: When ``True`` will display a progress bar
-        :param progress_bar_total: Total number of tasks that will be processed
-        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time
+        :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
+         ``tqdm.tqdm()`` for details.
         :param worker_comms: Worker communication objects (queues, locks, events, ...)
         :param worker_insights: WorkerInsights object which stores the worker insights
         """
         self.show_progress_bar = show_progress_bar
-        self.progress_bar_total = progress_bar_total
-        self.progress_bar_position = progress_bar_position
+        self.progress_bar_options = progress_bar_options
         self.worker_comms = worker_comms
         self.worker_insights = worker_insights
         if show_progress_bar and DASHBOARD_STARTED_EVENT is not None:
@@ -125,7 +123,7 @@ class ProgressBarHandler:
         tqdm_manager = TqdmManager()
         tqdm_lock, tqdm_position_register = tqdm_manager.get_lock_and_position_register()
         tqdm.set_lock(tqdm_lock)
-        main_progress_bar = tqdm_position_register.register_progress_bar_position(self.progress_bar_position)
+        main_progress_bar = tqdm_position_register.register_progress_bar_position(self.progress_bar_options["position"])
 
         # In case we're running tqdm in a notebook we need to apply a dirty hack to get progress bars working.
         # Solution adapted from https://github.com/tqdm/tqdm/issues/485#issuecomment-473338308
@@ -138,8 +136,7 @@ class ProgressBarHandler:
 
         # Create progress bar and register the start time
         tqdm.monitor_interval = False
-        progress_bar = tqdm(total=self.progress_bar_total, position=self.progress_bar_position, dynamic_ncols=True,
-                            leave=True, mininterval=0.1, maxinterval=0.5)
+        progress_bar = tqdm(**self.progress_bar_options)
         self.start_t = datetime.fromtimestamp(progress_bar.start_t)
 
         # Notify that the main process can continue working. We set it after the progress bar has been created, instead

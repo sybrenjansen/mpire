@@ -6,8 +6,13 @@ Dev
 
 * Fixed a bug where a deadlock could occur when an exception was raised from a worker. When the exception payload was
   bigger than the buffer, the worker could exit before everything was send over the queue (`#56`_)
+* The ``tqdm`` progress bar can now be customized using the ``progress_bar_options`` parameter in the ``map`` functions
+  (`#57`_)
+* Using ``progress_bar_position`` from a ``map`` function is now deprecated and will be removed in MPIRE v2.10.0. Use
+  ``progress_bar_options['position']`` instead
 
 .. _#56: https://github.com/Slimmer-AI/mpire/issues/56
+.. _#57: https://github.com/Slimmer-AI/mpire/issues/57
 
 2.5.0
 -----

@@ -4,6 +4,7 @@ import os
 import queue
 import signal
 import threading
+import time
 import warnings
 from datetime import datetime
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Sized, Union
@@ -300,11 +301,12 @@ class WorkerPool:
 
     def map(self, func: Callable, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int] = None,
             max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
-            worker_lifespan: Optional[int] = None, progress_bar: bool = False, progress_bar_position: int = 0,
-            concatenate_numpy_output: bool = True, enable_insights: Optional[bool] = None,
-            worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
-            task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
-            worker_exit_timeout: Optional[float] = None) -> Any:
+            worker_lifespan: Optional[int] = None, progress_bar: bool = False,
+            progress_bar_position: Optional[int] = None, concatenate_numpy_output: bool = True,
+            enable_insights: Optional[bool] = None, worker_init: Optional[Callable] = None,
+            worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
+            worker_init_timeout: Optional[float] = None, worker_exit_timeout: Optional[float] = None,
+            progress_bar_options: Optional[Dict[str, Any]] = None) -> Any:
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
@@ -326,8 +328,11 @@ class WorkerPool:
         :param worker_lifespan: Number of tasks a worker can handle before it is restarted. If ``None``, workers will
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: When ``True`` it will display a progress bar
-        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time
+        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful when using
+            multiple progress bars at the same time.
+
+            DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
+            instead.
         :param concatenate_numpy_output: When ``True`` it will concatenate numpy output to a single numpy array
         :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
             neglible).
@@ -349,6 +354,8 @@ class WorkerPool:
             MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
         :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function. When the timeout is exceeded,
             MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
+        :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
+            ``tqdm.tqdm()`` for details. The arguments ``total`` and ``leave`` will be overwritten by MPIRE.
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
@@ -366,7 +373,7 @@ class WorkerPool:
         results = self.map_unordered(func, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)),
                                      iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan,
                                      progress_bar, progress_bar_position, enable_insights, worker_init, worker_exit,
-                                     task_timeout, worker_init_timeout, worker_exit_timeout)
+                                     task_timeout, worker_init_timeout, worker_exit_timeout, progress_bar_options)
 
         # Notify workers to forget about order
         self._worker_comms.clear_keep_order()
@@ -382,10 +389,11 @@ class WorkerPool:
                       iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                       chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                       worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                      progress_bar_position: int = 0, enable_insights: Optional[bool] = None,
+                      progress_bar_position: Optional[int] = None, enable_insights: Optional[bool] = None,
                       worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
                       task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
-                      worker_exit_timeout: Optional[float] = None) -> Any:
+                      worker_exit_timeout: Optional[float] = None,
+                      progress_bar_options: Optional[Dict[str, Any]] = None) -> Any:
         """
         Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
@@ -407,8 +415,11 @@ class WorkerPool:
         :param worker_lifespan: Number of tasks a worker can handle before it is restarted. If ``None``, workers will
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: When ``True`` it will display a progress bar
-        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time
+        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful when using
+            multiple progress bars at the same time.
+
+            DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
+            instead.
         :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
             neglible).
 
@@ -429,21 +440,24 @@ class WorkerPool:
             MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
         :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function. When the timeout is exceeded,
             MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
+        :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
+            ``tqdm.tqdm()`` for details. The arguments ``total`` and ``leave`` will be overwritten by MPIRE.
         :return: List with unordered results
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
         return list(self.imap_unordered(func, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
                                         n_splits, worker_lifespan, progress_bar, progress_bar_position,
                                         enable_insights, worker_init, worker_exit, task_timeout, worker_init_timeout,
-                                        worker_exit_timeout))
+                                        worker_exit_timeout, progress_bar_options))
 
     def imap(self, func: Callable, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int] = None,
              max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
              worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-             progress_bar_position: int = 0, enable_insights: Optional[bool] = None,
+             progress_bar_position: Optional[int] = None, enable_insights: Optional[bool] = None,
              worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
              task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
-             worker_exit_timeout: Optional[float] = None) -> Generator[Any, None, None]:
+             worker_exit_timeout: Optional[float] = None,
+             progress_bar_options: Optional[Dict[str, Any]] = None) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``, but ordered. Also allows a user to set the maximum number of
         tasks available in the queue.
@@ -465,8 +479,11 @@ class WorkerPool:
         :param worker_lifespan: Number of tasks a worker can handle before it is restarted. If ``None``, workers will
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: When ``True`` it will display a progress bar
-        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time
+        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful when using
+            multiple progress bars at the same time.
+
+            DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
+            instead.
         :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
             neglible).
 
@@ -487,6 +504,8 @@ class WorkerPool:
             MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
         :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function. When the timeout is exceeded,
             MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
+        :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
+            ``tqdm.tqdm()`` for details. The arguments ``total`` and ``leave`` will be overwritten by MPIRE.
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
@@ -508,7 +527,7 @@ class WorkerPool:
                                                       max_tasks_active, chunk_size, n_splits, worker_lifespan,
                                                       progress_bar, progress_bar_position, enable_insights, worker_init,
                                                       worker_exit, task_timeout, worker_init_timeout,
-                                                      worker_exit_timeout):
+                                                      worker_exit_timeout, progress_bar_options):
 
             # Check if the next one(s) to return is/are temporarily stored. We use a while-true block with dict.pop() to
             # keep the temporary store as small as possible
@@ -538,10 +557,11 @@ class WorkerPool:
                        iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                        chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                        worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                       progress_bar_position: int = 0, enable_insights: Optional[bool] = None,
+                       progress_bar_position: Optional[int] = None, enable_insights: Optional[bool] = None,
                        worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
                        task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
-                       worker_exit_timeout: Optional[float] = None) -> Generator[Any, None, None]:
+                       worker_exit_timeout: Optional[float] = None,
+                       progress_bar_options: Optional[Dict[str, Any]] = None) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``. Also allows a user to set the maximum number of tasks available in
         the queue.
@@ -563,8 +583,11 @@ class WorkerPool:
         :param worker_lifespan: Number of tasks a worker can handle before it is restarted. If ``None``, workers will
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: When ``True`` it will display a progress bar
-        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
-            multiple progress bars at the same time
+        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful when using
+            multiple progress bars at the same time.
+
+            DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
+            instead.
         :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
             neglible).
 
@@ -585,6 +608,8 @@ class WorkerPool:
             MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
         :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function. When the timeout is exceeded,
             MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
+        :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
+            ``tqdm.tqdm()`` for details. The arguments ``total`` and ``leave`` will be overwritten by MPIRE.
         :return: Generator yielding unordered results
         """
         # If we're dealing with numpy arrays, we have to chunk them here already
@@ -598,9 +623,10 @@ class WorkerPool:
 
         # Check parameters and thereby obtain the number of tasks. The chunk_size and progress bar parameters could be
         # modified as well
-        n_tasks, max_tasks_active, chunk_size, progress_bar = check_map_parameters(
+        n_tasks, max_tasks_active, chunk_size, progress_bar, progress_bar_options = check_map_parameters(
             self.pool_params, iterable_of_args, iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan,
-            progress_bar, progress_bar_position, task_timeout, worker_init_timeout, worker_exit_timeout
+            progress_bar, progress_bar_position, progress_bar_options, task_timeout, worker_init_timeout,
+            worker_exit_timeout
         )
         new_map_params = WorkerMapParams(func, worker_init, worker_exit, worker_lifespan, progress_bar, task_timeout,
                                          worker_init_timeout, worker_exit_timeout)
@@ -643,7 +669,7 @@ class WorkerPool:
 
             # Create progress bar handler, which receives progress updates from the workers and updates the progress bar
             # accordingly
-            with ProgressBarHandler(self.pool_params, self.map_params, progress_bar, n_tasks, progress_bar_position,
+            with ProgressBarHandler(self.pool_params, self.map_params, progress_bar, progress_bar_options,
                                     self._worker_comms, self._worker_insights) as progress_bar_handler:
                 try:
                     # Process all args in the iterable
@@ -817,9 +843,19 @@ class WorkerPool:
                 logger.debug("Joining workers")
                 for worker_process in self._workers:
                     worker_process.join()
-                    # Added since Python 3.7
+                    # Added since Python 3.7. This will clean up any resources that are left. For some reason though,
+                    # when using daemon processes and nested pools, a process can still be alive after the join when
+                    # close is called and a ValueError is raised. So we wait a bit and check if the process will die. If
+                    # not, then the GC can clean up the resources later.
                     if hasattr(worker_process, 'close'):
-                        worker_process.close()
+                        try_count = 5
+                        while worker_process.is_alive() and try_count > 0:
+                            time.sleep(0.01)
+                            try_count -= 1
+                        try:
+                            worker_process.close()
+                        except ValueError:
+                            pass
                 self._workers = []
                 logger.debug("Done joining workers")
 

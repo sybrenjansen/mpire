@@ -1,10 +1,13 @@
 import itertools
 import multiprocessing as mp
 import warnings
-from typing import Any, Callable, Iterable, List, Optional, Sized, Tuple, Union
+from io import StringIO
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sized, Tuple, Union
 
 from dataclasses import dataclass, field
-from tqdm import tqdm
+from unittest.mock import patch
+from tqdm import TqdmKeyError
+from tqdm.std import tqdm
 
 from mpire.context import RUNNING_WINDOWS, DEFAULT_START_METHOD
 
@@ -144,10 +147,11 @@ class WorkerMapParams:
 def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[Sized, Iterable],
                          iterable_len: Optional[int], max_tasks_active: Optional[int],
                          chunk_size: Optional[Union[int, float]], n_splits: Optional[int],
-                         worker_lifespan: Optional[int], progress_bar: bool, progress_bar_position: int,
+                         worker_lifespan: Optional[int], progress_bar: bool, progress_bar_position: Optional[int],
+                         progress_bar_options: Optional[Dict[str, Any]],
                          task_timeout: Optional[float], worker_init_timeout: Optional[float],
                          worker_exit_timeout: Optional[float]) \
-        -> Tuple[Optional[int], int, Optional[int], Union[bool, tqdm]]:
+        -> Tuple[Optional[int], int, Optional[int], Union[bool, tqdm], Dict[str, Any]]:
     """
     Check the parameters provided to any (i)map function. Also extracts the number of tasks and can modify the
     ``chunk_size`` and ``progress_bar`` parameters.
@@ -165,12 +169,17 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
     :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
         stay alive the entire time. Use this when workers use up too much memory over the course of time
     :param progress_bar: When ``True`` it will display a progress bar
-    :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful wel using
-        multiple progress bars at the same time
+    :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful when using
+        multiple progress bars at the same time.
+
+        DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
+        instead.
+    :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
+         ``tqdm.tqdm()`` for details. The arguments ``total`` and ``leave`` will be overwritten by MPIRE.
     :param task_timeout: Timeout in seconds for a single task
     :param worker_init_timeout: Timeout in seconds for the ``worker_init`` function
     :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function
-    :return: Number of tasks, max tasks active, chunk size, progress bar
+    :return: Number of tasks, max tasks active, chunk size, progress bar, progress bar options
     """
     # Get number of tasks
     n_tasks = None
@@ -221,11 +230,49 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
     if RUNNING_WINDOWS and progress_bar and pool_params.start_method == "threading":
         raise ValueError("Progress bar is currently not supported on Windows when using start_method='threading'")
 
-    # Progress bar position should be a positive integer
-    if not isinstance(progress_bar_position, int):
-        raise TypeError('progress_bar_position should be a positive integer (>= 0)')
-    if progress_bar_position < 0:
-        raise ValueError('progress_bar_position should be a positive integer (>= 0)')
+    # Progress bar options should be a dictionary. Issue a warning for "total" and "leave".
+    progress_bar_options = progress_bar_options or {}
+    if not isinstance(progress_bar_options, dict):
+        raise TypeError("progress_bar_options should be a dictionary")
+    if "total" in progress_bar_options:
+        warnings.warn("The 'total' keyword argument is overwritten by MPIRE. Set the total number of tasks to process "
+                      "using the iterable_len parameter", RuntimeWarning, stacklevel=2)
+    if "leave" in progress_bar_options:
+        warnings.warn("The 'leave' keyword argument will be overwritten by MPIRE", RuntimeWarning, stacklevel=2)
+
+    # Progress bar position should be a positive integer. This parameter is deprecated and will be removed in v2.10.0.
+    # For now, if the position is set in the progress_bar_options, that will be used. Otherwise, the position is set to
+    # progress_bar_position.
+    if progress_bar_position is not None:
+        warnings.warn("The 'progress_bar_position' parameter is deprecated and will be removed in v2.10.0. Set the "
+                      "progress bar position using 'progress_bar_options' instead", DeprecationWarning, stacklevel=2)
+        if not isinstance(progress_bar_position, int):
+            raise TypeError('progress_bar_position should be a positive integer (>= 0)')
+        if progress_bar_position < 0:
+            raise ValueError('progress_bar_position should be a positive integer (>= 0)')
+        if "position" in progress_bar_options:
+            warnings.warn("The 'progress_bar_position' is already provided in 'progress_bar_options', which will take "
+                          "precedence", RuntimeWarning, stacklevel=2)
+        else:
+            progress_bar_options["position"] = progress_bar_position
+
+    # Set some defaults and overwrite others
+    progress_bar_options["total"] = n_tasks
+    progress_bar_options["leave"] = True
+    progress_bar_options.setdefault("position", 0)
+    progress_bar_options.setdefault("dynamic_ncols", True)
+    progress_bar_options.setdefault("mininterval", 0.1)
+    progress_bar_options.setdefault("maxinterval", 0.5)
+
+    # Check that all progress bar options are properly formatted. We disable the __del__ method of the tqdm class to
+    # avoid ignored errors when cleaning up. For some reason, patching the __del__ function doesn't work, when raising
+    # afterwards it still shows ignored exceptions.
+    try:
+        with patch(progress_bar_options.get('file', 'sys.stderr'), new=StringIO()):
+            tqdm(**progress_bar_options)
+    except (TqdmKeyError, TypeError) as e:
+        raise e from ValueError("There's an error in progress_bar_options. Either one of the parameters doesn't exist "
+                                "or it's not properly formatted. See tqdm.tqdm() for details.")
 
     # Timeout parameters can't be negative
     for timeout_var, timeout_var_name in [(task_timeout, 'task_timeout'),
@@ -237,4 +284,4 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
             if timeout_var <= 0:
                 raise ValueError(f"{timeout_var_name} should be either None or a positive integer/float (> 0)")
 
-    return n_tasks, max_tasks_active, chunk_size, progress_bar
+    return n_tasks, max_tasks_active, chunk_size, progress_bar, progress_bar_options

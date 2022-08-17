@@ -866,15 +866,29 @@ class ProgressBarTest(unittest.TestCase):
         """
         Test different values of progress_bar_position, which should be positive integer >= 0
         """
-        for progress_bar_position, error in [(-1, ValueError), ('numero uno', TypeError)]:
-            with self.subTest(input='regular input', progress_bar_position=progress_bar_position), \
-                    self.assertRaises(error), WorkerPool(n_jobs=1) as pool:
-                pool.map(square, self.test_data, progress_bar=True, progress_bar_position=progress_bar_position)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
 
-            with self.subTest(input='numpy input', progress_bar_position=progress_bar_position), \
-                    self.assertRaises(error), WorkerPool(n_jobs=1) as pool:
-                pool.map(square_numpy, self.test_data_numpy, progress_bar=True,
-                         progress_bar_position=progress_bar_position)
+            for progress_bar_position, error in [(-1, ValueError), ('numero uno', TypeError)]:
+                with self.subTest(input='regular input', progress_bar_position=progress_bar_position), \
+                        self.assertRaises(error), WorkerPool(n_jobs=1) as pool:
+                    pool.map(square, self.test_data, progress_bar=True, progress_bar_position=progress_bar_position)
+
+                with self.subTest(input='numpy input', progress_bar_position=progress_bar_position), \
+                        self.assertRaises(error), WorkerPool(n_jobs=1) as pool:
+                    pool.map(square_numpy, self.test_data_numpy, progress_bar=True,
+                             progress_bar_position=progress_bar_position)
+
+    def test_progress_bar_options(self):
+        """
+        Test different progress bar options. Wrong inputs are tested in test_params
+        """
+        print()
+        for progress_bar_options in [{"unit": "km"}, {"unit": "s", "desc": "I'm a pbar!"}, {"colour": "green"}]:
+            with self.subTest(progress_bar_options=progress_bar_options), WorkerPool(n_jobs=2) as pool:
+                results = pool.map(square, self.test_data, progress_bar=True, progress_bar_options=progress_bar_options)
+                self.assertIsInstance(results, list)
+                self.assertEqual(self.test_desired_output, results)
 
     def test_start_methods(self):
         """
@@ -1237,7 +1251,7 @@ class ExceptionTest(unittest.TestCase):
         """
         data = [(x, y, z) for x, y, z in zip(range(0, 100), range(42, 142), range(10, -90, -1))]
         with self.assertRaises(ZeroDivisionError), WorkerPool(n_jobs=5, use_dill=True) as pool:
-            for res in pool.imap(lambda x, y, z: x * y / z, data):
+            for _ in pool.imap(lambda x, y, z: x * y / z, data):
                 pass
 
     @staticmethod
@@ -1431,9 +1445,9 @@ class OrderTasksTest(unittest.TestCase):
         state['tasks'] = []
 
     @staticmethod
-    def _f(wid, state, x):
+    def _f(_, state, x):
         state['tasks'].append(x)
 
     @staticmethod
-    def _exit(wid, state):
+    def _exit(_, state):
         return state
