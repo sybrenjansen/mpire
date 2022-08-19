@@ -4,8 +4,9 @@ Changelog
 Dev
 ---
 
-* Fixed a bug where a deadlock could occur when an exception was raised from a worker. When the exception payload was
-  bigger than the buffer, the worker could exit before everything was send over the queue (`#56`_)
+* Added Python 3.10 support
+* Fixed a bug where a worker could exit before an exception was entirely send over the queue, causing a deadlock
+  (`#56`_)
 * Fixed a bug where exceptions with init arguments weren't handled correctly (`#58`_)
 * The ``tqdm`` progress bar can now be customized using the ``progress_bar_options`` parameter in the ``map`` functions
   (`#57`_)

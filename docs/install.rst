@@ -20,7 +20,7 @@ and is available through conda-forge:
 
 .. note::
 
-    MPIRE is only available for Python >= 3.6.
+    MPIRE is available for Python >= 3.6.
 
 Dependencies
 ------------
@@ -33,6 +33,11 @@ Python packages (installed automatically when installing MPIRE):
 - dataclasses (Python 3.6 only)
 - pygments
 - pywin32 (Windows only)
+
+.. note::
+
+    When using MPIRE on Windows with conda, you might need to install ``pywin32`` using ``conda install pywin32`` when
+    encountering a ``DLL failed to load`` error.
 
 .. _dilldep:
 
