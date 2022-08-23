@@ -73,7 +73,10 @@ class WorkerComms:
 
         # Queue where the child processes can pass on an encountered exception
         self._exception_queue = None
+
+        # Events indicating whether the exception was received by the main process or progress bar handler
         self._exception_received = None
+        self._exception_progress_bar_received = None
 
         # Lock object such that child processes can only throw one at a time. The Event object ensures only one
         # exception can be thrown
@@ -132,7 +135,8 @@ class WorkerComms:
 
         # Exception related
         self._exception_queue = self.ctx.JoinableQueue()
-        self._exception_received = self.ctx.Event(), self.ctx.Event()
+        self._exception_received = self.ctx.Event()
+        self._exception_progress_bar_received = self.ctx.Event()
         self._exception_thrown.clear()
         self._kill_signal_received.clear()
 
@@ -420,19 +424,19 @@ class WorkerComms:
         :param progress_bar: Whether the exception was handled for the progress bar
         """
         self._exception_queue.task_done()
-        self._exception_received[0].set() if not progress_bar else self._exception_received[1].set()
+        self._exception_progress_bar_received.set() if progress_bar else self._exception_received.set()
 
     def wait_for_exception_received(self) -> bool:
         """
         :return: Wait until an exception has been received
         """
-        return self._exception_received[0].wait()
+        return self._exception_received.wait()
 
     def wait_for_exception_progress_bar_received(self) -> bool:
         """
         :return: Wait until an exception has been received for the progress bar
         """
-        return self._exception_received[1].wait()
+        return self._exception_progress_bar_received.wait()
 
     def signal_exception_thrown(self) -> None:
         """

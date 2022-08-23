@@ -264,9 +264,9 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
     progress_bar_options.setdefault("mininterval", 0.1)
     progress_bar_options.setdefault("maxinterval", 0.5)
 
-    # Check that all progress bar options are properly formatted. We disable the __del__ method of the tqdm class to
-    # avoid ignored errors when cleaning up. For some reason, patching the __del__ function doesn't work, when raising
-    # afterwards it still shows ignored exceptions.
+    # Check that all progress bar options are properly formatted. We need to that here, because when an error occurs
+    # within the progress bar handler it will deadlock (it's not technically impossible to do it there, but might as
+    # well do it here)
     try:
         with patch(progress_bar_options.get('file', 'sys.stderr'), new=StringIO()):
             tqdm(**progress_bar_options)

@@ -5,7 +5,7 @@ Dev
 ---
 
 * Added Python 3.10 support
-* Fixed a bug where a worker could exit before an exception was entirely send over the queue, causing a deadlock
+* Fixed a bug where a worker could exit before an exception was entirely sent over the queue, causing a deadlock
   (`#56`_)
 * Fixed a bug where exceptions with init arguments weren't handled correctly (`#58`_)
 * The ``tqdm`` progress bar can now be customized using the ``progress_bar_options`` parameter in the ``map`` functions
