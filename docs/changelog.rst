@@ -8,6 +8,9 @@ Dev
 * Fixed a bug where a worker could exit before an exception was entirely sent over the queue, causing a deadlock
   (`#56`_)
 * Fixed a bug where exceptions with init arguments weren't handled correctly (`#58`_)
+* Fixed a bug when using nested ``WorkerPool`` objects, the first one with threading and the second one with
+  multiprocessing. As spawning processes is not thread-safe_, we need to use a lock when multiple threads try to create
+  processes at the same time
 * The ``tqdm`` progress bar can now be customized using the ``progress_bar_options`` parameter in the ``map`` functions
   (`#57`_)
 * Using ``progress_bar_position`` from a ``map`` function is now deprecated and will be removed in MPIRE v2.10.0. Use
@@ -16,6 +19,8 @@ Dev
 .. _#56: https://github.com/Slimmer-AI/mpire/issues/56
 .. _#57: https://github.com/Slimmer-AI/mpire/issues/57
 .. _#58: https://github.com/Slimmer-AI/mpire/issues/58
+.. _thread-safe: htps://bugs.python.org/issue40860
+
 
 2.5.0
 -----
