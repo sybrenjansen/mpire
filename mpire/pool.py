@@ -675,6 +675,7 @@ class WorkerPool:
                 try:
                     # Process all args in the iterable
                     n_active = 0
+                    logger.debug("Starting with adding tasks")
                     while not self._worker_comms.exception_thrown():
                         # Add task, only if allowed and if there are any
                         if n_active < max_tasks_active:
@@ -775,11 +776,12 @@ class WorkerPool:
         self._worker_comms.clear_keep_order()
 
         # Raise
-        logger.debug("Re-raising obtained exception")
         err = err_type.__new__(err_type)
         err.args = err_args
         err.__dict__.update(err_state)
-        raise err from Exception(highlight_traceback(traceback_str))
+        traceback_err = Exception(highlight_traceback(traceback_str))
+        logger.debug("Re-raising obtained exception")
+        raise err from traceback_err
 
     def stop_and_join(self, progress_bar_handler: Optional[ProgressBarHandler] = None,
                       keep_alive: bool = False) -> None:
