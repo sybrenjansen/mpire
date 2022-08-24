@@ -682,6 +682,8 @@ class ExitFuncTest(unittest.TestCase):
 
 class DaemonTest(unittest.TestCase):
 
+    # This also tests nested WorkerPools. We only test spawn here as creating processes is not thread-safe
+
     def setUp(self):
         # Create some test data. Note that the regular map reads the inputs as a list of single tuples (one argument),
         # whereas parallel.map sees it as a list of argument lists. Therefore we give the regular map a lambda function
@@ -693,7 +695,7 @@ class DaemonTest(unittest.TestCase):
         """
         Tests nested WorkerPools when daemon==False, which should work
         """
-        with WorkerPool(n_jobs=4, daemon=False) as pool:
+        with WorkerPool(n_jobs=4, daemon=False, start_method='spawn') as pool:
             # Obtain results using nested WorkerPools
             results = pool.map(self._square_daemon, ((X,) for X in repeat(self.test_data, 4)), chunk_size=1)
 
@@ -706,17 +708,8 @@ class DaemonTest(unittest.TestCase):
         """
         Tests nested WorkerPools when daemon==True, which should not work
         """
-        with self.assertRaises(AssertionError), WorkerPool(n_jobs=4, daemon=True) as pool:
+        with self.assertRaises(AssertionError), WorkerPool(n_jobs=4, daemon=True, start_method='spawn') as pool:
             pool.map(self._square_daemon, ((X,) for X in repeat(self.test_data, 4)), chunk_size=1)
-
-    def test_start_methods(self):
-        """
-        Test for different start methods
-        """
-        for start_method in TEST_START_METHODS:
-            with self.subTest(start_method=start_method), \
-                    WorkerPool(n_jobs=2, daemon=False, start_method=start_method) as pool:
-                pool.map(self._square_daemon, ((X,) for X in repeat(self.test_data, 3)), chunk_size=1)
 
     @staticmethod
     def _square_daemon(x):

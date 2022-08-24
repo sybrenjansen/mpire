@@ -247,10 +247,8 @@ class WorkerPool:
         :param worker_id: ID of the worker
         :return: Worker instance
         """
-        # Disable the interrupt signal. We let the process die gracefully if it needs to. Additionally, spawning
-        # processes is not thread-safe as a global `_children` variable is set. If multiple threads create processes,
-        # then we need to use a lock. See htps://bugs.python.org/issue40860
-        with DisableKeyboardInterruptSignal(), PROCESS_LOCK:
+        # Disable the interrupt signal. We let the process die gracefully if it needs to
+        with DisableKeyboardInterruptSignal():
             # Create worker
             w = self.Worker(worker_id, self.pool_params, self.map_params, self._worker_comms, self._worker_insights,
                             TqdmManager.get_connection_details(), get_dashboard_connection_details(), datetime.now())
@@ -981,7 +979,3 @@ class WorkerPool:
         :return: Dictionary containing worker insights
         """
         return self._worker_insights.get_insights()
-
-
-# See WorkerPool._start_worker for more details
-PROCESS_LOCK = threading.Lock()
