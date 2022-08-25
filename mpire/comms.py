@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from typing import Any, Dict, Generator, Iterable, Optional, Tuple, Union
 
+from mpire.context import RUNNING_WINDOWS
 from mpire.params import WorkerMapParams
 from mpire.signal import DelayedKeyboardInterrupt
 
@@ -647,7 +648,10 @@ class WorkerComms:
         :param join: Whether to join the queue or not
         """
         logger.debug("Draining queue")
-        try:
+        # Running this in a separate process on Windows can cause errors
+        if RUNNING_WINDOWS:
+            self._drain_and_join_queue(q, join)
+        else:
             process = mp.Process(target=self._drain_and_join_queue, args=(q, join))
             process.start()
             process.join(timeout=5)
@@ -655,15 +659,13 @@ class WorkerComms:
                 logger.debug("Draining queue failed, skipping")
                 process.terminate()
                 process.join()
-        except (OSError, RuntimeError):
-            # For Windows compatibility
-            pass
 
-        # The above was done in a separate process where the queue had a different feeder thread
-        logger.debug("Closing queue")
-        q.close()
-        logger.debug("Joining queue feeder thread")
-        q.join_thread()
+            if join:
+                # The above was done in a separate process where the queue had a different feeder thread
+                logger.debug("Closing queue")
+                q.close()
+                logger.debug("Joining queue feeder thread")
+                q.join_thread()
 
     @staticmethod
     def _drain_and_join_queue(q: mp.JoinableQueue, join: bool = True) -> None:
@@ -697,8 +699,11 @@ class WorkerComms:
         # Join
         if join:
             try:
+                logger.debug("Joining queue")
                 q.join()
+                logger.debug("Closing queue")
                 q.close()
+                logger.debug("Joining queue feeder thread")
                 q.join_thread()
             except OSError:
                 pass
