@@ -630,8 +630,11 @@ class WorkerComms:
         Drain tasks, results, and exit results queues. Note that the exception queue doesn't need to be drained.
         This one is properly cleaned up in the exception handling class.
         """
+        logger.debug("Draining task queues")
         [self.drain_and_join_queue(q) for q in self._task_queues]
+        logger.debug("Draining results queues")
         self.drain_and_join_queue(self._results_queue)
+        logger.debug("Draining exit results queues")
         [self.drain_and_join_queue(q) for q in self._exit_results_queues]
 
     def drain_and_join_queue(self, q: mp.JoinableQueue, join: bool = True) -> None:
@@ -643,6 +646,7 @@ class WorkerComms:
         :param q: Queue to join
         :param join: Whether to join the queue or not
         """
+        logger.debug("Draining queue")
         try:
             process = mp.Process(target=self._drain_and_join_queue, args=(q, join))
             process.start()
@@ -654,6 +658,12 @@ class WorkerComms:
         except (OSError, RuntimeError):
             # For Windows compatibility
             pass
+
+        # The above was done in a separate process where the queue had a different feeder thread
+        logger.debug("Closing queue")
+        q.close()
+        logger.debug("Joining queue feeder thread")
+        q.join_thread()
 
     @staticmethod
     def _drain_and_join_queue(q: mp.JoinableQueue, join: bool = True) -> None:

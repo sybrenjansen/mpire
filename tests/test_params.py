@@ -4,6 +4,7 @@ from itertools import product
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 from tqdm import TqdmKeyError
 
 from mpire import cpu_count
@@ -357,6 +358,7 @@ class CheckMapParametersTest(unittest.TestCase):
                                          progress_bar_position=progress_bar_position, progress_bar_options=None,
                                          task_timeout=None, worker_init_timeout=None, worker_exit_timeout=None)
 
+    @pytest.mark.filterwarnings('ignore::pytest.PytestUnraisableExceptionWarning')
     def test_progress_bar_options(self):
         """
         Check progress_bar_options parameter. Should raise when wrong parameter values are used.

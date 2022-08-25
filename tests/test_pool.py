@@ -916,6 +916,13 @@ class KeepAliveTest(unittest.TestCase):
         self.test_desired_output_f1 = [x * 2 for x in self.test_data]
         self.test_desired_output_f2 = [x * 3 for x in self.test_data]
 
+        # Setup logger for debug purposes
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.DEBUG)
+
+    def tearDown(self) -> None:
+        self.logger.setLevel(logging.NOTSET)
+
     def test_dont_keep_alive(self):
         """
         When keep_alive is set to False it should restart workers between map calls. This means the counter is updated
