@@ -184,6 +184,8 @@ class WorkerPool:
 
         :return: List of unordered results produces by workers
         """
+        logger.debug("Checking worker status - restarts")
+
         # Check restarts
         obtained_results = []
         for worker_id in self._worker_comms.get_worker_restarts():
@@ -209,6 +211,8 @@ class WorkerPool:
             # Start new worker
             self._workers[worker_id] = self._start_worker(worker_id)
 
+        logger.debug("Checking worker status - alive check")
+
         # Check that workers that are supposed to be alive, are actually alive. If not, then a worker died unexpectedly.
         # Note that a worker can be alive, but their alive status is still False. This doesn't really matter, because we
         # know the worker is alive according to the OS. The only way we know that something bad happened is when a
@@ -224,6 +228,8 @@ class WorkerPool:
                 self.terminate()
                 raise RuntimeError(err_msg)
 
+        logger.debug("Checking worker status - timeouts")
+
         # Check for worker_init/task/worker_exit timeouts
         for timeout_var, has_timed_out_func, timeout_func_name in [
                 (self.map_params.worker_init_timeout, self._worker_comms.has_worker_init_timed_out, 'worker_init'),
@@ -237,6 +243,8 @@ class WorkerPool:
                             self._worker_comms.add_exception(TimeoutError, (), {}, err_msg)
                         self.terminate()
                         raise TimeoutError(err_msg)
+
+        logger.debug("Checking worker status done")
 
         return obtained_results
 
