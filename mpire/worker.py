@@ -382,15 +382,21 @@ class AbstractWorker:
         :param no_args: Whether there were any args at all
         :param err: Exception that should be passed on to parent process
         """
+        print(self.worker_id, "Obtained exception")
+
         # Only one process can throw at a time
         error_thrown = False
         with self.worker_comms.exception_lock:
+
+            print(self.worker_id, "Got exception lock")
 
             # Only raise an exception when this process is the first one to raise. We do this because when the first
             # exception is caught by the main process the workers are joined which can cause a deadlock on draining the
             # exception queue. By only allowing one process to throw we know for sure that the exception queue will be
             # empty when the first one arrives.
             if not self.worker_comms.exception_thrown():
+
+                print(self.worker_id, "Signaling exception thrown")
 
                 # Let others know we need to stop
                 self.worker_comms.signal_exception_thrown()
@@ -404,12 +410,15 @@ class AbstractWorker:
                 # <class ...>: it's not the same object as ...). We check that here by trying the pickle.dumps manually.
                 # The call to `queue.put` creates a thread in which it pickles and when that raises an exception we
                 # cannot catch it.
+                print(self.worker_id, "Trying exception pickle")
                 try:
                     pickle.dumps(type(err))
                     pickle.dumps(err.args)
                     pickle.dumps(err.__dict__)
                 except pickle.PicklingError:
                     err = CannotPickleExceptionError(repr(err))
+
+                print(self.worker_id, "Adding exception")
 
                 # Put exception in queue
                 # Add exception. When we have a progress bar, we add an additional one
@@ -421,8 +430,11 @@ class AbstractWorker:
         # We wait until the exceptions are received before killing the worker
         if error_thrown:
             if self.map_params.progress_bar:
+                print(self.worker_id, "Waiting for exception received progress bar")
                 self.worker_comms.wait_for_exception_progress_bar_received()
+            print(self.worker_id, "Waiting for exception received")
             self.worker_comms.wait_for_exception_received()
+        print(self.worker_id, "Done raising")
 
     def _format_args(self, args: Any, no_args: bool = False, separator: str = '\n') -> str:
         """

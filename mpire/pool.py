@@ -184,8 +184,6 @@ class WorkerPool:
 
         :return: List of unordered results produces by workers
         """
-        logger.debug("Checking worker status - restarts")
-
         # Check restarts
         obtained_results = []
         for worker_id in self._worker_comms.get_worker_restarts():
@@ -211,8 +209,6 @@ class WorkerPool:
             # Start new worker
             self._workers[worker_id] = self._start_worker(worker_id)
 
-        logger.debug("Checking worker status - alive check")
-
         # Check that workers that are supposed to be alive, are actually alive. If not, then a worker died unexpectedly.
         # Note that a worker can be alive, but their alive status is still False. This doesn't really matter, because we
         # know the worker is alive according to the OS. The only way we know that something bad happened is when a
@@ -228,8 +224,6 @@ class WorkerPool:
                 self.terminate()
                 raise RuntimeError(err_msg)
 
-        logger.debug("Checking worker status - timeouts")
-
         # Check for worker_init/task/worker_exit timeouts
         for timeout_var, has_timed_out_func, timeout_func_name in [
                 (self.map_params.worker_init_timeout, self._worker_comms.has_worker_init_timed_out, 'worker_init'),
@@ -243,8 +237,6 @@ class WorkerPool:
                             self._worker_comms.add_exception(TimeoutError, (), {}, err_msg)
                         self.terminate()
                         raise TimeoutError(err_msg)
-
-        logger.debug("Checking worker status done")
 
         return obtained_results
 
@@ -683,7 +675,7 @@ class WorkerPool:
                 try:
                     # Process all args in the iterable
                     n_active = 0
-                    logger.debug("Starting with adding tasks")
+                    logger.debug("Adding tasks")
                     while not self._worker_comms.exception_thrown():
                         # Add task, only if allowed and if there are any
                         if n_active < max_tasks_active:
@@ -706,6 +698,8 @@ class WorkerPool:
                             n_active -= 1
 
                     # Obtain the results not yet obtained
+                    if not self._worker_comms.exception_thrown():
+                        logger.debug("All tasks submitted, obtaining remaining results")
                     while not self._worker_comms.exception_thrown() and n_active != 0:
                         try:
                             yield from self._worker_comms.get_results(block=True, timeout=0.01)
@@ -723,6 +717,8 @@ class WorkerPool:
                         self._handle_exception(progress_bar_handler)
 
                     # All results are in: it's clean up time
+                    if not self._worker_comms.exception_thrown():
+                        logger.debug("All results obtained")
                     self.stop_and_join(progress_bar_handler, keep_alive=self.pool_params.keep_alive)
 
                 except KeyboardInterrupt:
@@ -782,6 +778,15 @@ class WorkerPool:
 
         # Clear keep order event so we can safely reuse the WorkerPool and use (i)map_unordered after an (i)map call
         self._worker_comms.clear_keep_order()
+
+        def childCount():
+            import psutil
+            current_process = psutil.Process()
+            children = current_process.children()
+            return len(children), threading.active_count()
+
+        logger.debug(f"Children: {childCount()}")
+        logger.debug(threading.enumerate())
 
         # Raise
         err = err_type.__new__(err_type)
