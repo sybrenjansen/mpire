@@ -648,6 +648,7 @@ class WorkerComms:
         :param join: Whether to join the queue or not
         """
         logger.debug("Draining queue")
+
         # Running this in a separate process on Windows can cause errors
         if RUNNING_WINDOWS:
             self._drain_and_join_queue(q, join)

@@ -620,7 +620,6 @@ class ExitFuncTest(unittest.TestCase):
                 for exit_result in pool.get_exit_results():
                     self.assertEqual(len(exit_result), 10_000 * 1024)
 
-    # TODO: This function prints OSError messages on Windows. Not going to fix this now as it's harmless.
     def test_error(self):
         """
         When an exception occurs in the exit function it should properly shut down
@@ -915,13 +914,6 @@ class KeepAliveTest(unittest.TestCase):
         self.test_data = [1, 2, 3, 5, 6, 9, 37, 42, 1337, 0, 3, 5, 0]
         self.test_desired_output_f1 = [x * 2 for x in self.test_data]
         self.test_desired_output_f2 = [x * 3 for x in self.test_data]
-
-        # Setup logger for debug purposes
-        self.logger = logging.getLogger()
-        self.logger.setLevel(logging.DEBUG)
-
-    def tearDown(self) -> None:
-        self.logger.setLevel(logging.NOTSET)
 
     def test_dont_keep_alive(self):
         """
