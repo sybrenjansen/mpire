@@ -779,15 +779,6 @@ class WorkerPool:
         # Clear keep order event so we can safely reuse the WorkerPool and use (i)map_unordered after an (i)map call
         self._worker_comms.clear_keep_order()
 
-        def childCount():
-            import psutil
-            current_process = psutil.Process()
-            children = current_process.children()
-            return len(children), threading.active_count()
-
-        logger.debug(f"Children: {childCount()}")
-        logger.debug(threading.enumerate())
-
         # Raise
         err = err_type.__new__(err_type)
         err.args = err_args
