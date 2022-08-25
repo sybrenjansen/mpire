@@ -219,6 +219,7 @@ class WorkerPool:
             if worker_died:
                 # We need to add an exception if we're using the progress bar handler
                 err_msg = f"Worker-{worker_id} died unexpectedly"
+                logger.debug(err_msg)
                 if self.map_params.progress_bar:
                     self._worker_comms.add_exception(RuntimeError, (), {}, err_msg)
                 self.terminate()
@@ -235,6 +236,7 @@ class WorkerPool:
                         err_msg = f"Worker-{worker_id} {timeout_func_name} timed out"
                         if self.map_params.progress_bar:
                             self._worker_comms.add_exception(TimeoutError, (), {}, err_msg)
+                        logger.debug(err_msg)
                         self.terminate()
                         raise TimeoutError(err_msg)
 

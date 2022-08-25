@@ -1290,21 +1290,31 @@ class TimeoutTest(unittest.TestCase):
         # Create some test data
         self.test_data = [1, 2, 3]
 
+        # Setup logger for debug purposes
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.DEBUG)
+
+    def tearDown(self) -> None:
+        self.logger.setLevel(logging.NOTSET)
+
     def test_worker_init_timeout(self):
         """
         Checks if the worker_init timeout is properly triggered
         """
         for start_method in TEST_START_METHODS:
 
+            self.logger.debug(f"========== {start_method}, well below timeout ==========")
             with self.subTest('Well below timeout', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool:
                 self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1,
                                               worker_init_timeout=100), self.test_data)
 
+            self.logger.debug(f"========== {start_method}, exceeding timeout, map ==========")
             with self.subTest('Exceeding timeout, map', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 pool.map(self._f1, self.test_data, worker_init=self._init2, worker_init_timeout=0.1)
 
+            self.logger.debug(f"========== {start_method}, exceeding timeout, imap ==========")
             with self.subTest('Exceeding timeout, imap', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 for _ in pool.imap(self._f1, self.test_data, worker_init=self._init2, worker_init_timeout=0.1):
@@ -1316,14 +1326,17 @@ class TimeoutTest(unittest.TestCase):
         """
         for start_method in TEST_START_METHODS:
 
+            self.logger.debug(f"========== {start_method}, well below timeout ==========")
             with self.subTest('Well below timeout', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool:
                 self.assertListEqual(pool.map(self._f1, self.test_data, task_timeout=100), self.test_data)
 
+            self.logger.debug(f"========== {start_method}, exceeding timeout, map ==========")
             with self.subTest('Exceeding timeout, map', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 pool.map(self._f2, self.test_data, task_timeout=0.1)
 
+            self.logger.debug(f"========== {start_method}, exceeding timeout, imap ==========")
             with self.subTest('Exceeding timeout, imap', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 for _ in pool.imap(self._f2, self.test_data, task_timeout=0.1):
@@ -1335,15 +1348,18 @@ class TimeoutTest(unittest.TestCase):
         """
         for start_method in TEST_START_METHODS:
 
+            self.logger.debug(f"========== {start_method}, well below timeout ==========")
             with self.subTest('Well below timeout', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool:
                 self.assertListEqual(pool.map(self._f1, self.test_data, worker_exit=self._exit1,
                                               worker_exit_timeout=100), self.test_data)
 
+            self.logger.debug(f"========== {start_method}, exceeding timeout, map ==========")
             with self.subTest('Exceeding timeout, map', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 pool.map(self._f1, self.test_data, worker_exit=self._exit2, worker_exit_timeout=0.1)
 
+            self.logger.debug(f"========== {start_method}, exceeding timeout, imap ==========")
             with self.subTest('Exceeding timeout, imap', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 for _ in pool.imap(self._f1, self.test_data, worker_exit=self._exit2, worker_exit_timeout=0.1):
