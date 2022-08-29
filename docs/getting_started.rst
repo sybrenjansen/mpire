@@ -129,8 +129,8 @@ respectively:
 
 .. code-block:: python
 
-    with WorkerPool(n_jobs=5) as pool:
-        results = pool.map(time_consuming_function, range(10), enable_insights=True)
+    with WorkerPool(n_jobs=5, enable_insights=True) as pool:
+        results = pool.map(time_consuming_function, range(10))
         insights = pool.get_insights()
 
 See :ref:`worker insights` for a more detailed example and expected output.
