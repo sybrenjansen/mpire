@@ -1,18 +1,21 @@
 Changelog
 =========
 
-Dev
----
+2.6.0
+-----
+
+*(2022-08-29)*
 
 * Added Python 3.10 support
-* Fixed a bug where a worker could exit before an exception was entirely sent over the queue, causing a deadlock
-  (`#56`_)
-* Fixed a bug where exceptions with init arguments weren't handled correctly (`#58`_)
-* Fixed a rare and weird bug in Windows that could cause a deadlock (probably fixes `#55`_)
 * The ``tqdm`` progress bar can now be customized using the ``progress_bar_options`` parameter in the ``map`` functions
   (`#57`_)
 * Using ``progress_bar_position`` from a ``map`` function is now deprecated and will be removed in MPIRE v2.10.0. Use
   ``progress_bar_options['position']`` instead
+* Deprecated ``enable_insights`` from a ``map`` function, use ``enable_insights`` in the WorkerPool constructor instead
+* Fixed a bug where a worker could exit before an exception was entirely sent over the queue, causing a deadlock
+  (`#56`_)
+* Fixed a bug where exceptions with init arguments weren't handled correctly (`#58`_)
+* Fixed a rare and weird bug in Windows that could cause a deadlock (probably fixes `#55`_)
 
 .. _#55: https://github.com/Slimmer-AI/mpire/issues/55
 .. _#56: https://github.com/Slimmer-AI/mpire/issues/56

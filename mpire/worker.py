@@ -411,7 +411,6 @@ class AbstractWorker:
                 except pickle.PicklingError:
                     err = CannotPickleExceptionError(repr(err))
 
-                # Put exception in queue
                 # Add exception. When we have a progress bar, we add an additional one
                 self.worker_comms.add_exception(type(err), err.args, err.__dict__, traceback_str)
                 if self.map_params.progress_bar:

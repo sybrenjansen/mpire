@@ -10,7 +10,7 @@ if __name__ == '__main__':
     # For Python < 3.7 we need dataclasses. On Windows, we need pywin32 for CPU pinning
     setup(
         name='mpire',
-        version='2.5.0',
+        version='2.6.0',
         author='Slimmer AI',
         description='A Python package for easy multiprocessing, but faster than multiprocessing',
         long_description=read_description(),

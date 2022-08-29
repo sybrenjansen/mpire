@@ -306,10 +306,9 @@ class WorkerPool:
             max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
             worker_lifespan: Optional[int] = None, progress_bar: bool = False,
             progress_bar_position: Optional[int] = None, concatenate_numpy_output: bool = True,
-            enable_insights: Optional[bool] = None, worker_init: Optional[Callable] = None,
-            worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
-            worker_init_timeout: Optional[float] = None, worker_exit_timeout: Optional[float] = None,
-            progress_bar_options: Optional[Dict[str, Any]] = None) -> Any:
+            worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
+            task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
+            worker_exit_timeout: Optional[float] = None, progress_bar_options: Optional[Dict[str, Any]] = None) -> Any:
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
@@ -337,11 +336,6 @@ class WorkerPool:
             DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
             instead.
         :param concatenate_numpy_output: When ``True`` it will concatenate numpy output to a single numpy array
-        :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
-            neglible).
-
-            DEPRECATED in v2.3.0, to be removed in v2.6.0! Set ``enable_insights`` from the ``WorkerPool`` constructor
-            instead.
         :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
             should receive the worker ID as its first argument. If shared objects are provided the function should
             receive those as the next argument. If the worker state has been enabled it should receive a state variable
@@ -375,8 +369,8 @@ class WorkerPool:
             iterable_len = len(iterable_of_args)
         results = self.map_unordered(func, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)),
                                      iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan,
-                                     progress_bar, progress_bar_position, enable_insights, worker_init, worker_exit,
-                                     task_timeout, worker_init_timeout, worker_exit_timeout, progress_bar_options)
+                                     progress_bar, progress_bar_position, worker_init, worker_exit, task_timeout,
+                                     worker_init_timeout, worker_exit_timeout, progress_bar_options)
 
         # Notify workers to forget about order
         self._worker_comms.clear_keep_order()
@@ -392,10 +386,9 @@ class WorkerPool:
                       iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                       chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                       worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                      progress_bar_position: Optional[int] = None, enable_insights: Optional[bool] = None,
-                      worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
-                      task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
-                      worker_exit_timeout: Optional[float] = None,
+                      progress_bar_position: Optional[int] = None, worker_init: Optional[Callable] = None,
+                      worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
+                      worker_init_timeout: Optional[float] = None, worker_exit_timeout: Optional[float] = None,
                       progress_bar_options: Optional[Dict[str, Any]] = None) -> Any:
         """
         Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
@@ -423,11 +416,6 @@ class WorkerPool:
 
             DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
             instead.
-        :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
-            neglible).
-
-            DEPRECATED in v2.3.0, to be removed in v2.6.0! Set ``enable_insights`` from the ``WorkerPool`` constructor
-            instead.
         :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
             should receive the worker ID as its first argument. If shared objects are provided the function should
             receive those as the next argument. If the worker state has been enabled it should receive a state variable
@@ -449,17 +437,16 @@ class WorkerPool:
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
         return list(self.imap_unordered(func, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
-                                        n_splits, worker_lifespan, progress_bar, progress_bar_position,
-                                        enable_insights, worker_init, worker_exit, task_timeout, worker_init_timeout,
-                                        worker_exit_timeout, progress_bar_options))
+                                        n_splits, worker_lifespan, progress_bar, progress_bar_position, worker_init,
+                                        worker_exit, task_timeout, worker_init_timeout, worker_exit_timeout,
+                                        progress_bar_options))
 
     def imap(self, func: Callable, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int] = None,
              max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
              worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-             progress_bar_position: Optional[int] = None, enable_insights: Optional[bool] = None,
-             worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
-             task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
-             worker_exit_timeout: Optional[float] = None,
+             progress_bar_position: Optional[int] = None, worker_init: Optional[Callable] = None,
+             worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
+             worker_init_timeout: Optional[float] = None, worker_exit_timeout: Optional[float] = None,
              progress_bar_options: Optional[Dict[str, Any]] = None) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``, but ordered. Also allows a user to set the maximum number of
@@ -486,11 +473,6 @@ class WorkerPool:
             multiple progress bars at the same time.
 
             DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
-            instead.
-        :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
-            neglible).
-
-            DEPRECATED in v2.3.0, to be removed in v2.6.0! Set ``enable_insights`` from the ``WorkerPool`` constructor
             instead.
         :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
             should receive the worker ID as its first argument. If shared objects are provided the function should
@@ -528,9 +510,9 @@ class WorkerPool:
         for result_idx, result in self.imap_unordered(func, ((args_idx, args) for args_idx, args
                                                              in enumerate(iterable_of_args)), iterable_len,
                                                       max_tasks_active, chunk_size, n_splits, worker_lifespan,
-                                                      progress_bar, progress_bar_position, enable_insights, worker_init,
-                                                      worker_exit, task_timeout, worker_init_timeout,
-                                                      worker_exit_timeout, progress_bar_options):
+                                                      progress_bar, progress_bar_position, worker_init, worker_exit,
+                                                      task_timeout, worker_init_timeout, worker_exit_timeout,
+                                                      progress_bar_options):
 
             # Check if the next one(s) to return is/are temporarily stored. We use a while-true block with dict.pop() to
             # keep the temporary store as small as possible
@@ -560,10 +542,9 @@ class WorkerPool:
                        iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                        chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                        worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                       progress_bar_position: Optional[int] = None, enable_insights: Optional[bool] = None,
-                       worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
-                       task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
-                       worker_exit_timeout: Optional[float] = None,
+                       progress_bar_position: Optional[int] = None, worker_init: Optional[Callable] = None,
+                       worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
+                       worker_init_timeout: Optional[float] = None, worker_exit_timeout: Optional[float] = None,
                        progress_bar_options: Optional[Dict[str, Any]] = None) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``. Also allows a user to set the maximum number of tasks available in
@@ -590,11 +571,6 @@ class WorkerPool:
             multiple progress bars at the same time.
 
             DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
-            instead.
-        :param enable_insights: Whether to enable worker insights. Might come at a small performance penalty (often
-            neglible).
-
-            DEPRECATED in v2.3.0, to be removed in v2.6.0! Set ``enable_insights`` from the ``WorkerPool`` constructor
             instead.
         :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
             should receive the worker ID as its first argument. If shared objects are provided the function should
@@ -633,16 +609,6 @@ class WorkerPool:
         )
         new_map_params = WorkerMapParams(func, worker_init, worker_exit, worker_lifespan, progress_bar, task_timeout,
                                          worker_init_timeout, worker_exit_timeout)
-
-        # enable_insights is deprecated as a map parameter
-        if (self._workers and enable_insights is not None and self.pool_params.enable_insights is not None and
-                enable_insights != self.pool_params.enable_insights):
-            warnings.warn("Changing enable_insights is not allowed when keep_alive is set to True.",
-                          RuntimeWarning, stacklevel=2)
-        elif enable_insights is not None:
-            warnings.warn("Deprecated in v2.3.0, to be removed in v2.6.0! Set enable_insights from the WorkerPool "
-                          "constructor instead.", DeprecationWarning, stacklevel=2)
-            self.pool_params.enable_insights = enable_insights
 
         # Chunk the function arguments. Make single arguments when we're not dealing with numpy arrays
         if not numpy_chunking:
@@ -739,7 +705,7 @@ class WorkerPool:
                 logger.debug("TQDM manager stopped")
 
         # Log insights
-        if enable_insights:
+        if self.pool_params.enable_insights:
             logger.debug(self._worker_insights.get_insights_string())
 
     def _handle_exception(self, progress_bar_handler: Optional[ProgressBarHandler] = None) -> None:
