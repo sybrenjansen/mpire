@@ -55,6 +55,8 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertIsNone(comms._workers_dead_locks)
                 self.assertIsNone(comms._workers_time_task_started)
                 self.assertIsNone(comms._exception_queue)
+                self.assertIsNone(comms._exception_received)
+                self.assertIsNone(comms._exception_progress_bar_received)
                 self.assertIsInstance(comms.exception_lock, lock_type)
                 self.assertIsInstance(comms._exception_thrown, event_type)
                 self.assertIsInstance(comms._kill_signal_received, event_type)
@@ -82,6 +84,8 @@ class WorkerCommsTest(unittest.TestCase):
             comms._worker_done_array[:] = [False, True, False, True][:n_jobs]
             [worker_dead.clear() for worker_dead in comms._workers_dead]
             comms._workers_time_task_started[:] = [i + 1 for i in range(n_jobs * 3)]
+            comms._exception_received.set()
+            comms._exception_progress_bar_received.set()
             comms._exception_thrown.set()
             comms._kill_signal_received.set()
             comms._tasks_completed_array[:] = [i + 1 for i in range(n_jobs)]
@@ -133,6 +137,8 @@ class WorkerCommsTest(unittest.TestCase):
             self.assertIsInstance(worker_dead_lock, lock_type)
         self.assertIsInstance(comms._workers_time_task_started, array_with_locks_type)
         self.assertIsInstance(comms._exception_queue, joinable_queue_type)
+        self.assertFalse(comms._exception_received.is_set())
+        self.assertFalse(comms._exception_progress_bar_received.is_set())
         self.assertFalse(comms._exception_thrown.is_set())
         self.assertFalse(comms._kill_signal_received.is_set())
         self.assertIsInstance(comms._tasks_completed_array, ctypes.Array)
@@ -472,28 +478,42 @@ class WorkerCommsTest(unittest.TestCase):
             comms._exception_queue.get(block=False)
 
         # Add a few exceptions
-        comms.add_exception(TypeError, 'TypeError')
-        comms.add_exception(ValueError, 'ValueError')
-        comms.add_exception(RuntimeError, 'RuntimeError')
+        comms.add_exception(TypeError, ("hello", "world"), {}, 'TypeError')
+        comms.add_exception(ValueError, (), {"a": "b"}, 'ValueError')
+        comms.add_exception(RuntimeError, (), {}, 'RuntimeError')
         self.assertListEqual([comms.get_exception() for _ in range(3)],
-                             [(TypeError, 'TypeError'), (ValueError, 'ValueError'), (RuntimeError, 'RuntimeError')])
+                             [(TypeError, ("hello", "world"), {}, 'TypeError'),
+                              (ValueError, (), {"a": "b"}, 'ValueError'),
+                              (RuntimeError, (), {}, 'RuntimeError')])
         [comms.task_done_exception() for _ in range(3)]
+
+        # Check exception received flags
+        for progress_bar in [False, True]:
+            with self.subTest(pbar=progress_bar):
+                comms.init_comms()
+                self.assertFalse(comms._exception_received.is_set())
+                self.assertFalse(comms._exception_progress_bar_received.is_set())
+                comms.add_exception(TypeError, (), {}, 'TypeError')
+                comms.task_done_exception(progress_bar=progress_bar)
+                comms.get_exception()
+                self.assertEqual(comms._exception_received.is_set(), not progress_bar)
+                self.assertEqual(comms._exception_progress_bar_received.is_set(), progress_bar)
 
         # Add poison pill
         comms.add_exception_poison_pill()
-        self.assertEqual(comms.get_exception(), (POISON_PILL, POISON_PILL))
+        self.assertEqual(comms.get_exception(), (POISON_PILL, (), {}, ''))
         comms.task_done_exception()
 
         # Should be joinable. When using keep_alive, it should still be open
         comms.join_exception_queue(keep_alive=True)
-        comms.add_exception(TypeError, 'TypeError')
+        comms.add_exception(TypeError, (), {}, 'TypeError')
         comms.get_exception()
         comms.task_done_exception()
         comms.join_exception_queue(keep_alive=False)
 
         # Depending on Python version it either throws AssertionError or ValueError
         with self.assertRaises((AssertionError, ValueError)):
-            comms.add_exception(TypeError, 'TypeError')
+            comms.add_exception(TypeError, (), {}, 'TypeError')
 
     def test_exception_thrown(self):
         """

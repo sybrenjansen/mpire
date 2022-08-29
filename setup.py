@@ -19,7 +19,9 @@ if __name__ == '__main__':
         packages=find_packages(),
         scripts=['bin/mpire-dashboard'],
         install_requires=['dataclasses; python_version<"3.7"',
-                          'pywin32==225; platform_system=="Windows"',
+                          'pywin32==225; platform_system=="Windows" and python_version=="3.6"',
+                          'pywin32>=301; platform_system=="Windows" and python_version>"3.6"',
+                          'pygments>=2.0',
                           'tqdm>=4.27'],
         include_package_data=True,
         extras_require={
@@ -34,7 +36,8 @@ if __name__ == '__main__':
             'testing': ['dataclasses; python_version<"3.7"',
                         'multiprocess', 
                         'numpy',
-                        'pywin32==225; platform_system=="Windows"']
+                        'pywin32==225; platform_system=="Windows" and python_version=="3.6"',
+                        'pywin32>=301; platform_system=="Windows" and python_version>"3.6"'],
         },
         test_suite='tests',
         tests_require=['multiprocess', 'numpy'],
@@ -47,6 +50,7 @@ if __name__ == '__main__':
             'Programming Language :: Python :: 3.7',
             'Programming Language :: Python :: 3.8',
             'Programming Language :: Python :: 3.9',
+            'Programming Language :: Python :: 3.10',
 
             # License
             'License :: OSI Approved :: MIT License',

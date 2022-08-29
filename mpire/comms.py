@@ -4,8 +4,9 @@ import queue
 import threading
 import time
 from datetime import datetime
-from typing import Any, Generator, Optional, Tuple, Union
+from typing import Any, Dict, Generator, Iterable, Optional, Tuple, Union
 
+from mpire.context import RUNNING_WINDOWS
 from mpire.params import WorkerMapParams
 from mpire.signal import DelayedKeyboardInterrupt
 
@@ -74,9 +75,12 @@ class WorkerComms:
         # Queue where the child processes can pass on an encountered exception
         self._exception_queue = None
 
+        # Events indicating whether the exception was received by the main process or progress bar handler
+        self._exception_received = None
+        self._exception_progress_bar_received = None
+
         # Lock object such that child processes can only throw one at a time. The Event object ensures only one
-        # exception can be thrown. When the threading backend is used we switch to a multiprocessing Event, because the
-        # progress bar handler needs a process-aware object
+        # exception can be thrown
         self.exception_lock = self.ctx.Lock()
         self._exception_thrown = self.ctx.Event()
         self._kill_signal_received = self.ctx.Event()
@@ -132,6 +136,8 @@ class WorkerComms:
 
         # Exception related
         self._exception_queue = self.ctx.JoinableQueue()
+        self._exception_received = self.ctx.Event()
+        self._exception_progress_bar_received = self.ctx.Event()
         self._exception_thrown.clear()
         self._kill_signal_received.clear()
 
@@ -387,34 +393,51 @@ class WorkerComms:
     # Exceptions
     ################
 
-    def add_exception(self, err_type: type, traceback_str: str) -> None:
+    def add_exception(self, err_type: type, err_args: Iterable, err_state: Dict, traceback_str: str) -> None:
         """
         Add exception details to the queue and set the exception event
 
         :param err_type: Type of the exception
+        :param err_args: Arguments of the exception
+        :param err_state: State dict of the exception
         :param traceback_str: Traceback string
         """
-        self._exception_queue.put((err_type, traceback_str))
+        self._exception_queue.put((err_type, err_args, err_state, traceback_str))
 
     def add_exception_poison_pill(self) -> None:
         """
         Signals the exception handling thread to shut down
         """
         with DelayedKeyboardInterrupt():
-            self._exception_queue.put((POISON_PILL, POISON_PILL))
+            self._exception_queue.put((POISON_PILL, (), {}, ''))
 
-    def get_exception(self) -> Tuple[type, str]:
+    def get_exception(self) -> Tuple[type, Iterable, Dict, str]:
         """
         :return: Tuple containing the type of the exception and the traceback string
         """
         with DelayedKeyboardInterrupt():
             return self._exception_queue.get(block=True)
 
-    def task_done_exception(self) -> None:
+    def task_done_exception(self, progress_bar: bool = False) -> None:
         """
         Signal that we've completed a task for the exception queue
+
+        :param progress_bar: Whether the exception was handled for the progress bar
         """
         self._exception_queue.task_done()
+        self._exception_progress_bar_received.set() if progress_bar else self._exception_received.set()
+
+    def wait_for_exception_received(self) -> bool:
+        """
+        :return: Wait until an exception has been received
+        """
+        return self._exception_received.wait()
+
+    def wait_for_exception_progress_bar_received(self) -> bool:
+        """
+        :return: Wait until an exception has been received for the progress bar
+        """
+        return self._exception_progress_bar_received.wait()
 
     def signal_exception_thrown(self) -> None:
         """
@@ -608,8 +631,11 @@ class WorkerComms:
         Drain tasks, results, and exit results queues. Note that the exception queue doesn't need to be drained.
         This one is properly cleaned up in the exception handling class.
         """
+        logger.debug("Draining task queues")
         [self.drain_and_join_queue(q) for q in self._task_queues]
+        logger.debug("Draining results queues")
         self.drain_and_join_queue(self._results_queue)
+        logger.debug("Draining exit results queues")
         [self.drain_and_join_queue(q) for q in self._exit_results_queues]
 
     def drain_and_join_queue(self, q: mp.JoinableQueue, join: bool = True) -> None:
@@ -621,7 +647,12 @@ class WorkerComms:
         :param q: Queue to join
         :param join: Whether to join the queue or not
         """
-        try:
+        logger.debug("Draining queue")
+
+        # Running this in a separate process on Windows can cause errors
+        if RUNNING_WINDOWS:
+            self._drain_and_join_queue(q, join)
+        else:
             process = mp.Process(target=self._drain_and_join_queue, args=(q, join))
             process.start()
             process.join(timeout=5)
@@ -629,9 +660,13 @@ class WorkerComms:
                 logger.debug("Draining queue failed, skipping")
                 process.terminate()
                 process.join()
-        except (OSError, RuntimeError):
-            # For Windows compatibility
-            pass
+
+            if join:
+                # The above was done in a separate process where the queue had a different feeder thread
+                logger.debug("Closing queue")
+                q.close()
+                logger.debug("Joining queue feeder thread")
+                q.join_thread()
 
     @staticmethod
     def _drain_and_join_queue(q: mp.JoinableQueue, join: bool = True) -> None:
@@ -665,8 +700,11 @@ class WorkerComms:
         # Join
         if join:
             try:
+                logger.debug("Joining queue")
                 q.join()
+                logger.debug("Closing queue")
                 q.close()
+                logger.debug("Joining queue feeder thread")
                 q.join_thread()
             except OSError:
                 pass

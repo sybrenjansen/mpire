@@ -67,18 +67,23 @@ structures:
             # Do some work
             results = p.map(...)
 
-    with WorkerPool(n_jobs=4, daemon=True) as pool:
+    with WorkerPool(n_jobs=4, daemon=True, start_method='spawn') as pool:
         # This will raise an AssertionError telling you daemon processes
         # can't start child processes
         pool.map(job, ...)
 
-    with WorkerPool(n_jobs=4, daemon=False) as pool:
+    with WorkerPool(n_jobs=4, daemon=False, start_method='spawn') as pool:
         # This will work just fine
         pool.map(job, ...)
 
 .. note::
 
     Nested pools aren't supported when using threading.
+
+.. warning::
+
+    Spawning processes is not thread-safe_! Both ``start`` and ``join`` methods of the ``process`` class alter global
+    variables. If you still want to have nested pools, the safest bet is to use ``spawn`` as start method.
 
 .. note::
 
@@ -92,3 +97,5 @@ structures:
     rare occassions (~1% of the time), still cause deadlocks. Use at your own risk.
 
     When a function is guaranteed to finish successfully, using nested pools is absolutely fine.
+
+.. _thread-safe: https://bugs.python.org/issue40860

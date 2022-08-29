@@ -1,6 +1,7 @@
 import ctypes
 import multiprocessing as mp
 import unittest
+import warnings
 from datetime import datetime
 from multiprocessing import managers
 from time import sleep
@@ -119,47 +120,50 @@ class WorkerInsightsTest(unittest.TestCase):
         Insight containers are initially set to None values. When enabled they should be changed to appropriate
         containers. When a second task is started it should reset them. If disabled, they should remain None
         """
-        with WorkerPool(n_jobs=2, enable_insights=True) as pool:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
 
-            # We run this a few times to see if it resets properly. We only verify this by checking the
-            # n_completed_tasks
-            for idx in range(3):
-                with self.subTest('enabled', idx=idx):
+            with WorkerPool(n_jobs=2, enable_insights=True) as pool:
 
-                    pool.map(square, self._get_tasks(10), worker_init=self._init, worker_exit=self._exit)
+                # We run this a few times to see if it resets properly. We only verify this by checking the
+                # n_completed_tasks
+                for idx in range(3):
+                    with self.subTest('enabled', idx=idx):
 
-                    # Basic sanity checks for the values. Some max task args can be empty, in that case the duration
-                    # should be 0 (= no data)
-                    self.assertGreater(sum(pool._worker_insights.worker_start_up_time), 0)
-                    self.assertGreater(sum(pool._worker_insights.worker_init_time), 0)
-                    self.assertEqual(sum(pool._worker_insights.worker_n_completed_tasks), 10)
-                    self.assertGreater(sum(pool._worker_insights.worker_waiting_time), 0)
-                    self.assertGreater(sum(pool._worker_insights.worker_working_time), 0)
-                    self.assertGreater(sum(pool._worker_insights.worker_exit_time), 0)
-                    self.assertGreater(max(pool._worker_insights.max_task_duration), 0)
-                    for duration, args in zip(pool._worker_insights.max_task_duration,
-                                              pool._worker_insights.max_task_args):
-                        if duration == 0:
-                            self.assertEqual(args, '')
-                        elif not RUNNING_WINDOWS:
-                            self.assertIn(args, {'Arg 0: 0', 'Arg 0: 1', 'Arg 0: 2', 'Arg 0: 3', 'Arg 0: 4',
-                                                 'Arg 0: 5', 'Arg 0: 6', 'Arg 0: 7', 'Arg 0: 8', 'Arg 0: 9'})
+                        pool.map(square, self._get_tasks(10), worker_init=self._init, worker_exit=self._exit)
 
-        with WorkerPool(n_jobs=2, enable_insights=False) as pool:
+                        # Basic sanity checks for the values. Some max task args can be empty, in that case the duration
+                        # should be 0 (= no data)
+                        self.assertGreater(sum(pool._worker_insights.worker_start_up_time), 0)
+                        self.assertGreater(sum(pool._worker_insights.worker_init_time), 0)
+                        self.assertEqual(sum(pool._worker_insights.worker_n_completed_tasks), 10)
+                        self.assertGreater(sum(pool._worker_insights.worker_waiting_time), 0)
+                        self.assertGreater(sum(pool._worker_insights.worker_working_time), 0)
+                        self.assertGreater(sum(pool._worker_insights.worker_exit_time), 0)
+                        self.assertGreater(max(pool._worker_insights.max_task_duration), 0)
+                        for duration, args in zip(pool._worker_insights.max_task_duration,
+                                                  pool._worker_insights.max_task_args):
+                            if duration == 0:
+                                self.assertEqual(args, '')
+                            elif not RUNNING_WINDOWS:
+                                self.assertIn(args, {'Arg 0: 0', 'Arg 0: 1', 'Arg 0: 2', 'Arg 0: 3', 'Arg 0: 4',
+                                                     'Arg 0: 5', 'Arg 0: 6', 'Arg 0: 7', 'Arg 0: 8', 'Arg 0: 9'})
 
-            # Disabling should set things to None again
-            with self.subTest('disable'):
-                pool.map(square, range(10))
-                self.assertIsNone(pool._worker_insights.insights_manager)
-                self.assertIsNone(pool._worker_insights.insights_manager_lock)
-                self.assertIsNone(pool._worker_insights.worker_start_up_time)
-                self.assertIsNone(pool._worker_insights.worker_init_time)
-                self.assertIsNone(pool._worker_insights.worker_n_completed_tasks)
-                self.assertIsNone(pool._worker_insights.worker_waiting_time)
-                self.assertIsNone(pool._worker_insights.worker_working_time)
-                self.assertIsNone(pool._worker_insights.worker_exit_time)
-                self.assertIsNone(pool._worker_insights.max_task_duration)
-                self.assertIsNone(pool._worker_insights.max_task_args)
+            with WorkerPool(n_jobs=2, enable_insights=False) as pool:
+
+                # Disabling should set things to None again
+                with self.subTest('disable'):
+                    pool.map(square, range(10))
+                    self.assertIsNone(pool._worker_insights.insights_manager)
+                    self.assertIsNone(pool._worker_insights.insights_manager_lock)
+                    self.assertIsNone(pool._worker_insights.worker_start_up_time)
+                    self.assertIsNone(pool._worker_insights.worker_init_time)
+                    self.assertIsNone(pool._worker_insights.worker_n_completed_tasks)
+                    self.assertIsNone(pool._worker_insights.worker_waiting_time)
+                    self.assertIsNone(pool._worker_insights.worker_working_time)
+                    self.assertIsNone(pool._worker_insights.worker_exit_time)
+                    self.assertIsNone(pool._worker_insights.max_task_duration)
+                    self.assertIsNone(pool._worker_insights.max_task_args)
 
     def test_get_max_task_duration_list(self):
         """

@@ -26,21 +26,42 @@ When inside a Jupyter/IPython notebook, the progress bar will change automatical
     the notebook.
 
 
-Multiple progress bars with nested WorkerPools
-----------------------------------------------
+Progress bar options
+--------------------
 
-In MPIRE you can easily print a progress bar on a different position on the terminal using the ``progress_bar_position``
-parameter in the map functions, which facilitates the use of multiple progress bars. Here's an example of using multiple
-progress bars using nested WorkerPools:
+The ``tqdm`` progress bar can be configured using the ``progress_bar_options`` parameter. This parameter accepts a
+dictionary with keyword arguments that will be passed to the ``tqdm`` constructor.
+
+Some options in ``tqdm`` will be overwritten by MPIRE. These include the ``iterable``, ``total`` and ``leave``
+parameters. The ``iterable`` is set to the iterable passed on to the ``map`` function. The ``total`` parameter is set to
+the number of tasks to be completed. The ``leave`` parameter is always set to ``True``. Some other parameters have a
+default value assigned to them, but can be overwritten by the user.
+
+Here's an example where we change the description, the units, and the colour of the progress bar:
 
 .. code-block:: python
 
-    from mpire import tqdm
+    with WorkerPool(n_jobs=4) as pool:
+        pool.map(some_func, some_data, progress_bar=True,
+                 progress_bar_options={'desc': 'Processing', 'unit': 'items', 'colour': 'green'})
+
+For a complete list of available options, check out the `tqdm docs`_.
+
+.. _`tqdm docs`: https://tqdm.github.io/docs/tqdm/#__init__
+
+Progress bar position
+~~~~~~~~~~~~~~~~~~~~~
+
+You can easily print a progress bar on a different position on the terminal using the ``position`` parameter of
+``tqdm``, which facilitates the use of multiple progress bars. Here's an example of using multiple progress bars using
+nested WorkerPools:
+
+.. code-block:: python
 
     def dispatcher(worker_id, X):
         with WorkerPool(n_jobs=4) as nested_pool:
             return nested_pool.map(task, X, progress_bar=True,
-                                   progress_bar_position=worker_id + 1)
+                                   progress_bar_options={'position': worker_id + 1})
 
     def main():
         with WorkerPool(n_jobs=4, daemon=False, pass_worker_id=True) as pool:
@@ -56,7 +77,7 @@ It goes without saying that you shouldn't specify the same progress bar position
 
 .. note::
 
-    The progress bar position is completely ignored when in a Jupyter/IPython notebook session or in the MPIRE
+    Most progress bar options are completely ignored when in a Jupyter/IPython notebook session or in the MPIRE
     dashboard.
 
 .. _tqdm: https://pypi.python.org/pypi/tqdm

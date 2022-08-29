@@ -620,7 +620,6 @@ class ExitFuncTest(unittest.TestCase):
                 for exit_result in pool.get_exit_results():
                     self.assertEqual(len(exit_result), 10_000 * 1024)
 
-    # TODO: This function prints OSError messages on Windows. Not going to fix this now as it's harmless.
     def test_error(self):
         """
         When an exception occurs in the exit function it should properly shut down
@@ -682,6 +681,8 @@ class ExitFuncTest(unittest.TestCase):
 
 class DaemonTest(unittest.TestCase):
 
+    # This also tests nested WorkerPools. We only test spawn here as creating processes is not thread-safe
+
     def setUp(self):
         # Create some test data. Note that the regular map reads the inputs as a list of single tuples (one argument),
         # whereas parallel.map sees it as a list of argument lists. Therefore we give the regular map a lambda function
@@ -693,7 +694,7 @@ class DaemonTest(unittest.TestCase):
         """
         Tests nested WorkerPools when daemon==False, which should work
         """
-        with WorkerPool(n_jobs=4, daemon=False) as pool:
+        with WorkerPool(n_jobs=4, daemon=False, start_method='spawn') as pool:
             # Obtain results using nested WorkerPools
             results = pool.map(self._square_daemon, ((X,) for X in repeat(self.test_data, 4)), chunk_size=1)
 
@@ -706,17 +707,8 @@ class DaemonTest(unittest.TestCase):
         """
         Tests nested WorkerPools when daemon==True, which should not work
         """
-        with self.assertRaises(AssertionError), WorkerPool(n_jobs=4, daemon=True) as pool:
+        with self.assertRaises(AssertionError), WorkerPool(n_jobs=4, daemon=True, start_method='spawn') as pool:
             pool.map(self._square_daemon, ((X,) for X in repeat(self.test_data, 4)), chunk_size=1)
-
-    def test_start_methods(self):
-        """
-        Test for different start methods
-        """
-        for start_method in TEST_START_METHODS:
-            with self.subTest(start_method=start_method), \
-                    WorkerPool(n_jobs=2, daemon=False, start_method=start_method) as pool:
-                pool.map(self._square_daemon, ((X,) for X in repeat(self.test_data, 3)), chunk_size=1)
 
     @staticmethod
     def _square_daemon(x):
@@ -866,15 +858,29 @@ class ProgressBarTest(unittest.TestCase):
         """
         Test different values of progress_bar_position, which should be positive integer >= 0
         """
-        for progress_bar_position, error in [(-1, ValueError), ('numero uno', TypeError)]:
-            with self.subTest(input='regular input', progress_bar_position=progress_bar_position), \
-                    self.assertRaises(error), WorkerPool(n_jobs=1) as pool:
-                pool.map(square, self.test_data, progress_bar=True, progress_bar_position=progress_bar_position)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
 
-            with self.subTest(input='numpy input', progress_bar_position=progress_bar_position), \
-                    self.assertRaises(error), WorkerPool(n_jobs=1) as pool:
-                pool.map(square_numpy, self.test_data_numpy, progress_bar=True,
-                         progress_bar_position=progress_bar_position)
+            for progress_bar_position, error in [(-1, ValueError), ('numero uno', TypeError)]:
+                with self.subTest(input='regular input', progress_bar_position=progress_bar_position), \
+                        self.assertRaises(error), WorkerPool(n_jobs=1) as pool:
+                    pool.map(square, self.test_data, progress_bar=True, progress_bar_position=progress_bar_position)
+
+                with self.subTest(input='numpy input', progress_bar_position=progress_bar_position), \
+                        self.assertRaises(error), WorkerPool(n_jobs=1) as pool:
+                    pool.map(square_numpy, self.test_data_numpy, progress_bar=True,
+                             progress_bar_position=progress_bar_position)
+
+    def test_progress_bar_options(self):
+        """
+        Test different progress bar options. Wrong inputs are tested in test_params
+        """
+        print()
+        for progress_bar_options in [{"unit": "km"}, {"unit": "s", "desc": "I'm a pbar!"}, {"colour": "green"}]:
+            with self.subTest(progress_bar_options=progress_bar_options), WorkerPool(n_jobs=2) as pool:
+                results = pool.map(square, self.test_data, progress_bar=True, progress_bar_options=progress_bar_options)
+                self.assertIsInstance(results, list)
+                self.assertEqual(self.test_desired_output, results)
 
     def test_start_methods(self):
         """
@@ -1230,6 +1236,16 @@ class ExceptionTest(unittest.TestCase):
                     pool.map(self._worker_0_sleeps_others_square, range(100), progress_bar=progress_bar,
                              worker_lifespan=worker_lifespan, chunk_size=1)
 
+    def test_dill_deadlock(self):
+        """
+        Exceptions on the queue need to be flushed before the worker is terminated. This is one example where it used
+        to cause a deadlock (https://github.com/Slimmer-AI/mpire/issues/56)
+        """
+        data = [(x, y, z) for x, y, z in zip(range(0, 100), range(42, 142), range(10, -90, -1))]
+        with self.assertRaises(ZeroDivisionError), WorkerPool(n_jobs=5, use_dill=True) as pool:
+            for _ in pool.imap(lambda x, y, z: x * y / z, data):
+                pass
+
     @staticmethod
     def _square_raises(_, x):
         raise ValueError(x)
@@ -1274,21 +1290,31 @@ class TimeoutTest(unittest.TestCase):
         # Create some test data
         self.test_data = [1, 2, 3]
 
+        # Setup logger for debug purposes
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.DEBUG)
+
+    def tearDown(self) -> None:
+        self.logger.setLevel(logging.NOTSET)
+
     def test_worker_init_timeout(self):
         """
         Checks if the worker_init timeout is properly triggered
         """
         for start_method in TEST_START_METHODS:
 
+            self.logger.debug(f"========== {start_method}, well below timeout ==========")
             with self.subTest('Well below timeout', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool:
                 self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1,
                                               worker_init_timeout=100), self.test_data)
 
+            self.logger.debug(f"========== {start_method}, exceeding timeout, map ==========")
             with self.subTest('Exceeding timeout, map', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 pool.map(self._f1, self.test_data, worker_init=self._init2, worker_init_timeout=0.1)
 
+            self.logger.debug(f"========== {start_method}, exceeding timeout, imap ==========")
             with self.subTest('Exceeding timeout, imap', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 for _ in pool.imap(self._f1, self.test_data, worker_init=self._init2, worker_init_timeout=0.1):
@@ -1300,14 +1326,17 @@ class TimeoutTest(unittest.TestCase):
         """
         for start_method in TEST_START_METHODS:
 
+            self.logger.debug(f"========== {start_method}, well below timeout ==========")
             with self.subTest('Well below timeout', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool:
                 self.assertListEqual(pool.map(self._f1, self.test_data, task_timeout=100), self.test_data)
 
+            self.logger.debug(f"========== {start_method}, exceeding timeout, map ==========")
             with self.subTest('Exceeding timeout, map', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 pool.map(self._f2, self.test_data, task_timeout=0.1)
 
+            self.logger.debug(f"========== {start_method}, exceeding timeout, imap ==========")
             with self.subTest('Exceeding timeout, imap', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 for _ in pool.imap(self._f2, self.test_data, task_timeout=0.1):
@@ -1319,15 +1348,18 @@ class TimeoutTest(unittest.TestCase):
         """
         for start_method in TEST_START_METHODS:
 
+            self.logger.debug(f"========== {start_method}, well below timeout ==========")
             with self.subTest('Well below timeout', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool:
                 self.assertListEqual(pool.map(self._f1, self.test_data, worker_exit=self._exit1,
                                               worker_exit_timeout=100), self.test_data)
 
+            self.logger.debug(f"========== {start_method}, exceeding timeout, map ==========")
             with self.subTest('Exceeding timeout, map', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 pool.map(self._f1, self.test_data, worker_exit=self._exit2, worker_exit_timeout=0.1)
 
+            self.logger.debug(f"========== {start_method}, exceeding timeout, imap ==========")
             with self.subTest('Exceeding timeout, imap', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 for _ in pool.imap(self._f1, self.test_data, worker_exit=self._exit2, worker_exit_timeout=0.1):
@@ -1421,9 +1453,9 @@ class OrderTasksTest(unittest.TestCase):
         state['tasks'] = []
 
     @staticmethod
-    def _f(wid, state, x):
+    def _f(_, state, x):
         state['tasks'].append(x)
 
     @staticmethod
-    def _exit(wid, state):
+    def _exit(_, state):
         return state
