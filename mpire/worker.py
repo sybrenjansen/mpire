@@ -10,7 +10,7 @@ import _thread
 from datetime import datetime
 from functools import partial
 from threading import current_thread, main_thread, Thread
-from typing import Any, Callable, List, Optional, Tuple, Union, Type
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 try:
     import multiprocess
@@ -24,7 +24,7 @@ except ImportError:
     np = None
     NUMPY_INSTALLED = False
 
-from mpire.comms import NEW_MAP_PARAMS_PILL, NON_LETHAL_POISON_PILL, POISON_PILL, WorkerComms
+from mpire.comms import APPLY_PILL, NEW_MAP_PARAMS_PILL, NON_LETHAL_POISON_PILL, POISON_PILL, WorkerComms
 from mpire.context import FORK_AVAILABLE, MP_CONTEXTS, RUNNING_WINDOWS
 from mpire.dashboard.connection_utils import DashboardConnectionDetails, set_dashboard_connection
 from mpire.exception import CannotPickleExceptionError, StopWorker
@@ -161,7 +161,7 @@ class AbstractWorker:
 
             # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
             # with idx support which deals with the provided idx variable.
-            func = self._get_func(additional_args)
+            func = self._get_func(self.map_params.func, additional_args)
 
             n_tasks_executed = 0
             while self.map_params.worker_lifespan is None or n_tasks_executed < self.map_params.worker_lifespan:
@@ -169,6 +169,8 @@ class AbstractWorker:
                 # Obtain new chunk of jobs
                 with TimeIt(self.worker_insights.worker_waiting_time, self.worker_id):
                     next_chunked_args = self.worker_comms.get_task(self.worker_id)
+                    job_id = None
+                    is_apply_func = False
 
                 # Force update task insights and progress bar when we got a (non-lethal) poison pill. At this point, we
                 # know for sure that all results have been processed. In case of a lethal pill we additionally run the
@@ -192,9 +194,17 @@ class AbstractWorker:
                 elif next_chunked_args == NEW_MAP_PARAMS_PILL:
                     self.worker_comms.task_done(self.worker_id)
                     self.map_params = self.worker_comms.get_task(self.worker_id)
-                    func = self._get_func(additional_args)
+                    func = self._get_func(self.map_params.func, additional_args)
                     self.worker_comms.task_done(self.worker_id)
                     continue
+
+                # When an apply pill is received, we simply execute the function and put the result in the results queue
+                elif next_chunked_args == APPLY_PILL:
+                    self.worker_comms.task_done(self.worker_id)
+                    job_id, apply_func, args, kwargs = self.worker_comms.get_task(self.worker_id)
+                    func = self._get_func(apply_func, additional_args, apply_func=True)
+                    next_chunked_args = [(job_id, args, kwargs)]
+                    is_apply_func = True
 
                 # When we recieved None this means we need to stop because of an exception in the main process
                 elif next_chunked_args is None:
@@ -206,7 +216,7 @@ class AbstractWorker:
                     for args in next_chunked_args:
 
                         # Try to run this function and save results
-                        results_part, should_return = self._run_func(func, args)
+                        results_part, should_return = self._run_func(func, args, job_id, is_apply_func)
                         if should_return:
                             return
                         results.append(results_part)
@@ -215,7 +225,7 @@ class AbstractWorker:
                         self._update_progress_bar()
 
                     # Send results back to main process
-                    self.worker_comms.add_results(self.worker_id, results)
+                    self.worker_comms.add_results(self.worker_id, results, from_apply_func=is_apply_func)
                     n_tasks_executed += len(results)
 
                 # In case an exception occurred and we need to return, we want to call task_done no matter what
@@ -239,16 +249,23 @@ class AbstractWorker:
             with self.worker_comms.get_worker_dead_lock(self.worker_id):
                 self.worker_comms.signal_worker_dead(self.worker_id)
 
-    def _get_func(self, additional_args: List) -> Callable:
+    def _get_func(self, func: Callable, additional_args: List, apply_func: bool = False) -> Callable:
         """
         Determine what function to call. If we have to keep in mind the order (for map) we use the helper function with
         idx support which deals with the provided idx variable.
 
         :param additional_args: Additional args list
+        :param apply_func: Whether this is an apply function
         :return: Function to call
         """
-        return partial(self._helper_func_with_idx if self.worker_comms.keep_order() else self._helper_func,
-                       partial(self.map_params.func, *additional_args))
+        if apply_func:
+            helper_func = self._helper_func_apply
+        elif self.worker_comms.keep_order():
+            helper_func = self._helper_func_with_idx
+        else:
+            helper_func = self._helper_func
+
+        return partial(helper_func, partial(func, *additional_args))
 
     def _run_init_func(self, additional_args: List) -> bool:
         """
@@ -265,27 +282,30 @@ class AbstractWorker:
         if self.map_params.worker_init_timeout is not None:
             try:
                 self.worker_comms.signal_worker_init_started(self.worker_id)
-                should_return = self._run_safely(_init_func, no_args=True)[1]
+                should_return = self._run_safely(_init_func, is_apply_func=False)[1]
             finally:
                 self.worker_comms.signal_worker_init_completed(self.worker_id)
         else:
-            should_return = self._run_safely(_init_func, no_args=True)[1]
+            should_return = self._run_safely(_init_func, is_apply_func=False)[1]
 
         return should_return
 
-    def _run_func(self, func: Callable, args: List) -> Tuple[Any, bool]:
+    def _run_func(self, func: Callable, args: Optional[List], job_id: Optional[int],
+                  is_apply_func: bool) -> Tuple[Any, bool]:
         """
         Runs the main function when provided.
 
         :param func: Function to call
         :param args: Args to pass to the function
+        :param job_id: Job ID
+        :param is_apply_func: Whether this is an apply function
         :return: Tuple containing results from the function and a boolean value indicating whether the worker needs to
             shut down
         """
         def _func():
             with TimeIt(self.worker_insights.worker_working_time, self.worker_id,
-                        self.max_task_duration_list, lambda: self._format_args(args, separator=' | ')):
-                _results = func(args)
+                        self.max_task_duration_list, lambda: self._format_args(args, is_apply_func, separator=' | ')):
+                _results = func(*args) if is_apply_func else func(args)
             self.worker_insights.update_n_completed_tasks(self.worker_id)
             return _results
 
@@ -293,11 +313,11 @@ class AbstractWorker:
         if self.map_params.task_timeout is not None:
             try:
                 self.worker_comms.signal_worker_task_started(self.worker_id)
-                results = self._run_safely(_func, args)
+                results = self._run_safely(_func, args, job_id, is_apply_func)
             finally:
                 self.worker_comms.signal_worker_task_completed(self.worker_id)
         else:
-            results = self._run_safely(_func, args)
+            results = self._run_safely(_func, args, job_id, is_apply_func)
 
         return results
 
@@ -316,11 +336,11 @@ class AbstractWorker:
         if self.map_params.worker_exit_timeout is not None:
             try:
                 self.worker_comms.signal_worker_exit_started(self.worker_id)
-                results, should_return = self._run_safely(_exit_func, no_args=True)
+                results, should_return = self._run_safely(_exit_func, is_apply_func=False)
             finally:
                 self.worker_comms.signal_worker_exit_completed(self.worker_id)
         else:
-            results, should_return = self._run_safely(_exit_func, no_args=True)
+            results, should_return = self._run_safely(_exit_func, is_apply_func=False)
 
         if should_return:
             return True
@@ -328,16 +348,18 @@ class AbstractWorker:
             self.worker_comms.add_exit_results(self.worker_id, results)
             return False
 
-    def _run_safely(self, func: Callable, exception_args: Optional[Any] = None,
-                    no_args: bool = False) -> Tuple[Any, bool]:
+    def _run_safely(self, func: Callable, exception_args: Optional[Any] = None, job_id: Optional[int] = None,
+                    is_apply_func: bool = False) -> Tuple[Any, bool]:
         """
         A rather complex locking and exception mechanism is used here so we can make sure we only raise an exception
         when we should. See `_exit_gracefully` for more information.
 
         :param func: Function to run
         :param exception_args: Arguments to pass to `_format_args` when an exception occurred
-        :param no_args: Whether there were any args at all
-        :return: True when the worker needs to shut down, False otherwise
+        :param job_id: Job ID
+        :param is_apply_func: Whether this is an apply function
+        :return: Tuple containing results from the function and a boolean value indicating whether the worker needs to
+            shut down
         """
         if self.worker_comms.exception_thrown():
             return None, True
@@ -353,6 +375,10 @@ class AbstractWorker:
                 with self.is_running_lock:
                     self.is_running = False
 
+                # True indicates the job has finished successfully
+                if is_apply_func:
+                    results = True, results
+
             except StopWorker:
                 # The main process tells us to stop working, shutting down
                 raise
@@ -363,9 +389,14 @@ class AbstractWorker:
                 with self.is_running_lock:
                     self.is_running = False
 
-                # Pass exception to parent process and stop
-                self._raise(exception_args, no_args, err)
-                raise StopWorker
+                if is_apply_func:
+                    # Obtain exception and send it back as normal results. False indicates the job has failed
+                    err, traceback_str = self._get_exception(exception_args, True, err)
+                    results = False, (job_id, (type(err), err.args, err.__dict__, traceback_str))
+                else:
+                    # Pass exception to parent process and stop
+                    self._raise(exception_args, err)
+                    raise StopWorker
 
         except StopWorker:
             # Stop working
@@ -374,12 +405,11 @@ class AbstractWorker:
         # Carry on
         return results, False
 
-    def _raise(self, args: Any, no_args: bool, err: Union[Exception, SystemExit]) -> None:
+    def _raise(self, args: Optional[Any], err: Union[Exception, SystemExit]) -> None:
         """
         Create exception and pass it to the parent process. Let other processes know an exception is set
 
         :param args: Funtion arguments where exception was raised
-        :param no_args: Whether there were any args at all
         :param err: Exception that should be passed on to parent process
         """
         # Only one process can throw at a time
@@ -395,21 +425,8 @@ class AbstractWorker:
                 # Let others know we need to stop
                 self.worker_comms.signal_exception_thrown()
 
-                # Create traceback string
-                traceback_str = "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % (
-                    self.worker_id, self._format_args(args, no_args), traceback.format_exc()
-                )
-
-                # Sometimes an exception cannot be pickled (i.e., we get the _pickle.PickleError: Can't pickle
-                # <class ...>: it's not the same object as ...). We check that here by trying the pickle.dumps manually.
-                # The call to `queue.put` creates a thread in which it pickles and when that raises an exception we
-                # cannot catch it.
-                try:
-                    pickle.dumps(type(err))
-                    pickle.dumps(err.args)
-                    pickle.dumps(err.__dict__)
-                except pickle.PicklingError:
-                    err = CannotPickleExceptionError(repr(err))
+                # Get exception and traceback string
+                err, traceback_str = self._get_exception(args, False, err)
 
                 # Add exception. When we have a progress bar, we add an additional one
                 self.worker_comms.add_exception(type(err), err.args, err.__dict__, traceback_str)
@@ -423,25 +440,58 @@ class AbstractWorker:
                 self.worker_comms.wait_for_exception_progress_bar_received()
             self.worker_comms.wait_for_exception_received()
 
-    def _format_args(self, args: Any, no_args: bool = False, separator: str = '\n') -> str:
+    def _get_exception(self, args: Optional[Any], is_apply_func: bool,
+                       err: Union[Exception, SystemExit]) -> Tuple[Exception, str]:
+        """
+        Try to pickle the exception and create a traceback string
+
+        :param args: Funtion arguments where exception was raised
+        :param is_apply_func: Whether this is an apply function
+        :param err: Exception that was raised
+        :return: Tuple containing the exception and a traceback string
+        """
+        # Create traceback string
+        traceback_str = "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % (
+            self.worker_id, self._format_args(args, is_apply_func), traceback.format_exc()
+        )
+
+        # Sometimes an exception cannot be pickled (i.e., we get the _pickle.PickleError: Can't pickle
+        # <class ...>: it's not the same object as ...). We check that here by trying the pickle.dumps manually.
+        # The call to `queue.put` creates a thread in which it pickles and when that raises an exception we
+        # cannot catch it.
+        try:
+            pickle.dumps(type(err))
+            pickle.dumps(err.args)
+            pickle.dumps(err.__dict__)
+        except pickle.PicklingError:
+            err = CannotPickleExceptionError(repr(err))
+
+        return err, traceback_str
+
+    def _format_args(self, args: Optional[Any], is_apply_func: bool = False, separator: str = '\n') -> str:
         """
         Format the function arguments to a string form.
 
         :param args: Funtion arguments
-        :param no_args: Whether there were any args at all. If not, then return special string
+        :param is_apply_func: Whether this is an apply function
         :param separator: String to use as separator between arguments
         :return: String containing the task arguments
         """
         # Determine function arguments
-        func_args = args[1] if args and self.worker_comms.keep_order() else args
-        if no_args:
-            return "N/A"
-        elif isinstance(func_args, dict):
-            return separator.join("Arg %s: %s" % (str(key), repr(value)) for key, value in func_args.items())
-        elif isinstance(func_args, collections.abc.Iterable) and not isinstance(func_args, (str, bytes)):
-            return separator.join("Arg %d: %s" % (arg_nr, repr(arg)) for arg_nr, arg in enumerate(func_args))
+        if is_apply_func:
+            _, func_args, func_kwargs = args
         else:
-            return "Arg 0: %s" % func_args
+            func_args = args[1] if args and self.worker_comms.keep_order() else args
+            func_kwargs = None
+
+        func_args, func_kwargs = self._convert_args_kwargs(func_args, func_kwargs)
+
+        # Format arguments
+        formatted_args = []
+        formatted_args.extend(["Arg %d: %s" % (arg_nr, repr(arg)) for arg_nr, arg in enumerate(func_args)])
+        formatted_args.extend(["Arg %s: %s" % (str(key), repr(value)) for key, value in func_kwargs.items()])
+
+        return separator.join(formatted_args)
 
     def _helper_func_with_idx(self, func: Callable, args: Tuple[int, Any]) -> Tuple[int, Any]:
         """
@@ -464,22 +514,56 @@ class AbstractWorker:
         """
         return self._call_func(func, args)
 
-    @staticmethod
-    def _call_func(func: Callable, args: Any) -> Any:
+    def _helper_func_apply(self, func: Callable, job_id: int, args: Tuple, kwargs: Dict) -> Tuple[int, Any]:
+        """
+        Helper function which calls the function `func` but preserves the order index
+
+        :param func: Function to call each time new task arguments become available
+        :param job_id: Job ID
+        :param args: Arguments to pass to the function
+        :param kwargs: Keyword arguments to pass to the function
+        :return: (idx, result of calling the function with the given arguments) tuple
+        """
+        return job_id, self._call_func(func, args, kwargs)
+
+    def _call_func(self, func: Callable, args: Any, kwargs: Optional[Dict] = None) -> Any:
         """
         Helper function which calls the function `func` and passes the arguments in the correct way
 
         :param func: Function to call each time new task arguments become available
-        :param args: Arguments to pass on to the function
+        :param args: Arguments to pass on to the function. If this is a dictionary and kwargs is not provided, then
+            these args will be treated as keyword arguments. If this is an iterable, then the arguments will be
+            unpacked.
+        :param kwargs: Keyword arguments to pass to the function
         :return: Result of calling the function with the given arguments) tuple
         """
-        if isinstance(args, dict):
-            return func(**args)
+        args, kwargs = self._convert_args_kwargs(args, kwargs)
+        return func(*args, **kwargs)
+
+    @staticmethod
+    def _convert_args_kwargs(args: Any, kwargs: Optional[Dict] = None) -> Tuple[Tuple, Dict]:
+        """
+        Convert the arguments to a tuple and keyword arguments to a dictionary.
+
+        If args is a dictionary and kwargs is not provided, then these args will be treated as keyword arguments. If
+        this is an iterable (but not str, bytes, or numpy array), then these arguments will be unpacked.
+
+        :param args: Arguments
+        :param kwargs: Keyword arguments
+        :return: Args and kwargs
+        """
+        if isinstance(args, dict) and kwargs is None:
+            kwargs = args
+            args = ()
         elif (isinstance(args, collections.abc.Iterable) and not isinstance(args, (str, bytes)) and not
-              (NUMPY_INSTALLED and isinstance(args, np.ndarray))):
-            return func(*args)
+                (NUMPY_INSTALLED and isinstance(args, np.ndarray))):
+            args = args
         else:
-            return func(args)
+            args = args,
+        if kwargs is None:
+            kwargs = {}
+
+        return args, kwargs
 
     def _update_progress_bar(self, force_update: bool = False) -> None:
         """
@@ -508,7 +592,6 @@ if FORK_AVAILABLE:
     class ForkWorker(AbstractWorker, MP_CONTEXTS['mp']['fork'].Process):
         pass
 
-
     class ForkServerWorker(AbstractWorker, MP_CONTEXTS['mp']['forkserver'].Process):
         pass
 
@@ -526,10 +609,8 @@ if DILL_INSTALLED:
         class DillForkWorker(AbstractWorker, MP_CONTEXTS['mp']['fork'].Process):
             pass
 
-
         class DillForkServerWorker(AbstractWorker, MP_CONTEXTS['mp_dill']['forkserver'].Process):
             pass
-
 
     class DillSpawnWorker(AbstractWorker, MP_CONTEXTS['mp_dill']['spawn'].Process):
         pass

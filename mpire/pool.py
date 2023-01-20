@@ -5,9 +5,9 @@ import queue
 import signal
 import threading
 import time
-import warnings
 from datetime import datetime
-from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Sized, Union
+from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Sized, Tuple, Union
+from multiprocessing.pool import AsyncResult
 
 try:
     import numpy as np
@@ -16,10 +16,10 @@ except ImportError:
     np = None
     NUMPY_INSTALLED = False
 
-from mpire.comms import WorkerComms
+from mpire.comms import WorkerComms, POISON_PILL
 from mpire.context import DEFAULT_START_METHOD, RUNNING_WINDOWS
 from mpire.dashboard.connection_utils import get_dashboard_connection_details
-from mpire.exception import highlight_traceback
+from mpire.exception import populate_exception
 from mpire.insights import WorkerInsights
 from mpire.params import check_map_parameters, CPUList, WorkerMapParams, WorkerPoolParams
 from mpire.progress_bar import ProgressBarHandler, tqdm
@@ -36,6 +36,11 @@ class WorkerPool:
     A multiprocessing worker pool which acts like a ``multiprocessing.Pool``, but is faster and has more options.
     """
 
+    # TODO: add a parameter 'continue_on_error=False' to continue with the rest of the tasks when an error occurs. When
+    #  this is enabled, a user would need to check the failed results container to see if there were any errors.
+    # TODO: apply listener thread to also map/imap. Raise error from there? Store all intermediate in cache
+    # TODO create our own AsyncResult container to avoid warnings? We can then also add a flag success and
+    #  args/func used. Makes it a lot easier to debug -> Yes
     def __init__(self, n_jobs: Optional[int] = None, daemon: bool = True, cpu_ids: CPUList = None,
                  shared_objects: Any = None, pass_worker_id: bool = False, use_worker_state: bool = False,
                  start_method: str = DEFAULT_START_METHOD, keep_alive: bool = False, use_dill: bool = False,
@@ -100,6 +105,11 @@ class WorkerPool:
 
         # Worker insights, used for profiling
         self._worker_insights = WorkerInsights(self.ctx, self.pool_params.n_jobs)
+
+        # Apply/apply_async
+        self._map_running = False
+        self._cache = {}
+        self._apply_results_listener_thread = None
 
     def pass_on_worker_id(self, pass_on: bool = True) -> None:
         """
@@ -176,6 +186,11 @@ class WorkerPool:
             self._workers.append(self._start_worker(worker_id))
         logger.debug("Workers created")
 
+    # TODO: yeah this should definitely sit in another thread. Preferably, everything is stored in the cache and is
+    #  raised from map/imap whenever it is yielded. The exception queue can then be thrown away as well.
+    #  Perhaps this should even be three threads. One checking worker restarts, one checking for workers that are dead,
+    #  but shouldn't be (restart that worker? that would be a nice feature), and one for time-outs.
+    #  It seems this is turning into a big release
     def _check_worker_status(self) -> List[Any]:
         """
         Checks the worker status:
@@ -213,7 +228,7 @@ class WorkerPool:
         # Note that a worker can be alive, but their alive status is still False. This doesn't really matter, because we
         # know the worker is alive according to the OS. The only way we know that something bad happened is when a
         # worker is supposed to be alive but according to the OS it's not.
-        for worker_id in range(self.pool_params.n_jobs):
+        for worker_id in range(self.pool_params.n_jobs): # TODO should also keep track of job_ids I guess
             with self._worker_comms.get_worker_dead_lock(worker_id):
                 worker_died = self._worker_comms.is_worker_alive(worker_id) and not self._workers[worker_id].is_alive()
             if worker_died:
@@ -225,7 +240,7 @@ class WorkerPool:
                 self.terminate()
                 raise RuntimeError(err_msg)
 
-        # Check for worker_init/task/worker_exit timeouts
+        # Check for worker_init/task/worker_exit timeouts. # TODO should also keep track of job_ids I guess
         for timeout_var, has_timed_out_func, timeout_func_name in [
                 (self.map_params.worker_init_timeout, self._worker_comms.has_worker_init_timed_out, 'worker_init'),
                 (self.map_params.task_timeout, self._worker_comms.has_worker_task_timed_out, 'task')]:
@@ -262,6 +277,21 @@ class WorkerPool:
                 set_cpu_affinity(w.pid, self.pool_params.cpu_ids[worker_id])
 
             return w
+
+    def _start_apply_results_listener(self) -> None:
+        """
+        Starts the apply results listener. This is used to receive the results from the workers using an apply function
+        and store them in the cache.
+        """
+        # Join if not joined yet
+        if self._apply_results_listener_thread is not None and not self._apply_results_listener_thread.is_alive():
+            self._apply_results_listener_thread.join()
+            self._apply_results_listener_thread = None
+
+        # Start new listener
+        if self._apply_results_listener_thread is None:
+            self._apply_results_listener_thread = threading.Thread(target=self._apply_results_listener, daemon=True)
+            self._apply_results_listener_thread.start()
 
     def get_exit_results(self) -> List:
         """
@@ -620,6 +650,8 @@ class WorkerPool:
         tqdm_manager_owner = False
 
         try:
+            self._map_running = True
+
             # Start tqdm manager if a progress bar is desired. Will only start one when not already started. This has to
             # be done before starting the workers in case nested pools are used
             if progress_bar:
@@ -704,9 +736,120 @@ class WorkerPool:
                 TqdmManager.stop_manager()
                 logger.debug("TQDM manager stopped")
 
-        # Log insights
+            self._map_running = False
+
+            # Log insights
         if self.pool_params.enable_insights:
             logger.debug(self._worker_insights.get_insights_string())
+
+    def apply(self, func: Callable, args: Tuple = (), kwargs: Dict = None, callback: Optional[Callable] = None,
+              error_callback: Optional[Callable] = None, worker_init: Optional[Callable] = None,
+              worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
+              worker_init_timeout: Optional[float] = None, worker_exit_timeout: Optional[float] = None) -> Any:
+        """
+        Apply a function to a single task. This is a blocking call.
+
+        :param func: Function to apply to the task. When passing on the worker ID the function should receive the
+            worker ID as its first argument. If shared objects are provided the function should receive those as the
+            next argument. If the worker state has been enabled it should receive a state variable as the next argument
+        :param args: Arguments to pass to a worker, which passes it to the function ``func`` as ``func(*args)``
+        :param kwargs: Keyword arguments to pass to a worker, which passes it to the function ``func`` as
+            ``func(**kwargs)``
+        :param callback: Callback function to call when the task is finished. The callback function receives the output
+            of the function ``func`` as its argument
+        :param error_callback: Callback function to call when the task has failed. The callback function receives the
+            exception as its argument
+        :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
+            should receive the worker ID as its first argument. If shared objects are provided the function should
+            receive those as the next argument. If the worker state has been enabled it should receive a state variable
+            as the next argument
+        :param worker_exit: Function to call each time a worker exits. Return values will be fetched and made available
+            through :obj:`mpire.WorkerPool.get_exit_results`. When passing on the worker ID the function should receive
+            the worker ID as its first argument. If shared objects are provided the function should receive those as the
+            next argument. If the worker state has been enabled it should receive a state variable as the next argument
+        :param task_timeout: Timeout in seconds for a single task. When the timeout is exceeded, MPIRE will raise a
+            ``TimeoutError``. Use ``None`` to disable (default). Note: the timeout doesn't apply to ``worker_init`` and
+            ``worker_exit`` functions, use `worker_init_timeout` and `worker_exit_timeout` for that, respectively
+        :param worker_init_timeout: Timeout in seconds for the ``worker_init`` function. When the timeout is exceeded,
+            MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
+        :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function. When the timeout is exceeded,
+            MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
+        :return: Result of the function ``func`` applied to the task
+        """
+        return self.apply_async(func, args, kwargs, callback, error_callback, worker_init, worker_exit,
+                                task_timeout, worker_init_timeout, worker_exit_timeout).get()
+
+    def apply_async(self, func: Callable, args: Tuple = (), kwargs: Dict = None, callback: Optional[Callable] = None,
+                    error_callback: Optional[Callable] = None, worker_init: Optional[Callable] = None,
+                    worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
+                    worker_init_timeout: Optional[float] = None,
+                    worker_exit_timeout: Optional[float] = None) -> AsyncResult:
+        """
+        Apply a function to a single task. This is a non-blocking call.
+
+        :param func: Function to apply to the task. When passing on the worker ID the function should receive the
+            worker ID as its first argument. If shared objects are provided the function should receive those as the
+            next argument. If the worker state has been enabled it should receive a state variable as the next argument
+        :param args: Arguments to pass to a worker, which passes it to the function ``func`` as ``func(*args)``
+        :param kwargs: Keyword arguments to pass to a worker, which passes it to the function ``func`` as
+            ``func(**kwargs)``
+        :param callback: Callback function to call when the task is finished. The callback function receives the output
+            of the function ``func`` as its argument
+        :param error_callback: Callback function to call when the task has failed. The callback function receives the
+            exception as its argument
+        :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
+            should receive the worker ID as its first argument. If shared objects are provided the function should
+            receive those as the next argument. If the worker state has been enabled it should receive a state variable
+            as the next argument
+        :param worker_exit: Function to call each time a worker exits. Return values will be fetched and made available
+            through :obj:`mpire.WorkerPool.get_exit_results`. When passing on the worker ID the function should receive
+            the worker ID as its first argument. If shared objects are provided the function should receive those as the
+            next argument. If the worker state has been enabled it should receive a state variable as the next argument
+        :param task_timeout: Timeout in seconds for a single task. When the timeout is exceeded, MPIRE will raise a
+            ``TimeoutError``. Use ``None`` to disable (default). Note: the timeout doesn't apply to ``worker_init`` and
+            ``worker_exit`` functions, use `worker_init_timeout` and `worker_exit_timeout` for that, respectively
+        :param worker_init_timeout: Timeout in seconds for the ``worker_init`` function. When the timeout is exceeded,
+            MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
+        :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function. When the timeout is exceeded,
+            MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
+        :return: Result of the function ``func`` applied to the task
+        """
+        # We can't use the pool if a map is running
+        if self._map_running:
+            raise RuntimeError("Cannot apply a function while a map function is running")
+
+        # Check if the pool has been started
+        if not self._workers:
+            self.map_params = WorkerMapParams(func, worker_init, worker_exit, None, False, task_timeout,
+                                              worker_init_timeout, worker_exit_timeout)
+            self._start_workers()
+        self._start_apply_results_listener()
+
+        # Add task to the queue
+        result = AsyncResult(self, callback, error_callback)
+        self._cache[result._job] = result
+        self._worker_comms.add_apply_task(result._job, func, args, kwargs)
+        return result
+
+    def _apply_results_listener(self) -> None:
+        """
+        Listen for results from the workers for an apply task and adds them to the cache. Note that when ``set`` is
+        called on a result object, the result is automatically removed from the cache.
+        """
+        while True:
+            success, (job_id, result) = self._worker_comms.get_results(block=True, from_apply_func=True)[0]
+
+            # Poison pill, stop the listener
+            if result == POISON_PILL:
+                break
+
+            if success:
+                self._cache[job_id]._set(None, (True, result))
+            else:
+                err_type, err_args, err_state, traceback_str = result
+                err, traceback_err = populate_exception(err_type, err_args, err_state, traceback_str)
+                err.__cause__ = traceback_err
+                self._cache[job_id]._set(None, (False, err))
 
     def _handle_exception(self, progress_bar_handler: Optional[ProgressBarHandler] = None) -> None:
         """
@@ -748,10 +891,7 @@ class WorkerPool:
         self._worker_comms.clear_keep_order()
 
         # Raise
-        err = err_type.__new__(err_type)
-        err.args = err_args
-        err.__dict__.update(err_state)
-        traceback_err = Exception(highlight_traceback(traceback_str))
+        err, traceback_err = populate_exception(err_type, err_args, err_state, traceback_str)
         logger.debug("Re-raising obtained exception")
         raise err from traceback_err
 
@@ -807,6 +947,20 @@ class WorkerPool:
                 self._worker_comms.signal_all_exit_results_obtained()
                 logger.debug("Done obtaining exit results")
 
+            # Check if there any more result objects in the cache. If so, we need to wait until they are set
+            logger.debug("Obtaining results in cache")
+            while self._cache:
+                next(iter(self._cache.values())).wait()
+            logger.debug("Done obtaining results in cache")
+
+            # Join results listener thread
+            if self._apply_results_listener_thread is not None and self._apply_results_listener_thread.is_alive():
+                logger.debug("Joining results listener thread")
+                self._worker_comms.insert_poison_pill_results_listener()
+                self._apply_results_listener_thread.join()
+                self._apply_results_listener_thread = None
+                logger.debug("Done joining listener thread")
+
             # If an exception occurred in the exit function, we need to handle the exception (i.e., terminate and raise)
             if self._worker_comms.exception_thrown():
                 self._handle_exception(progress_bar_handler)
@@ -816,7 +970,7 @@ class WorkerPool:
             self._worker_comms.join_results_queues(keep_alive)
             logger.debug("Done joining results queues")
 
-            # Join workers
+            # Join workers and results listener thread
             if not keep_alive:
                 logger.debug("Joining workers")
                 for worker_process in self._workers:
@@ -866,6 +1020,13 @@ class WorkerPool:
         for t in threads:
             t.join()
         logger.debug("Terminating workers done")
+
+        if self._apply_results_listener_thread is not None and self._apply_results_listener_thread.is_alive():
+            logger.debug("Joining results listener thread")
+            self._worker_comms.insert_poison_pill_results_listener()
+            self._apply_results_listener_thread.join()
+            self._apply_results_listener_thread = None
+            logger.debug("Done joining listener thread")
 
         # Drain and join the queues
         logger.debug("Draining queues")

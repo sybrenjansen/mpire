@@ -33,11 +33,10 @@ class WorkerCommsTest(unittest.TestCase):
             test_ctx.extend([MP_CONTEXTS['mp_dill']['fork'], MP_CONTEXTS['mp']['forkserver']])
 
         for ctx, n_jobs, order_tasks in product(test_ctx, [1, 2, 4], [False, True]):
-            comms = WorkerComms(ctx, n_jobs, order_tasks)
-            event_type = type(ctx.Event())
-            lock_type = type(ctx.Lock())
-
             with self.subTest('__init__ called', ctx=ctx, n_jobs=n_jobs, order_tasks=order_tasks):
+                comms = WorkerComms(ctx, n_jobs, order_tasks)
+                event_type = type(ctx.Event())
+                lock_type = type(ctx.Lock())
                 self.assertEqual(comms.ctx, ctx)
                 self.assertEqual(comms.n_jobs, n_jobs)
                 self.assertEqual(comms.order_tasks, order_tasks)
@@ -721,7 +720,7 @@ class WorkerCommsTest(unittest.TestCase):
                         self.assertEqual(comms.has_worker_init_timed_out(worker_id, timeout), has_timed_out)
 
                 # task, times out at > 9
-                for timeout, has_timed_out in [ (8, True), (9, True), (10, False), (11, False)]:
+                for timeout, has_timed_out in [(8, True), (9, True), (10, False), (11, False)]:
                     with self.subTest(timeout=timeout, worker_id=worker_id):
                         MockDatetimeNow.CURRENT_IDX = 1
                         self.assertEqual(comms.has_worker_task_timed_out(worker_id, timeout), has_timed_out)

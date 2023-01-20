@@ -4,7 +4,7 @@ import queue
 import threading
 import time
 from datetime import datetime
-from typing import Any, Dict, Generator, Iterable, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Generator, Iterable, Optional, Tuple, Union
 
 from mpire.context import RUNNING_WINDOWS
 from mpire.params import WorkerMapParams
@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 POISON_PILL = '\0'
 NON_LETHAL_POISON_PILL = '\1'
 NEW_MAP_PARAMS_PILL = '\2'
+APPLY_PILL = '\3'
 
 
 class WorkerComms:
@@ -53,8 +54,9 @@ class WorkerComms:
         self._task_idx = None
         self._last_completed_task_worker_id = None
 
-        # Queue where the child processes can pass on results
+        # Queue where the child processes can pass on results. The apply results queue is used for the apply functions
         self._results_queue = None
+        self._apply_results_queue = None
 
         # Queue where the child processes can store exit results in
         self._exit_results_queues = []
@@ -124,6 +126,7 @@ class WorkerComms:
 
         # Results related
         self._results_queue = self.ctx.JoinableQueue()
+        self._apply_results_queue = self.ctx.JoinableQueue()
         self._exit_results_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
         self._all_exit_results_obtained = self.ctx.Event()
 
@@ -264,9 +267,37 @@ class WorkerComms:
         :param task: A tuple of arguments to pass to a worker, which acts upon it
         :param worker_id: If provided, give the task to the worker ID
         """
-        # When a worker ID is not present, we first check if we need to pass on the tasks in order. If not, we check
-        # whether we got results already. If so, we give the next task to the worker who completed that task. Otherwise,
-        # we decide based on order
+        worker_id = self._get_task_worker_id(worker_id)
+        with DelayedKeyboardInterrupt():
+            self._task_queues[worker_id].put(task, block=True)
+
+    def add_apply_task(self, job_id: int, func: Callable, args: Tuple = (), kwargs: Dict = None):
+        """
+        Add a task to the queue so a worker can process it. First though, add an APPLY_PILL such that the worker knows
+        it needs to treat this task differently.
+
+        :param job_id: Job ID
+        :param func: Function to apply
+        :param args: Arguments to pass to the function
+        :param kwargs: Keyword arguments to pass to the function
+        """
+        if kwargs is None:
+            kwargs = {}
+
+        worker_id = self._get_task_worker_id()
+        self.add_task(APPLY_PILL, worker_id)
+        self.add_task((job_id, func, args, kwargs), worker_id)
+
+    def _get_task_worker_id(self, worker_id: Optional[int] = None) -> int:
+        """
+        Get the worker ID for the next task.
+
+        When a worker ID is not present, we first check if we need to pass on the tasks in order. If not, we check
+        whether we got results already. If so, we give the next task to the worker who completed that task. Otherwise,
+        we decide based on order
+
+        :return: Worker ID
+        """
         if worker_id is None:
             if self.order_tasks or self._last_completed_task_worker_id is None:
                 worker_id = self._task_idx % self.n_jobs
@@ -275,8 +306,7 @@ class WorkerComms:
                 worker_id = self._last_completed_task_worker_id
                 self._last_completed_task_worker_id = None
 
-        with DelayedKeyboardInterrupt():
-            self._task_queues[worker_id].put(task, block=True)
+        return worker_id
 
     def get_task(self, worker_id: int) -> Any:
         """
@@ -300,14 +330,16 @@ class WorkerComms:
         """
         self._task_queues[worker_id].task_done()
 
-    def add_results(self, worker_id: int, results: Any) -> None:
+    def add_results(self, worker_id: int, results: Any, from_apply_func: bool = False) -> None:
         """
         :param worker_id: Worker ID
         :param results: Results from the main function
+        :param from_apply_func: Whether the results come from an apply function
         """
-        self._results_queue.put((worker_id, results))
+        q = self._apply_results_queue if from_apply_func else self._results_queue
+        q.put((worker_id, results))
 
-    def get_results(self, block: bool = True, timeout: Optional[float] = None) -> Any:
+    def get_results(self, block: bool = True, timeout: Optional[float] = None, from_apply_func: bool = False) -> Any:
         """
         Obtain the next result from the results queue. We catch the queue.Empty and raise it again after the
         DelayedKeyboardInterrupt, to clean up the exception traceback whenever a keyboard interrupt is issued. If we
@@ -315,13 +347,15 @@ class WorkerComms:
 
         :param block: Whether to block (wait for results)
         :param timeout: How long to wait for results in case ``block==True``
+        :param from_apply_func: Whether the results come from an apply function
         :return: The next result from the queue, which is the result of calling the function
         """
+        q = self._apply_results_queue if from_apply_func else self._results_queue
         queue_empty_error = None
         with DelayedKeyboardInterrupt():
             try:
-                self._last_completed_task_worker_id, results = self._results_queue.get(block=block, timeout=timeout)
-                self._results_queue.task_done()
+                self._last_completed_task_worker_id, results = q.get(block=block, timeout=timeout)
+                q.task_done()
             except queue.Empty as e:
                 queue_empty_error = e
         if queue_empty_error is not None:
@@ -483,6 +517,12 @@ class WorkerComms:
         for worker_id in range(self.n_jobs):
             self.add_task(POISON_PILL, worker_id)
 
+    def insert_poison_pill_results_listener(self) -> None:
+        """
+        'Tell' the apply results listener their job is done.
+        """
+        self.add_results(0, [(True, (None, POISON_PILL))], from_apply_func=True)
+
     def insert_non_lethal_poison_pill(self) -> None:
         """
         When ``keep_alive=True``, the workers should stay alive, but they need to wrap up their work (like sending the
@@ -565,10 +605,13 @@ class WorkerComms:
         :param keep_alive: Whether to keep the queues alive
         """
         self._results_queue.join()
+        self._apply_results_queue.join()
         [q.join() for q in self._exit_results_queues]
         if not keep_alive:
             self._results_queue.close()
             self._results_queue.join_thread()
+            self._apply_results_queue.close()
+            self._apply_results_queue.join_thread()
             [q.close() for q in self._exit_results_queues]
             [q.join_thread() for q in self._exit_results_queues]
 
@@ -635,6 +678,7 @@ class WorkerComms:
         [self.drain_and_join_queue(q) for q in self._task_queues]
         logger.debug("Draining results queues")
         self.drain_and_join_queue(self._results_queue)
+        self.drain_and_join_queue(self._apply_results_queue)
         logger.debug("Draining exit results queues")
         [self.drain_and_join_queue(q) for q in self._exit_results_queues]
 
