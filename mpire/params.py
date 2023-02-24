@@ -1,15 +1,16 @@
 import itertools
+import math
 import multiprocessing as mp
 import warnings
 from io import StringIO
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sized, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sized, Tuple, Union, Type
 
 from dataclasses import dataclass, field
 from unittest.mock import patch
 from tqdm import TqdmKeyError
 from tqdm.std import tqdm
 
-from mpire.context import RUNNING_WINDOWS, DEFAULT_START_METHOD
+from mpire.context import DEFAULT_START_METHOD, RUNNING_WINDOWS
 
 # Typedefs
 CPUList = List[Union[int, List[int]]]
@@ -157,11 +158,8 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
     ``chunk_size`` and ``progress_bar`` parameters.
 
     :param pool_params: WorkerPool config
-    :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker, which
-        passes it to the function
-    :param iterable_len: Number of elements in the ``iterable_of_args``. When chunk_size is set to ``None`` it needs
-        to know the number of tasks. This can either be provided by implementing the ``__len__`` function on the
-        iterable object, or by specifying the number of tasks
+    :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker
+    :param iterable_len: Number of elements in the ``iterable_of_args``
     :param max_tasks_active: Maximum number of active tasks in the queue. Use ``None`` to not limit the queue
     :param chunk_size: Number of simultaneous tasks to give to a worker. If ``None`` it will generate ``n_jobs * 4``
         number of chunks
@@ -181,55 +179,102 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
     :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function
     :return: Number of tasks, max tasks active, chunk size, progress bar, progress bar options
     """
-    # Get number of tasks
-    n_tasks = None
-    if iterable_len is not None:
-        n_tasks = iterable_len
-    elif hasattr(iterable_of_args, '__len__'):
-        n_tasks = len(iterable_of_args)
-    elif chunk_size is None or progress_bar:
-        warnings.warn('Failed to obtain length of iterable when chunk size or number of splits is None and/or a '
-                      'progress bar is requested. Chunk size is set to 1 and no progress bar will be shown. '
-                      'Remedy: either provide an iterable with a len() function or specify iterable_len in the '
-                      'function call', RuntimeWarning, stacklevel=2)
-        chunk_size = 1
-        progress_bar = False
+    # Get number of tasks and check chunk_size and n_splits parameters
+    n_tasks = get_number_of_tasks(iterable_of_args, iterable_len)
+    check_number(chunk_size, 'chunk_size', allowed_types=(int, float), none_allowed=True, min_=1)
+    check_number(n_splits, 'n_splits', allowed_types=(int,), none_allowed=True, min_=1)
 
-    # Check chunk_size parameter
-    if chunk_size is not None:
-        if not isinstance(chunk_size, (int, float)):
-            raise TypeError('chunk_size should be either None or a positive integer/float (> 0)')
-        elif chunk_size <= 0:
-            raise ValueError('chunk_size should be either None or a positive integer/float (> 0)')
+    # If chunk_size and n_splits are not provided, use 64 * n_jobs chunks in total
+    if chunk_size is None:
+        if n_splits is not None and n_tasks is not None:
+            chunk_size = n_tasks / n_splits
+        else:
+            if n_tasks is None:
+                warnings.warn('Failed to obtain length of iterable when chunk size or number of splits is None. Chunk '
+                              'size is set to 4. Remedy: either provide an iterable with a len() function or specify '
+                              'iterable_len in the function call', RuntimeWarning, stacklevel=2)
+                chunk_size = 4
+            else:
+                chunk_size = n_tasks / (pool_params.n_jobs * 64)
 
-    # Check n_splits parameter (only when chunk_size is None)
-    else:
-        if not (isinstance(n_splits, int) or n_splits is None):
-            raise TypeError('n_splits should be either None or a positive integer (> 0)')
-        if isinstance(n_splits, int) and n_splits <= 0:
-            raise ValueError('n_splits should be either None or a positive integer (> 0)')
-
-    # Check max_tasks_active parameter
+    # Check max_tasks_active parameter. If it is None, we set it to n_jobs * chunk_size * 2
     if max_tasks_active is None:
-        max_tasks_active = pool_params.n_jobs * 2
-    elif isinstance(max_tasks_active, int):
-        if max_tasks_active <= 0:
-            raise ValueError('max_tasks_active should be either None or a positive integer (> 0)')
+        max_tasks_active = pool_params.n_jobs * int(math.ceil(chunk_size)) * 2
     else:
-        raise TypeError('max_tasks_active should be a either None or a positive integer (> 0)')
+        check_number(max_tasks_active, 'max_tasks_active', allowed_types=(int,), none_allowed=True, min_=1)
 
     # If worker lifespan is not None or not a positive integer, raise
-    if isinstance(worker_lifespan, int):
-        if worker_lifespan <= 0:
-            raise ValueError('worker_lifespan should be either None or a positive integer (> 0)')
-    elif worker_lifespan is not None:
-        raise TypeError('worker_lifespan should be either None or a positive integer (> 0)')
+    check_number(worker_lifespan, 'worker_lifespan', allowed_types=(int,), none_allowed=True, min_=1)
 
     # Progress bar is currently not supported on Windows when using threading as start method. For reasons still
     # unknown we get a TypeError: cannot pickle '_thread.Lock' object.
     if RUNNING_WINDOWS and progress_bar and pool_params.start_method == "threading":
         raise ValueError("Progress bar is currently not supported on Windows when using start_method='threading'")
 
+    # Check progress bar parameters and set default values
+    progress_bar_options = check_progress_bar_options(progress_bar_options, progress_bar_position, n_tasks)
+
+    # Timeout parameters can't be negative
+    for timeout_var, timeout_var_name in [(task_timeout, 'task_timeout'),
+                                          (worker_init_timeout, 'worker_init_timeout'),
+                                          (worker_exit_timeout, 'worker_exit_timeout')]:
+        check_number(timeout_var, timeout_var_name, allowed_types=(int, float), none_allowed=True, min_=1e-8)
+
+    return n_tasks, max_tasks_active, chunk_size, progress_bar, progress_bar_options
+
+
+def get_number_of_tasks(iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int]) -> Optional[int]:
+    """
+    Get the number of tasks to process. If iterable_len is provided, it will be used. Otherwise, if iterable_of_args
+    is a Sized object, len(iterable_of_args) will be used. Otherwise, None will be returned.
+
+    :param iterable_of_args: A numpy array or an iterable containing tuples of arguments to pass to a worker
+    :param iterable_len: Number of elements in the ``iterable_of_args``
+    :return: Number of tasks to process
+    """
+    if iterable_len is not None:
+        return iterable_len
+
+    if hasattr(iterable_of_args, '__len__'):
+        return len(iterable_of_args)
+
+    return None
+
+
+def check_number(var: Any, var_name: str, allowed_types: Tuple[Type, ...], none_allowed: bool,
+                 min_: Optional[float] = None) -> None:
+    """
+    Check that a variable is of the correct type and within the allowed range
+
+    :param var: Variable to check
+    :param var_name: Name of the variable
+    :param allowed_types: Allowed types for the variable
+    :param none_allowed: Whether None is allowed for the variable
+    :param min_: Minimum value for the variable. If None, no minimum value is checked
+    """
+    if none_allowed and var is None:
+        return
+    if not isinstance(var, allowed_types):
+        raise TypeError(f"{var_name} should be of type {allowed_types}")
+    if min_ is not None and var < min_:  # type: ignore
+        raise ValueError(f"{var_name} should be >= {min_}")
+
+
+def check_progress_bar_options(progress_bar_options: Optional[Dict[str, Any]], progress_bar_position: Optional[int],
+                               n_tasks: Optional[int]) -> Dict[str, Any]:
+    """
+    Check that the progress bar options are properly formatted and set some defaults
+
+    :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
+         ``tqdm.tqdm()`` for details. The arguments ``total`` and ``leave`` will be overwritten by MPIRE.
+    :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful when using
+        multiple progress bars at the same time.
+
+        DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
+        instead.
+    :param n_tasks: Number of tasks to process
+    :return: Dictionary containing the progress bar options
+    """
     # Progress bar options should be a dictionary. Issue a warning for "total" and "leave".
     progress_bar_options = progress_bar_options or {}
     if not isinstance(progress_bar_options, dict):
@@ -246,10 +291,7 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
     if progress_bar_position is not None:
         warnings.warn("The 'progress_bar_position' parameter is deprecated and will be removed in v2.10.0. Set the "
                       "progress bar position using 'progress_bar_options' instead", DeprecationWarning, stacklevel=2)
-        if not isinstance(progress_bar_position, int):
-            raise TypeError('progress_bar_position should be a positive integer (>= 0)')
-        if progress_bar_position < 0:
-            raise ValueError('progress_bar_position should be a positive integer (>= 0)')
+        check_number(progress_bar_position, "progress_bar_position", (int,), False, min_=0)
         if "position" in progress_bar_options:
             warnings.warn("The 'progress_bar_position' is already provided in 'progress_bar_options', which will take "
                           "precedence", RuntimeWarning, stacklevel=2)
@@ -274,14 +316,4 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
         raise e from ValueError("There's an error in progress_bar_options. Either one of the parameters doesn't exist "
                                 "or it's not properly formatted. See tqdm.tqdm() for details.")
 
-    # Timeout parameters can't be negative
-    for timeout_var, timeout_var_name in [(task_timeout, 'task_timeout'),
-                                          (worker_init_timeout, 'worker_init_timeout'),
-                                          (worker_exit_timeout, 'worker_exit_timeout')]:
-        if timeout_var is not None:
-            if not isinstance(timeout_var, (int, float)):
-                raise TypeError(f'{timeout_var_name} should be either None or a positive integer/float (> 0)')
-            if timeout_var <= 0:
-                raise ValueError(f"{timeout_var_name} should be either None or a positive integer/float (> 0)")
-
-    return n_tasks, max_tasks_active, chunk_size, progress_bar, progress_bar_options
+    return progress_bar_options
