@@ -53,6 +53,8 @@ def progress_bar_update() -> str:
     result = []
     for pb_id in sorted(_DASHBOARD_TQDM_DICT.keys()):
         progress = _DASHBOARD_TQDM_DICT.get(pb_id)
+        if progress['total'] is None:
+            progress['total'] = '?'
         if progress['success'] and progress['n'] != progress['total']:
             progress['duration'] = str(now - progress['started_raw']).rsplit('.', 1)[0]
             progress['remaining'] = (str(progress['finished_raw'] - now).rsplit('.', 1)[0]

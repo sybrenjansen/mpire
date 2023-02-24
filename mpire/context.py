@@ -21,6 +21,7 @@ RUNNING_WINDOWS = platform.system() == "Windows"
 class ThreadingContext:
 
     Barrier = threading.Barrier
+    Condition = threading.Condition
     Event = threading.Event
     Lock = threading.Lock
     Thread = threading.Thread

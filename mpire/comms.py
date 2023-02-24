@@ -1,21 +1,32 @@
-import logging
+import collections
 import multiprocessing as mp
 import queue
 import threading
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, Generator, Iterable, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from mpire.context import RUNNING_WINDOWS
 from mpire.params import WorkerMapParams
 from mpire.signal import DelayedKeyboardInterrupt
 
-logger = logging.getLogger(__name__)
-
+# Pill for killing workers
 POISON_PILL = '\0'
+
+# Pill for letting workers know the work is done so they can send cached stats
 NON_LETHAL_POISON_PILL = '\1'
+
+# Pill for letting workers know that the next item in the queue are new map params
 NEW_MAP_PARAMS_PILL = '\2'
+
+# Pill for letting workers know that the next item in the queue is a task being supplied by an apply function, which
+# need to be processed slightly differently
 APPLY_PILL = '\3'
+
+# Fixed job IDs for the main process, worker_init, and worker_exit functions
+MAIN_PROCESS = -1
+INIT_FUNC = -2
+EXIT_FUNC = -3
 
 
 class WorkerComms:
@@ -49,48 +60,44 @@ class WorkerComms:
         # Whether or not to inform the child processes to keep order in mind (for the map functions)
         self._keep_order = self.ctx.Event()
 
-        # Queue to pass on tasks to child processes
+        # Worker specific locks. These locks are used to ensure that the main process won't access a worker specific
+        # variable while the worker is using it
+        self._worker_locks = None
+
+        # Queue to pass on tasks to child processes. We keep track of which worker completed the last task and which
+        # worker is working on what task
         self._task_queues = None
         self._task_idx = None
-        self._last_completed_task_worker_id = None
+        self._last_completed_task_worker_id = collections.deque()
+        self._worker_working_on_job = None
 
-        # Queue where the child processes can pass on results. The apply results queue is used for the apply functions
+        # Queue where the child processes can pass on results
         self._results_queue = None
-        self._apply_results_queue = None
-
-        # Queue where the child processes can store exit results in
-        self._exit_results_queues = []
-        self._all_exit_results_obtained = None
+        self._results_added = None
+        self._results_received = None
 
         # Array where the child processes can request a restart
-        self._worker_done_array = None
+        self._worker_restart_array = None
+        self._worker_restart_condition = self.ctx.Condition(self.ctx.Lock())
 
-        # List of Event objects to indicate whether workers are alive, together with accompanying locks
+        # List of Event objects to indicate whether workers are alive
         self._workers_dead = None
-        self._workers_dead_locks = None
 
         # Array where the child processes indicate when they started a task, worker_init, and worker_exit used for
         # checking timeouts. The array size is n_jobs * 3, where worker_id * 3 + i is used for indexing. i=0 is used for
         # the worker_init, i=1 for the main task, and i=2 for the worker_exit function.
         self._workers_time_task_started = None
 
-        # Queue where the child processes can pass on an encountered exception
-        self._exception_queue = None
-
-        # Events indicating whether the exception was received by the main process or progress bar handler
-        self._exception_received = None
-        self._exception_progress_bar_received = None
-
         # Lock object such that child processes can only throw one at a time. The Event object ensures only one
         # exception can be thrown
         self.exception_lock = self.ctx.Lock()
         self._exception_thrown = self.ctx.Event()
+        self._exception_job_id = None
         self._kill_signal_received = self.ctx.Event()
 
         # Array where the number of completed tasks is stored for the progress bar. We don't use the vanilla lock from
         # multiprocessing.Array, but create a lock per worker such that workers can write concurrently.
         self._tasks_completed_array = None
-        self._tasks_completed_locks = None
         self._progress_bar_last_updated = None
         self._progress_bar_shutdown = None
         self._progress_bar_complete = None
@@ -120,33 +127,32 @@ class WorkerComms:
         multiprocessing.JoinableQueue for both the exception queue and progress bar tasks completed queue, because the
         progress bar handler needs process-aware objects.
         """
+        # Worker locks
+        self._worker_locks = [self.ctx.Lock() for _ in range(self.n_jobs)]
+
         # Task related
         self._task_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
         self.reset_last_completed_task_info()
+        self._worker_working_on_job = self.ctx.Array('i', self.n_jobs, lock=True)
 
         # Results related
         self._results_queue = self.ctx.JoinableQueue()
-        self._apply_results_queue = self.ctx.JoinableQueue()
-        self._exit_results_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
-        self._all_exit_results_obtained = self.ctx.Event()
+        self._results_added = self.ctx.Array('i', self.n_jobs, lock=False)
+        self._results_received = self.ctx.Array('i', self.n_jobs, lock=False)
 
         # Worker status
-        self._worker_done_array = self.ctx.Array('b', self.n_jobs, lock=False)
+        self._worker_restart_array = self.ctx.Array('b', self.n_jobs, lock=True)
         self._workers_dead = [self.ctx.Event() for _ in range(self.n_jobs)]
         [worker_dead.set() for worker_dead in self._workers_dead]
-        self._workers_dead_locks = [self.ctx.Lock() for _ in range(self.n_jobs)]
-        self._workers_time_task_started = self.ctx.Array('d', self.n_jobs * 3, lock=True)
+        self._workers_time_task_started = self.ctx.Array('d', self.n_jobs * 3, lock=False)
 
         # Exception related
-        self._exception_queue = self.ctx.JoinableQueue()
-        self._exception_received = self.ctx.Event()
-        self._exception_progress_bar_received = self.ctx.Event()
         self._exception_thrown.clear()
+        self._exception_job_id = self.ctx.Value('i', 0, lock=True)
         self._kill_signal_received.clear()
 
         # Progress bar related
         self._tasks_completed_array = self.ctx.Array('L', self.n_jobs, lock=False)  # ULong (should be enough)
-        self._tasks_completed_locks = [self.ctx.Lock() for _ in range(self.n_jobs)]
         self._progress_bar_last_updated = datetime.now()
         self._progress_bar_shutdown = self.ctx.Event()
         self._progress_bar_complete = self.ctx.Event()
@@ -158,7 +164,7 @@ class WorkerComms:
         Resets the task_idx and last_completed_task_worker_id
         """
         self._task_idx = 0
-        self._last_completed_task_worker_id = None
+        self._last_completed_task_worker_id.clear()
 
     ################
     # Progress bar
@@ -183,7 +189,7 @@ class WorkerComms:
         # Check if we need to update
         now = datetime.now()
         if force_update or (now - progress_bar_last_updated).total_seconds() > self.progress_bar_update_interval:
-            with self._tasks_completed_locks[worker_id]:
+            with self._worker_locks[worker_id]:
                 self._tasks_completed_array[worker_id] += progress_bar_n_tasks_completed
             progress_bar_last_updated = now
             progress_bar_n_tasks_completed = 0
@@ -207,7 +213,7 @@ class WorkerComms:
                not self._progress_bar_shutdown.is_set()):
             n_tasks_completed = 0
             for worker_id in range(self.n_jobs):
-                with self._tasks_completed_locks[worker_id]:
+                with self._worker_locks[worker_id]:
                     n_tasks_completed += self._tasks_completed_array[worker_id]
             self._progress_bar_last_updated = datetime.now()
             return n_tasks_completed
@@ -230,9 +236,7 @@ class WorkerComms:
         """
         Waits until the progress bar is completed
         """
-        while not self.exception_thrown():
-            if self._progress_bar_complete.wait(timeout=0.01):
-                return
+        self._progress_bar_complete.wait()
 
     ################
     # Order modifiers
@@ -260,15 +264,17 @@ class WorkerComms:
     # Tasks & results
     ################
 
-    def add_task(self, task: Any, worker_id: Optional[int] = None) -> None:
+    def add_task(self, job_id: Optional[int], task: Any, worker_id: Optional[int] = None) -> None:
         """
         Add a task to the queue so a worker can process it.
 
+        :param job_id: Job ID or None
         :param task: A tuple of arguments to pass to a worker, which acts upon it
         :param worker_id: If provided, give the task to the worker ID
         """
         worker_id = self._get_task_worker_id(worker_id)
         with DelayedKeyboardInterrupt():
+            task = (job_id, task) if job_id is not None else task
             self._task_queues[worker_id].put(task, block=True)
 
     def add_apply_task(self, job_id: int, func: Callable, args: Tuple = (), kwargs: Dict = None):
@@ -276,8 +282,8 @@ class WorkerComms:
         Add a task to the queue so a worker can process it. First though, add an APPLY_PILL such that the worker knows
         it needs to treat this task differently.
 
-        :param job_id: Job ID
         :param func: Function to apply
+        :param job_id: Job ID
         :param args: Arguments to pass to the function
         :param kwargs: Keyword arguments to pass to the function
         """
@@ -285,8 +291,8 @@ class WorkerComms:
             kwargs = {}
 
         worker_id = self._get_task_worker_id()
-        self.add_task(APPLY_PILL, worker_id)
-        self.add_task((job_id, func, args, kwargs), worker_id)
+        self.add_task(None, APPLY_PILL, worker_id)
+        self.add_task(job_id, (func, (args, kwargs)), worker_id)
 
     def _get_task_worker_id(self, worker_id: Optional[int] = None) -> int:
         """
@@ -299,12 +305,11 @@ class WorkerComms:
         :return: Worker ID
         """
         if worker_id is None:
-            if self.order_tasks or self._last_completed_task_worker_id is None:
+            if self.order_tasks or not self._last_completed_task_worker_id:
                 worker_id = self._task_idx % self.n_jobs
                 self._task_idx += 1
             else:
-                worker_id = self._last_completed_task_worker_id
-                self._last_completed_task_worker_id = None
+                worker_id = self._last_completed_task_worker_id.popleft()
 
         return worker_id
 
@@ -330,16 +335,36 @@ class WorkerComms:
         """
         self._task_queues[worker_id].task_done()
 
-    def add_results(self, worker_id: int, results: Any, from_apply_func: bool = False) -> None:
+    def signal_worker_working_on_job(self, worker_id: int, job_id: int) -> None:
         """
-        :param worker_id: Worker ID
-        :param results: Results from the main function
-        :param from_apply_func: Whether the results come from an apply function
-        """
-        q = self._apply_results_queue if from_apply_func else self._results_queue
-        q.put((worker_id, results))
+        Signal that the worker is working on the job ID
 
-    def get_results(self, block: bool = True, timeout: Optional[float] = None, from_apply_func: bool = False) -> Any:
+        :param worker_id: Worker ID
+        :param job_id: Job ID
+        """
+        self._worker_working_on_job[worker_id] = job_id
+
+    def get_worker_working_on_job(self, worker_id: int) -> int:
+        """
+        Obtain the job ID the worker is working on
+
+        :param worker_id: Worker ID
+        :return: Job ID
+        """
+        return self._worker_working_on_job[worker_id]
+
+    def add_results(self, worker_id: int, results: List[Tuple[Optional[int], bool, Any]]) -> None:
+        """
+        Add results to the results queue
+
+        :param worker_id: Worker ID
+        :param results: A list of tuples of job ID, success bool, and output from the worker
+        """
+        with self._worker_locks[worker_id]:
+            self._results_added[worker_id] += 1
+        self._results_queue.put((worker_id, results))
+
+    def get_results(self, block: bool = True, timeout: Optional[float] = None) -> Any:
         """
         Obtain the next result from the results queue. We catch the queue.Empty and raise it again after the
         DelayedKeyboardInterrupt, to clean up the exception traceback whenever a keyboard interrupt is issued. If we
@@ -347,71 +372,34 @@ class WorkerComms:
 
         :param block: Whether to block (wait for results)
         :param timeout: How long to wait for results in case ``block==True``
-        :param from_apply_func: Whether the results come from an apply function
         :return: The next result from the queue, which is the result of calling the function
         """
-        q = self._apply_results_queue if from_apply_func else self._results_queue
         queue_empty_error = None
         with DelayedKeyboardInterrupt():
             try:
-                self._last_completed_task_worker_id, results = q.get(block=block, timeout=timeout)
-                q.task_done()
+                worker_id, results = self._results_queue.get(block=block, timeout=timeout)
+                self._results_queue.task_done()
+                if worker_id is not None:
+                    with self._worker_locks[worker_id]:
+                        self._results_received[worker_id] += 1
+                self._last_completed_task_worker_id.append(worker_id)
             except queue.Empty as e:
                 queue_empty_error = e
         if queue_empty_error is not None:
             raise queue_empty_error
         return results
 
-    def add_exit_results(self, worker_id: int, results: Any) -> None:
+    def wait_for_all_results_received(self, worker_id: int) -> None:
         """
-        :param worker_id: Worker ID
-        :param results: Results from the exit function
-        """
-        self._exit_results_queues[worker_id].put(results)
-
-    def get_exit_results(self, worker_id: int, timeout: Optional[float], block: bool = True) -> Any:
-        """
-        Obtain exit results from a specific worker. When block=False and the queue is empty we catch the queue.Empty and
-        raise it again after the DelayedKeyboardInterrupt, to clean up the exception traceback whenever a keyboard
-        interrupt is issued. If we wouldn't have done this, there would be an additional queue.Empty error traceback,
-        which we don't want.
+        Wait for the main process to receive all the results from a specific worker
 
         :param worker_id: Worker ID
-        :param timeout: Timeout in seconds for the worker_exit function
-        :param block: Whether to block (wait for results)
-        :return: Exit results
         """
-        # We always check the queue when block=False. This is needed when keep_alive=True and the workers have not been
-        # explicitly stopped and joined. In that case terminate() is called from WorkerPool.__exit__ and we need to
-        # drain the queue. When terminate is called the exception_thrown is set
-        while not self.exception_thrown() or not block:
-            if timeout is not None and self.has_worker_exit_timed_out(worker_id, timeout):
-                raise TimeoutError
-            queue_empty_error = None
-            with DelayedKeyboardInterrupt():
-                try:
-                    results = self._exit_results_queues[worker_id].get(block=block, timeout=0.01)
-                    self._exit_results_queues[worker_id].task_done()
-                    return results
-                except queue.Empty as e:
-                    if not block:
-                        queue_empty_error = e
-            if queue_empty_error is not None:
-                raise queue_empty_error
-
-    def signal_all_exit_results_obtained(self) -> None:
-        """
-        Signal that all exit results have been obtained
-        """
-        self._all_exit_results_obtained.set()
-
-    def wait_until_all_exit_results_obtained(self) -> None:
-        """
-        Waits until all exit results have been obtained
-        """
-        while not self.exception_thrown():
-            if self._all_exit_results_obtained.wait(timeout=0.01):
-                return
+        while True:
+            with self._worker_locks[worker_id]:
+                if self._results_received[worker_id] == self._results_added[worker_id]:
+                    break
+            time.sleep(0.01)
 
     def add_new_map_params(self, map_params: WorkerMapParams) -> None:
         """
@@ -420,63 +408,20 @@ class WorkerComms:
         :param map_params: New map params
         """
         for worker_id in range(self.n_jobs):
-            self.add_task(NEW_MAP_PARAMS_PILL, worker_id)
-            self.add_task(map_params, worker_id)
+            self.add_task(None, NEW_MAP_PARAMS_PILL, worker_id)
+            self.add_task(None, map_params, worker_id)
 
     ################
     # Exceptions
     ################
 
-    def add_exception(self, err_type: type, err_args: Iterable, err_state: Dict, traceback_str: str) -> None:
-        """
-        Add exception details to the queue and set the exception event
-
-        :param err_type: Type of the exception
-        :param err_args: Arguments of the exception
-        :param err_state: State dict of the exception
-        :param traceback_str: Traceback string
-        """
-        self._exception_queue.put((err_type, err_args, err_state, traceback_str))
-
-    def add_exception_poison_pill(self) -> None:
-        """
-        Signals the exception handling thread to shut down
-        """
-        with DelayedKeyboardInterrupt():
-            self._exception_queue.put((POISON_PILL, (), {}, ''))
-
-    def get_exception(self) -> Tuple[type, Iterable, Dict, str]:
-        """
-        :return: Tuple containing the type of the exception and the traceback string
-        """
-        with DelayedKeyboardInterrupt():
-            return self._exception_queue.get(block=True)
-
-    def task_done_exception(self, progress_bar: bool = False) -> None:
-        """
-        Signal that we've completed a task for the exception queue
-
-        :param progress_bar: Whether the exception was handled for the progress bar
-        """
-        self._exception_queue.task_done()
-        self._exception_progress_bar_received.set() if progress_bar else self._exception_received.set()
-
-    def wait_for_exception_received(self) -> bool:
-        """
-        :return: Wait until an exception has been received
-        """
-        return self._exception_received.wait()
-
-    def wait_for_exception_progress_bar_received(self) -> bool:
-        """
-        :return: Wait until an exception has been received for the progress bar
-        """
-        return self._exception_progress_bar_received.wait()
-
-    def signal_exception_thrown(self) -> None:
+    def signal_exception_thrown(self, job_id: int) -> None:
         """
         Set the exception event
+
+        :param job_id: Job ID which triggered the exception
         """
+        self._exception_job_id.value = job_id
         self._exception_thrown.set()
 
     def exception_thrown(self) -> bool:
@@ -493,6 +438,12 @@ class WorkerComms:
         :return: True when exception was thrown, False if timeout was reached
         """
         return self._exception_thrown.wait(timeout=timeout)
+
+    def exception_thrown_by(self) -> int:
+        """
+        :return: Job ID which triggered the exception
+        """
+        return self._exception_job_id.value
 
     def signal_kill_signal_received(self) -> None:
         """
@@ -515,13 +466,13 @@ class WorkerComms:
         'Tell' the workers their job is done.
         """
         for worker_id in range(self.n_jobs):
-            self.add_task(POISON_PILL, worker_id)
+            self.add_task(None, POISON_PILL, worker_id)
 
     def insert_poison_pill_results_listener(self) -> None:
         """
         'Tell' the apply results listener their job is done.
         """
-        self.add_results(0, [(True, (None, POISON_PILL))], from_apply_func=True)
+        self.add_results(0, [(None, True, POISON_PILL)])
 
     def insert_non_lethal_poison_pill(self) -> None:
         """
@@ -529,7 +480,7 @@ class WorkerComms:
         latest progress bar update)
         """
         for worker_id in range(self.n_jobs):
-            self.add_task(NON_LETHAL_POISON_PILL, worker_id)
+            self.add_task(None, NON_LETHAL_POISON_PILL, worker_id)
 
     def signal_worker_restart(self, worker_id: int) -> None:
         """
@@ -537,15 +488,37 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._worker_done_array[worker_id] = True
+        self._worker_restart_array[worker_id] = True
+        with self._worker_restart_condition:
+            self._worker_restart_condition.notify()
 
-    def get_worker_restarts(self) -> Generator[int, None, None]:
+    def signal_worker_restart_condition(self) -> None:
         """
-        Obtain the worker IDs that need to be restarted.
+        Signal the condition primitive, such that the worker restart handler thread can continue. This is useful when
+        an exception has been thrown and the thread needs to exit.
+        """
+        with self._worker_restart_condition:
+            self._worker_restart_condition.notify()
 
-        :return: Generator of worker IDs
+    def get_worker_restarts(self) -> List[int]:
         """
-        return (worker_id for worker_id, restart_worker in enumerate(self._worker_done_array) if restart_worker)
+        Obtain the worker IDs that need to be restarted. Blocks until at least one worker needs to be restarted.
+        It returns an empty list when an exception has been thrown (which also notifies the worker_done_condition)
+
+        :return: List of worker IDs
+        """
+        def _get_worker_restarts():
+            return [worker_id for worker_id, restart in enumerate(self._worker_restart_array) if restart]
+
+        with self._worker_restart_condition:
+
+            # If there aren't any workers to restart, wait until there are
+            worker_ids = _get_worker_restarts()
+            if not worker_ids:
+                self._worker_restart_condition.wait()
+                worker_ids = _get_worker_restarts()
+
+            return worker_ids
 
     def reset_worker_restart(self, worker_id) -> None:
         """
@@ -553,16 +526,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._worker_done_array[worker_id] = False
-
-    def get_worker_dead_lock(self, worker_id: int) -> mp.Lock:
-        """
-        Returns the worker dead lock for a specific worker
-
-        :param worker_id: Worker ID
-        :return: Lock object
-        """
-        return self._workers_dead_locks[worker_id]
+        self._worker_restart_array[worker_id] = False
 
     def signal_worker_alive(self, worker_id: int) -> None:
         """
@@ -605,15 +569,9 @@ class WorkerComms:
         :param keep_alive: Whether to keep the queues alive
         """
         self._results_queue.join()
-        self._apply_results_queue.join()
-        [q.join() for q in self._exit_results_queues]
         if not keep_alive:
             self._results_queue.close()
             self._results_queue.join_thread()
-            self._apply_results_queue.close()
-            self._apply_results_queue.join_thread()
-            [q.close() for q in self._exit_results_queues]
-            [q.join_thread() for q in self._exit_results_queues]
 
     def join_task_queues(self, keep_alive: bool = False) -> None:
         """
@@ -626,23 +584,11 @@ class WorkerComms:
             [q.close() for q in self._task_queues]
             [q.join_thread() for q in self._task_queues]
 
-    def join_exception_queue(self, keep_alive: bool = False) -> None:
+    def drain_results_queue_terminate_worker(self, dont_wait_event: threading.Event) -> None:
         """
-        Join exception queue
-
-        :param keep_alive: Whether to keep the queues alive
-        """
-        self._exception_queue.join()
-        if not keep_alive:
-            self._exception_queue.close()
-            self._exception_queue.join_thread()
-
-    def drain_queues_terminate_worker(self, worker_id: int, dont_wait_event: threading.Event) -> None:
-        """
-        Drain the results queues without blocking. This is done when terminating workers, while they could still be busy
+        Drain the results queue without blocking. This is done when terminating workers, while they could still be busy
         putting something in the queues. This function will always be called from within a thread.
 
-        :param worker_id: Worker ID
         :param dont_wait_event: Event object to indicate whether other termination threads should continue. I.e., when
             we set it to False, threads should wait.
         """
@@ -658,29 +604,12 @@ class WorkerComms:
             if got_results:
                 dont_wait_event.set()
 
-        # Get results from the exit results queue. If we got any, keep going and inform the other termination threads to
-        # wait until this one's finished
-        got_results = False
-        try:
-            self.get_exit_results(worker_id, timeout=None, block=False)
-            dont_wait_event.clear()
-            got_results = True
-        except (queue.Empty, OSError):
-            if got_results:
-                dont_wait_event.set()
-
     def drain_queues(self) -> None:
         """
-        Drain tasks, results, and exit results queues. Note that the exception queue doesn't need to be drained.
-        This one is properly cleaned up in the exception handling class.
+        Drain tasks and results queues
         """
-        logger.debug("Draining task queues")
         [self.drain_and_join_queue(q) for q in self._task_queues]
-        logger.debug("Draining results queues")
         self.drain_and_join_queue(self._results_queue)
-        self.drain_and_join_queue(self._apply_results_queue)
-        logger.debug("Draining exit results queues")
-        [self.drain_and_join_queue(q) for q in self._exit_results_queues]
 
     def drain_and_join_queue(self, q: mp.JoinableQueue, join: bool = True) -> None:
         """
@@ -691,8 +620,6 @@ class WorkerComms:
         :param q: Queue to join
         :param join: Whether to join the queue or not
         """
-        logger.debug("Draining queue")
-
         # Running this in a separate process on Windows can cause errors
         if RUNNING_WINDOWS:
             self._drain_and_join_queue(q, join)
@@ -701,15 +628,12 @@ class WorkerComms:
             process.start()
             process.join(timeout=5)
             if process.is_alive():
-                logger.debug("Draining queue failed, skipping")
                 process.terminate()
                 process.join()
 
             if join:
                 # The above was done in a separate process where the queue had a different feeder thread
-                logger.debug("Closing queue")
                 q.close()
-                logger.debug("Joining queue feeder thread")
                 q.join_thread()
 
     @staticmethod
@@ -744,11 +668,8 @@ class WorkerComms:
         # Join
         if join:
             try:
-                logger.debug("Joining queue")
                 q.join()
-                logger.debug("Closing queue")
                 q.close()
-                logger.debug("Joining queue feeder thread")
                 q.join_thread()
             except OSError:
                 pass
@@ -763,7 +684,8 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 0] = datetime.now().timestamp()
+        with self._worker_locks[worker_id]:
+            self._workers_time_task_started[worker_id * 3 + 0] = datetime.now().timestamp()
 
     def signal_worker_task_started(self, worker_id: int) -> None:
         """
@@ -771,7 +693,8 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 1] = datetime.now().timestamp()
+        with self._worker_locks[worker_id]:
+            self._workers_time_task_started[worker_id * 3 + 1] = datetime.now().timestamp()
 
     def signal_worker_exit_started(self, worker_id: int) -> None:
         """
@@ -779,7 +702,8 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 2] = datetime.now().timestamp()
+        with self._worker_locks[worker_id]:
+            self._workers_time_task_started[worker_id * 3 + 2] = datetime.now().timestamp()
 
     def signal_worker_init_completed(self, worker_id: int) -> None:
         """
@@ -787,7 +711,8 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 0] = 0
+        with self._worker_locks[worker_id]:
+            self._workers_time_task_started[worker_id * 3 + 0] = 0
 
     def signal_worker_task_completed(self, worker_id: int) -> None:
         """
@@ -795,7 +720,8 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 1] = 0
+        with self._worker_locks[worker_id]:
+            self._workers_time_task_started[worker_id * 3 + 1] = 0
 
     def signal_worker_exit_completed(self, worker_id: int) -> None:
         """
@@ -803,7 +729,8 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 2] = 0
+        with self._worker_locks[worker_id]:
+            self._workers_time_task_started[worker_id * 3 + 2] = 0
 
     def has_worker_init_timed_out(self, worker_id: int, timeout: float) -> bool:
         """
@@ -813,7 +740,9 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        return self._has_worker_timed_out(self._workers_time_task_started[worker_id * 3 + 0], timeout)
+        with self._worker_locks[worker_id]:
+            started_time = self._workers_time_task_started[worker_id * 3 + 0]
+        return self._has_worker_timed_out(started_time, timeout)
 
     def has_worker_task_timed_out(self, worker_id: int, timeout: float) -> bool:
         """
@@ -823,7 +752,9 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        return self._has_worker_timed_out(self._workers_time_task_started[worker_id * 3 + 1], timeout)
+        with self._worker_locks[worker_id]:
+            started_time = self._workers_time_task_started[worker_id * 3 + 1]
+        return self._has_worker_timed_out(started_time, timeout)
 
     def has_worker_exit_timed_out(self, worker_id: int, timeout: float) -> bool:
         """
@@ -833,7 +764,9 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        return self._has_worker_timed_out(self._workers_time_task_started[worker_id * 3 + 2], timeout)
+        with self._worker_locks[worker_id]:
+            started_time = self._workers_time_task_started[worker_id * 3 + 2]
+        return self._has_worker_timed_out(started_time, timeout)
 
     @staticmethod
     def _has_worker_timed_out(started_time: float, timeout: float) -> bool:

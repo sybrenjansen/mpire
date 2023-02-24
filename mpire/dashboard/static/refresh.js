@@ -13,7 +13,7 @@ $(function() {
 
 var progress_bar_animation_duration = 450;
 var refresh_interval = 500;
-var completed_pb_ids = new Set();
+var completed_pb_ids = {};
 refresh();
 setInterval(refresh, refresh_interval);
 
@@ -143,8 +143,9 @@ function refresh()
                 is_new = true;
             }
 
-            // If it's already completed, do nothing, except when this is a new progress bar (e.g., when refreshed)
-            if (completed_pb_ids.has(pb.id) && !is_new)
+            // If it's already completed, do nothing, except when this is a new progress bar (e.g., when refreshed) or
+            // when the success status has changed
+            if (pb.id in completed_pb_ids && completed_pb_ids[pb.id] === pb.success && !is_new)
             {
                 continue;
             }
@@ -214,11 +215,11 @@ function refresh()
                     $('#pb_' + pb.id).addClass('bg-success');
 
                     // Make lightsaber light up
-                    if (!completed_pb_ids.has(pb.id))
+                    if (!(pb.id in completed_pb_ids))
                     {
                         $('.lightsaber').animate({color: '#00FF00'}, 300).animate({color: '#dc3545'}, 300);
                     }
-                    completed_pb_ids.add(pb.id);
+                    completed_pb_ids[pb.id] = true;
                 }
             }
             else
@@ -233,11 +234,11 @@ function refresh()
                 $('#pb_' + pb.id + '_flash').fadeIn(200).fadeOut(200).fadeIn(200).fadeOut(200).fadeIn(200);
 
                 // Make lightsaber light up
-                if (!completed_pb_ids.has(pb.id))
+                if (!(pb.id in completed_pb_ids))
                 {
                     $('.lightsaber').animate({color: '#000000'}, 300).animate({color: '#dc3545'}, 300);
                 }
-                completed_pb_ids.add(pb.id);
+                completed_pb_ids[pb.id] = false;
             }
         }
     });

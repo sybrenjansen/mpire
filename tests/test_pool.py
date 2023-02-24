@@ -1,4 +1,3 @@
-import logging
 import os
 import time
 import types
@@ -7,12 +6,13 @@ import warnings
 from itertools import product, repeat
 from multiprocessing import Barrier, Value
 from threading import current_thread, main_thread, Thread
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 from tqdm import tqdm
 
 from mpire import cpu_count, WorkerPool
+from mpire.async_result import AsyncResult
 from mpire.context import FORK_AVAILABLE, RUNNING_WINDOWS
 from mpire.tqdm_utils import TqdmLock
 
@@ -62,6 +62,7 @@ class MapTest(unittest.TestCase):
             yield from iterable
 
         # Test results for different parameter settings
+        print()
         for n_jobs, n_tasks_max_active, worker_lifespan, chunk_size, n_splits in tqdm([
             (None, None, None, None, None),
             (1, None, None, None, None),
@@ -266,6 +267,109 @@ class PoolInThreadTest(unittest.TestCase):
     @staticmethod
     def _square(x):
         return x * x
+
+
+class ApplyTest(unittest.TestCase):
+
+    def test_apply_async_call(self):
+        """
+        Test that apply simply calls apply_async
+        """
+        with WorkerPool(1) as pool, patch.object(pool, 'apply_async') as mock_apply_async:
+            pool.apply(subtract, (1,), {'y': 2}, self._callback, self._error_callback,
+                       self._init, self._exit, 0.1, 0.2, 0.3)
+            mock_apply_async.assert_called_once_with(subtract, (1,), {'y': 2}, self._callback, self._error_callback,
+                                                     self._init, self._exit, 0.1, 0.2, 0.3)
+
+    def test_result(self):
+        """
+        Test that apply returns the correct result
+        """
+        with WorkerPool(1) as pool:
+            results = [pool.apply(self._square, (i,)) for i in range(10)]
+            self.assertEqual(results, [self._square(i) for i in range(10)])
+
+    @staticmethod
+    def _callback(_):
+        return 0
+
+    @staticmethod
+    def _error_callback(_):
+        return 1
+
+    @staticmethod
+    def _init():
+        return
+
+    @staticmethod
+    def _exit():
+        return 2
+
+    @staticmethod
+    def _square(x):
+        return x * x
+
+
+class ApplyAsyncTest(unittest.TestCase):
+
+    def test_map_running(self):
+        """
+        Test that apply_async raises when a map function is running
+        """
+        with WorkerPool(2) as pool:
+            results = pool.imap(self._square, [1, 2, 3])
+            next(results)  # Start the map function
+            with self.assertRaises(RuntimeError):
+                pool.apply_async(self._square, (1,))
+
+    def test_result(self):
+        """
+        Test that apply_async returns the correct result. Calling get multiple times should also work
+        """
+        with WorkerPool(2) as pool:
+            results = [pool.apply_async(self._square, (i,)) for i in range(10)]
+            [self.assertIsInstance(result, AsyncResult) for result in results]
+            self.assertListEqual([result.get() for result in results], [self._square(i) for i in range(10)])
+            self.assertListEqual([result.get() for result in results], [self._square(i) for i in range(10)])
+
+    def test_args_kwargs(self):
+        """
+        Test that apply_async works with args and kwargs
+        """
+        with WorkerPool(2) as pool:
+            results = [pool.apply_async(subtract, (i * i,), {'y': i}) for i in range(10)]
+            self.assertListEqual([result.get() for result in results], [subtract(i * i, i) for i in range(10)])
+
+            results = [pool.apply_async(subtract, (), {'x': i * i, 'y': i}) for i in range(10)]
+            self.assertListEqual([result.get() for result in results], [subtract(i * i, i) for i in range(10)])
+
+    def test_callback(self):
+        """
+        Test that apply_async calls the callback function on success
+        """
+        callback = Mock()
+        with WorkerPool(1) as pool:
+            pool.apply_async(self._square, (42,), callback=callback).get()
+            callback.assert_called_once_with(42 * 42)
+
+    def test_callback_error(self):
+        """
+        Test that apply_async calls the error callback function on error
+        """
+        callback = Mock()
+        with WorkerPool(1) as pool:
+            value_error = ValueError('test')
+            with self.assertRaises(ValueError):
+                pool.apply_async(self._raise_exception, (value_error,), error_callback=callback).get()
+            self.assertIsInstance(callback.call_args[0][0], ValueError)
+
+    @staticmethod
+    def _square(x):
+        return x * x
+
+    @staticmethod
+    def _raise_exception(exception):
+        raise exception
 
 
 class WorkerIDTest(unittest.TestCase):
@@ -690,7 +794,7 @@ class DaemonTest(unittest.TestCase):
         self.test_data = list(enumerate([1, 2, 3, 5, 6, 9, 37, 42, 1337, 0, 3, 5, 0]))
         self.test_desired_output = list(map(lambda _args: square(*_args), self.test_data))
 
-    def test_non_deamon_nested_workerpool(self):
+    def test_non_daemon_nested_workerpool(self):
         """
         Tests nested WorkerPools when daemon==False, which should work
         """
@@ -703,7 +807,7 @@ class DaemonTest(unittest.TestCase):
                 self.assertIsInstance(results_list, list)
                 self.assertEqual(self.test_desired_output, results_list)
 
-    def test_deamon_nested_workerpool(self):
+    def test_daemon_nested_workerpool(self):
         """
         Tests nested WorkerPools when daemon==True, which should not work
         """
@@ -712,7 +816,7 @@ class DaemonTest(unittest.TestCase):
 
     @staticmethod
     def _square_daemon(x):
-        with WorkerPool(n_jobs=4) as pool:
+        with WorkerPool(n_jobs=2) as pool:
             return pool.map(square, x, chunk_size=1)
 
 
@@ -1089,16 +1193,10 @@ class ExceptionTest(unittest.TestCase):
         self.test_desired_output = list(map(lambda _args: square(*_args), self.test_data))
         self.test_data_len = len(self.test_data)
 
-        # Setup logger for debug purposes
-        self.logger = logging.getLogger()
-        self.logger.setLevel(logging.DEBUG)
-
         # Get original tqdm lock
         self.original_tqdm_lock = tqdm.get_lock()
 
     def tearDown(self):
-        self.logger.setLevel(logging.NOTSET)
-
         # The TQDM lock is temporarily changed when using a progress bar in MPIRE, here we check if it is restored
         # correctly afterwards.
         self.assertNotIsInstance(tqdm.get_lock(), TqdmLock)
@@ -1120,12 +1218,11 @@ class ExceptionTest(unittest.TestCase):
             (3, None, 1, True),
             (3, 1, 1, True)
         ]:
-            self.logger.debug(f"========== {n_jobs}, {n_tasks_max_active}, {worker_lifespan}, {progress_bar} "
-                              f"==========")
+            print(f"========== {n_jobs}, {n_tasks_max_active}, {worker_lifespan}, {progress_bar} ==========")
             with WorkerPool(n_jobs=n_jobs) as pool:
 
                 # Should work for map like functions
-                self.logger.debug("----- square_raises, map -----")
+                print("----- square_raises, map -----")
                 with self.subTest(n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                   progress_bar=progress_bar, function='square_raises', map='map'), \
                      self.assertRaises(ValueError):
@@ -1133,7 +1230,7 @@ class ExceptionTest(unittest.TestCase):
                              worker_lifespan=worker_lifespan, progress_bar=progress_bar)
 
                 # Should work for imap like functions
-                self.logger.debug("----- square_raises, imap -----")
+                print("----- square_raises, imap -----")
                 with self.subTest(n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                   progress_bar=progress_bar, function='square_raises', map='imap'), \
                      self.assertRaises(ValueError):
@@ -1141,7 +1238,7 @@ class ExceptionTest(unittest.TestCase):
                                              worker_lifespan=worker_lifespan, progress_bar=progress_bar))
 
                 # Should work for map like functions
-                self.logger.debug("----- square_raises_on_idx, map -----")
+                print("----- square_raises_on_idx, map -----")
                 with self.subTest(n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                   progress_bar=progress_bar, function='square_raises_on_idx', map='map'), \
                      self.assertRaises(ValueError):
@@ -1149,7 +1246,7 @@ class ExceptionTest(unittest.TestCase):
                              worker_lifespan=worker_lifespan, progress_bar=progress_bar)
 
                 # Should work for imap like functions
-                self.logger.debug("----- square_raises_on_idx, imap -----")
+                print("----- square_raises_on_idx, imap -----")
                 with self.subTest(n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
                                   progress_bar=progress_bar, function='square_raises_on_idx', map='imap'), \
                      self.assertRaises(ValueError):
@@ -1163,30 +1260,30 @@ class ExceptionTest(unittest.TestCase):
         """
         print()
         for start_method, progress_bar in product(TEST_START_METHODS, [False, True]):
-            self.logger.debug(f"========== {start_method}, {progress_bar} ==========")
+            print(f"========== {start_method}, {progress_bar} ==========")
             if RUNNING_WINDOWS and progress_bar and start_method == 'threading':
-                self.logger.debug("Not yet supported on Windows")
+                print("Not yet supported on Windows")
                 continue
             with self.subTest(start_method=start_method, progress_bar=progress_bar), \
                     WorkerPool(n_jobs=2, start_method=start_method) as pool:
 
                 # Should work for map like functions
-                self.logger.debug("----- square_raises, map -----")
+                print("----- square_raises, map -----")
                 with self.subTest(function='square_raises', map='map'), self.assertRaises(ValueError):
                     pool.map(self._square_raises, self.test_data, progress_bar=progress_bar)
 
                 # Should work for imap like functions
-                self.logger.debug("----- square_raises, imap -----")
+                print("----- square_raises, imap -----")
                 with self.subTest(function='square_raises', map='imap'), self.assertRaises(ValueError):
                     list(pool.imap_unordered(self._square_raises, self.test_data, progress_bar=progress_bar))
 
                 # Should work for map like functions
-                self.logger.debug("----- square_raises_on_idx, map -----")
+                print("----- square_raises_on_idx, map -----")
                 with self.subTest(function='square_raises_on_idx', map='map'), self.assertRaises(ValueError):
                     pool.map(self._square_raises_on_idx, self.test_data, progress_bar=progress_bar)
 
                 # Should work for imap like functions
-                self.logger.debug("----- square_raises_on_idx, imap -----")
+                print("----- square_raises_on_idx, imap -----")
                 with self.subTest(function='square_raises_on_idx', map='imap'), self.assertRaises(ValueError):
                     list(pool.imap_unordered(self._square_raises_on_idx, self.test_data, progress_bar=progress_bar))
 
@@ -1202,7 +1299,7 @@ class ExceptionTest(unittest.TestCase):
                 # Progress bar on Windows + threading is not supported right now
                 if RUNNING_WINDOWS and start_method == 'threading' and progress_bar:
                     continue
-                self.logger.debug(f"========== {start_method}, {n_jobs}, {progress_bar}, {worker_lifespan} ==========")
+                print(f"========== {start_method}, {n_jobs}, {progress_bar}, {worker_lifespan} ==========")
                 with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar, worker_lifespan=worker_lifespan,
                                   start_method=start_method), self.assertRaises(SystemExit), \
                         WorkerPool(n_jobs=n_jobs, start_method=start_method) as pool:
@@ -1225,7 +1322,7 @@ class ExceptionTest(unittest.TestCase):
                 if start_method == 'threading':
                     continue
 
-                self.logger.debug(f"========== {start_method}, {n_jobs}, {progress_bar}, {worker_lifespan} ==========")
+                print(f"========== {start_method}, {n_jobs}, {progress_bar}, {worker_lifespan} ==========")
                 with self.subTest(n_jobs=n_jobs, progress_bar=progress_bar, worker_lifespan=worker_lifespan,
                                   start_method=start_method), self.assertRaises(RuntimeError), \
                         WorkerPool(n_jobs=n_jobs, pass_worker_id=True, start_method=start_method) as pool:
@@ -1290,31 +1387,25 @@ class TimeoutTest(unittest.TestCase):
         # Create some test data
         self.test_data = [1, 2, 3]
 
-        # Setup logger for debug purposes
-        self.logger = logging.getLogger()
-        self.logger.setLevel(logging.DEBUG)
-
-    def tearDown(self) -> None:
-        self.logger.setLevel(logging.NOTSET)
-
     def test_worker_init_timeout(self):
         """
         Checks if the worker_init timeout is properly triggered
         """
+        print()
         for start_method in TEST_START_METHODS:
 
-            self.logger.debug(f"========== {start_method}, well below timeout ==========")
+            print(f"========== {start_method}, well below timeout ==========")
             with self.subTest('Well below timeout', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool:
                 self.assertListEqual(pool.map(self._f1, self.test_data, worker_init=self._init1,
                                               worker_init_timeout=100), self.test_data)
 
-            self.logger.debug(f"========== {start_method}, exceeding timeout, map ==========")
+            print(f"========== {start_method}, exceeding timeout, map ==========")
             with self.subTest('Exceeding timeout, map', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 pool.map(self._f1, self.test_data, worker_init=self._init2, worker_init_timeout=0.1)
 
-            self.logger.debug(f"========== {start_method}, exceeding timeout, imap ==========")
+            print(f"========== {start_method}, exceeding timeout, imap ==========")
             with self.subTest('Exceeding timeout, imap', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 for _ in pool.imap(self._f1, self.test_data, worker_init=self._init2, worker_init_timeout=0.1):
@@ -1324,19 +1415,20 @@ class TimeoutTest(unittest.TestCase):
         """
         Checks if the worker_init timeout is properly triggered
         """
+        print()
         for start_method in TEST_START_METHODS:
 
-            self.logger.debug(f"========== {start_method}, well below timeout ==========")
+            print(f"========== {start_method}, well below timeout ==========")
             with self.subTest('Well below timeout', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool:
                 self.assertListEqual(pool.map(self._f1, self.test_data, task_timeout=100), self.test_data)
 
-            self.logger.debug(f"========== {start_method}, exceeding timeout, map ==========")
+            print(f"========== {start_method}, exceeding timeout, map ==========")
             with self.subTest('Exceeding timeout, map', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 pool.map(self._f2, self.test_data, task_timeout=0.1)
 
-            self.logger.debug(f"========== {start_method}, exceeding timeout, imap ==========")
+            print(f"========== {start_method}, exceeding timeout, imap ==========")
             with self.subTest('Exceeding timeout, imap', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 for _ in pool.imap(self._f2, self.test_data, task_timeout=0.1):
@@ -1346,20 +1438,21 @@ class TimeoutTest(unittest.TestCase):
         """
         Checks if the worker_exit timeout is properly triggered
         """
+        print()
         for start_method in TEST_START_METHODS:
 
-            self.logger.debug(f"========== {start_method}, well below timeout ==========")
+            print(f"========== {start_method}, well below timeout ==========")
             with self.subTest('Well below timeout', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool:
                 self.assertListEqual(pool.map(self._f1, self.test_data, worker_exit=self._exit1,
                                               worker_exit_timeout=100), self.test_data)
 
-            self.logger.debug(f"========== {start_method}, exceeding timeout, map ==========")
+            print(f"========== {start_method}, exceeding timeout, map ==========")
             with self.subTest('Exceeding timeout, map', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 pool.map(self._f1, self.test_data, worker_exit=self._exit2, worker_exit_timeout=0.1)
 
-            self.logger.debug(f"========== {start_method}, exceeding timeout, imap ==========")
+            print(f"========== {start_method}, exceeding timeout, imap ==========")
             with self.subTest('Exceeding timeout, imap', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
                 for _ in pool.imap(self._f1, self.test_data, worker_exit=self._exit2, worker_exit_timeout=0.1):
