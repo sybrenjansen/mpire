@@ -137,6 +137,7 @@ class AbstractWorker:
             t.start()
 
         self.worker_comms.signal_worker_alive(self.worker_id)
+        self.worker_comms.reset_results_received(self.worker_id)
 
         # Set tqdm and dashboard connection details. This is needed for nested pools and in the case forkserver or
         # spawn is used as start method
@@ -605,8 +606,8 @@ def worker_factory(start_method: str, use_dill: bool) -> Type[Union[AbstractWork
         return ThreadingWorker
     elif use_dill:
         if not DILL_INSTALLED:
-            raise ImportError("Can't use dill as the dependencies are not installed. Use `pip install mpire[dill]` to "
-                              "install the required dependencies.")
+            raise ImportError("Can't use dill as the dependency \"multiprocess\" is not installed. Use `pip install "
+                              "mpire[dill]` to install the required dependency")
         elif start_method == 'fork':
             if not FORK_AVAILABLE:
                 raise ValueError("Start method 'fork' is not available")

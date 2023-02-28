@@ -60,10 +60,6 @@ class WorkerComms:
         # Whether or not to inform the child processes to keep order in mind (for the map functions)
         self._keep_order = self.ctx.Event()
 
-        # Worker specific locks. These locks are used to ensure that the main process won't access a worker specific
-        # variable while the worker is using it
-        self._worker_locks = None
-
         # Queue to pass on tasks to child processes. We keep track of which worker completed the last task and which
         # worker is working on what task
         self._task_queues = None
@@ -71,7 +67,9 @@ class WorkerComms:
         self._last_completed_task_worker_id = collections.deque()
         self._worker_working_on_job = None
 
-        # Queue where the child processes can pass on results
+        # Queue where the child processes can pass on results, and counters to keep track of how many results have been
+        # added and received per worker. results_added is a simple list of integers which is only accessed by the worker
+        # itself
         self._results_queue = None
         self._results_added = None
         self._results_received = None
@@ -127,24 +125,20 @@ class WorkerComms:
         multiprocessing.JoinableQueue for both the exception queue and progress bar tasks completed queue, because the
         progress bar handler needs process-aware objects.
         """
-        # Worker locks
-        self._worker_locks = [self.ctx.Lock() for _ in range(self.n_jobs)]
-
         # Task related
         self._task_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
-        self.reset_last_completed_task_info()
-        self._worker_working_on_job = self.ctx.Array('i', self.n_jobs, lock=True)
+        self._worker_working_on_job = [self.ctx.Value('i', 0, lock=True) for _ in range(self.n_jobs)]
 
         # Results related
         self._results_queue = self.ctx.JoinableQueue()
-        self._results_added = self.ctx.Array('i', self.n_jobs, lock=False)
-        self._results_received = self.ctx.Array('i', self.n_jobs, lock=False)
+        self._results_added = [0 for _ in range(self.n_jobs)]
+        self._results_received = [self.ctx.Value('L', 0, lock=True) for _ in range(self.n_jobs)]
 
         # Worker status
-        self._worker_restart_array = self.ctx.Array('b', self.n_jobs, lock=True)
+        self._worker_restart_array = [self.ctx.Value('b', False, lock=True) for _ in range(self.n_jobs)]
         self._workers_dead = [self.ctx.Event() for _ in range(self.n_jobs)]
         [worker_dead.set() for worker_dead in self._workers_dead]
-        self._workers_time_task_started = self.ctx.Array('d', self.n_jobs * 3, lock=False)
+        self._workers_time_task_started = [self.ctx.Value('d', 0.0, lock=True) for _ in range(self.n_jobs * 3)]
 
         # Exception related
         self._exception_thrown.clear()
@@ -152,19 +146,24 @@ class WorkerComms:
         self._kill_signal_received.clear()
 
         # Progress bar related
-        self._tasks_completed_array = self.ctx.Array('L', self.n_jobs, lock=False)  # ULong (should be enough)
+        self._tasks_completed_array = [self.ctx.Value('L', 0, lock=True) for _ in range(self.n_jobs)]
         self._progress_bar_last_updated = datetime.now()
         self._progress_bar_shutdown = self.ctx.Event()
         self._progress_bar_complete = self.ctx.Event()
 
+        self.reset_progress()
         self._initialized = True
 
-    def reset_last_completed_task_info(self) -> None:
+    def reset_progress(self) -> None:
         """
         Resets the task_idx and last_completed_task_worker_id
         """
         self._task_idx = 0
         self._last_completed_task_worker_id.clear()
+        for task_completed in self._tasks_completed_array:
+            task_completed.value = 0
+        self.clear_progress_bar_shutdown()
+        self.clear_progress_bar_complete()
 
     ################
     # Progress bar
@@ -189,8 +188,7 @@ class WorkerComms:
         # Check if we need to update
         now = datetime.now()
         if force_update or (now - progress_bar_last_updated).total_seconds() > self.progress_bar_update_interval:
-            with self._worker_locks[worker_id]:
-                self._tasks_completed_array[worker_id] += progress_bar_n_tasks_completed
+            self._tasks_completed_array[worker_id].value += progress_bar_n_tasks_completed
             progress_bar_last_updated = now
             progress_bar_n_tasks_completed = 0
 
@@ -213,8 +211,7 @@ class WorkerComms:
                not self._progress_bar_shutdown.is_set()):
             n_tasks_completed = 0
             for worker_id in range(self.n_jobs):
-                with self._worker_locks[worker_id]:
-                    n_tasks_completed += self._tasks_completed_array[worker_id]
+                n_tasks_completed += self._tasks_completed_array[worker_id].value
             self._progress_bar_last_updated = datetime.now()
             return n_tasks_completed
 
@@ -226,11 +223,23 @@ class WorkerComms:
         """
         self._progress_bar_shutdown.set()
 
+    def clear_progress_bar_shutdown(self) -> None:
+        """
+        Clears the progress bar shutdown signal
+        """
+        self._progress_bar_shutdown.clear()
+
     def signal_progress_bar_complete(self) -> None:
         """
         Signal that the progress bar is complete
         """
         self._progress_bar_complete.set()
+
+    def clear_progress_bar_complete(self) -> None:
+        """
+        Clear that the progress bar is complete
+        """
+        self._progress_bar_complete.clear()
 
     def wait_until_progress_bar_is_complete(self) -> None:
         """
@@ -342,7 +351,7 @@ class WorkerComms:
         :param worker_id: Worker ID
         :param job_id: Job ID
         """
-        self._worker_working_on_job[worker_id] = job_id
+        self._worker_working_on_job[worker_id].value = job_id
 
     def get_worker_working_on_job(self, worker_id: int) -> int:
         """
@@ -351,16 +360,16 @@ class WorkerComms:
         :param worker_id: Worker ID
         :return: Job ID
         """
-        return self._worker_working_on_job[worker_id]
+        return self._worker_working_on_job[worker_id].value
 
-    def add_results(self, worker_id: int, results: List[Tuple[Optional[int], bool, Any]]) -> None:
+    def add_results(self, worker_id: Optional[int], results: List[Tuple[Optional[int], bool, Any]]) -> None:
         """
         Add results to the results queue
 
         :param worker_id: Worker ID
         :param results: A list of tuples of job ID, success bool, and output from the worker
         """
-        with self._worker_locks[worker_id]:
+        if worker_id is not None:
             self._results_added[worker_id] += 1
         self._results_queue.put((worker_id, results))
 
@@ -380,14 +389,21 @@ class WorkerComms:
                 worker_id, results = self._results_queue.get(block=block, timeout=timeout)
                 self._results_queue.task_done()
                 if worker_id is not None:
-                    with self._worker_locks[worker_id]:
-                        self._results_received[worker_id] += 1
-                self._last_completed_task_worker_id.append(worker_id)
+                    self._results_received[worker_id].value += 1
+                    self._last_completed_task_worker_id.append(worker_id)
             except queue.Empty as e:
                 queue_empty_error = e
         if queue_empty_error is not None:
             raise queue_empty_error
         return results
+
+    def reset_results_received(self, worker_id: int) -> None:
+        """
+        Reset the number of results received from a worker
+
+        :param worker_id: Worker ID
+        """
+        self._results_received[worker_id].value = 0
 
     def wait_for_all_results_received(self, worker_id: int) -> None:
         """
@@ -396,9 +412,8 @@ class WorkerComms:
         :param worker_id: Worker ID
         """
         while True:
-            with self._worker_locks[worker_id]:
-                if self._results_received[worker_id] == self._results_added[worker_id]:
-                    break
+            if self._results_received[worker_id].value == self._results_added[worker_id]:
+                break
             time.sleep(0.01)
 
     def add_new_map_params(self, map_params: WorkerMapParams) -> None:
@@ -472,7 +487,7 @@ class WorkerComms:
         """
         'Tell' the apply results listener their job is done.
         """
-        self.add_results(0, [(None, True, POISON_PILL)])
+        self.add_results(None, [(None, True, POISON_PILL)])
 
     def insert_non_lethal_poison_pill(self) -> None:
         """
@@ -488,7 +503,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._worker_restart_array[worker_id] = True
+        self._worker_restart_array[worker_id].value = True
         with self._worker_restart_condition:
             self._worker_restart_condition.notify()
 
@@ -508,7 +523,7 @@ class WorkerComms:
         :return: List of worker IDs
         """
         def _get_worker_restarts():
-            return [worker_id for worker_id, restart in enumerate(self._worker_restart_array) if restart]
+            return [worker_id for worker_id, restart in enumerate(self._worker_restart_array) if restart.value]
 
         with self._worker_restart_condition:
 
@@ -526,7 +541,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._worker_restart_array[worker_id] = False
+        self._worker_restart_array[worker_id].value = False
 
     def signal_worker_alive(self, worker_id: int) -> None:
         """
@@ -684,8 +699,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        with self._worker_locks[worker_id]:
-            self._workers_time_task_started[worker_id * 3 + 0] = datetime.now().timestamp()
+        self._workers_time_task_started[worker_id * 3 + 0].value = datetime.now().timestamp()
 
     def signal_worker_task_started(self, worker_id: int) -> None:
         """
@@ -693,8 +707,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        with self._worker_locks[worker_id]:
-            self._workers_time_task_started[worker_id * 3 + 1] = datetime.now().timestamp()
+        self._workers_time_task_started[worker_id * 3 + 1].value = datetime.now().timestamp()
 
     def signal_worker_exit_started(self, worker_id: int) -> None:
         """
@@ -702,8 +715,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        with self._worker_locks[worker_id]:
-            self._workers_time_task_started[worker_id * 3 + 2] = datetime.now().timestamp()
+        self._workers_time_task_started[worker_id * 3 + 2].value = datetime.now().timestamp()
 
     def signal_worker_init_completed(self, worker_id: int) -> None:
         """
@@ -711,8 +723,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        with self._worker_locks[worker_id]:
-            self._workers_time_task_started[worker_id * 3 + 0] = 0
+        self._workers_time_task_started[worker_id * 3 + 0].value = 0
 
     def signal_worker_task_completed(self, worker_id: int) -> None:
         """
@@ -720,8 +731,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        with self._worker_locks[worker_id]:
-            self._workers_time_task_started[worker_id * 3 + 1] = 0
+        self._workers_time_task_started[worker_id * 3 + 1].value = 0
 
     def signal_worker_exit_completed(self, worker_id: int) -> None:
         """
@@ -729,8 +739,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        with self._worker_locks[worker_id]:
-            self._workers_time_task_started[worker_id * 3 + 2] = 0
+        self._workers_time_task_started[worker_id * 3 + 2].value = 0
 
     def has_worker_init_timed_out(self, worker_id: int, timeout: float) -> bool:
         """
@@ -740,8 +749,7 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        with self._worker_locks[worker_id]:
-            started_time = self._workers_time_task_started[worker_id * 3 + 0]
+        started_time = self._workers_time_task_started[worker_id * 3 + 0].value
         return self._has_worker_timed_out(started_time, timeout)
 
     def has_worker_task_timed_out(self, worker_id: int, timeout: float) -> bool:
@@ -752,8 +760,7 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        with self._worker_locks[worker_id]:
-            started_time = self._workers_time_task_started[worker_id * 3 + 1]
+        started_time = self._workers_time_task_started[worker_id * 3 + 1].value
         return self._has_worker_timed_out(started_time, timeout)
 
     def has_worker_exit_timed_out(self, worker_id: int, timeout: float) -> bool:
@@ -764,8 +771,7 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        with self._worker_locks[worker_id]:
-            started_time = self._workers_time_task_started[worker_id * 3 + 2]
+        started_time = self._workers_time_task_started[worker_id * 3 + 2].value
         return self._has_worker_timed_out(started_time, timeout)
 
     @staticmethod

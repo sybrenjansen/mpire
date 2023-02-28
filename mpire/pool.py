@@ -748,11 +748,12 @@ class WorkerPool:
                 tqdm.set_lock(original_tqdm_lock)
                 TqdmManager.stop_manager()
 
-            self._progress_bar_handler = None
-            self._map_running = False
-
             if imap_iterator is not None:
                 imap_iterator.remove_from_cache()
+
+            self._progress_bar_handler = None
+            self._map_running = False
+            self._worker_comms.reset_progress()
 
         # Log insights
         if self.pool_params.enable_insights:
@@ -888,11 +889,9 @@ class WorkerPool:
         :param keep_alive: Whether to keep the workers alive
         """
         if self._workers:
-            # All tasks have been processed and results are in. Insert (non-lethal) poison pill. When keep_alive is
-            # False, also signal the handler threads to stop
+            # All tasks have been processed and results are in. Insert (non-lethal) poison pill
             if keep_alive:
                 self._worker_comms.insert_non_lethal_poison_pill()
-                self._worker_comms.reset_last_completed_task_info()
             else:
                 self._worker_comms.insert_poison_pill()
 
