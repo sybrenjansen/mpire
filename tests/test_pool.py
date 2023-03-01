@@ -236,6 +236,49 @@ class MapTest(unittest.TestCase):
                 self.assertIsInstance(results_list, types.GeneratorType)
                 self.assertEqual(self.test_desired_output, sorted(results_list, key=lambda tup: tup[0]))
 
+    def test_mixing_map_calls(self):
+        """
+        When using the same pool, mixing map calls should raise
+        """
+        with WorkerPool(2) as pool:
+            imap_results = pool.imap(square, self.test_data)
+            next(imap_results)  # Actually start the pool
+            with self.assertRaises(RuntimeError):
+                pool.map(square, self.test_data)
+
+        with WorkerPool(2) as pool:
+            imap_results = pool.imap_unordered(square, self.test_data)
+            next(imap_results)  # Actually start the pool
+            with self.assertRaises(RuntimeError):
+                next(pool.imap(square, self.test_data))
+
+    def test_terminate(self):
+        """
+        When a lazy map call is running and the pool is terminated, exhausting the results should raise
+        """
+        with self.subTest("calling terminate() explicitly"), WorkerPool(1) as pool:
+            imap_results = pool.imap(square, self.test_data)
+            next(imap_results)  # Actually start the pool
+            pool.terminate()
+            with self.assertRaises(RuntimeError):
+                list(imap_results)
+
+        with self.subTest("calling terminate() implicitly"):
+            with WorkerPool(1) as pool:
+                imap_results = pool.imap(square, self.test_data)
+                next(imap_results)  # Actually start the pool
+            with self.assertRaises(RuntimeError):
+                list(imap_results)
+
+        # Before, this could cause a deadlock once all tests were done
+        print()
+        with self.subTest("calling terminate() implicitly, with progress bar"):
+            with WorkerPool(1) as pool:
+                imap_results = pool.imap(square, self.test_data, progress_bar=True)
+                next(imap_results)  # Actually start the pool
+            with self.assertRaises(RuntimeError):
+                list(imap_results)
+
 
 class PoolInThreadTest(unittest.TestCase):
 
@@ -311,16 +354,6 @@ class ApplyTest(unittest.TestCase):
 
 
 class ApplyAsyncTest(unittest.TestCase):
-
-    def test_map_running(self):
-        """
-        Test that apply_async raises when a map function is running
-        """
-        with WorkerPool(2) as pool:
-            results = pool.imap(self._square, [1, 2, 3])
-            next(results)  # Start the map function
-            with self.assertRaises(RuntimeError):
-                pool.apply_async(self._square, (1,))
 
     def test_result(self):
         """
@@ -1277,6 +1310,12 @@ class ExceptionTest(unittest.TestCase):
                 with self.subTest(function='square_raises', map='imap'), self.assertRaises(ValueError):
                     list(pool.imap_unordered(self._square_raises, self.test_data, progress_bar=progress_bar))
 
+                if not progress_bar:
+                    # Should work for apply like functions
+                    print("----- square_raises, apply -----")
+                    with self.subTest(function='square_raises', func='apply'), self.assertRaises(ValueError):
+                        pool.apply(self._square_raises, self.test_data[0])
+
                 # Should work for map like functions
                 print("----- square_raises_on_idx, map -----")
                 with self.subTest(function='square_raises_on_idx', map='map'), self.assertRaises(ValueError):
@@ -1403,13 +1442,18 @@ class TimeoutTest(unittest.TestCase):
             print(f"========== {start_method}, exceeding timeout, map ==========")
             with self.subTest('Exceeding timeout, map', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
-                pool.map(self._f1, self.test_data, worker_init=self._init2, worker_init_timeout=0.1)
+                pool.map(self._f1, self.test_data, worker_init=self._init2, worker_init_timeout=0.01)
 
             print(f"========== {start_method}, exceeding timeout, imap ==========")
             with self.subTest('Exceeding timeout, imap', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
-                for _ in pool.imap(self._f1, self.test_data, worker_init=self._init2, worker_init_timeout=0.1):
+                for _ in pool.imap(self._f1, self.test_data, worker_init=self._init2, worker_init_timeout=0.01):
                     pass
+
+            print(f"========== {start_method}, exceeding timeout, apply ==========")
+            with self.subTest('Exceeding timeout, apply', start_method=start_method), \
+                    WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
+                pool.apply(self._f1, self.test_data[0], worker_init=self._init2, worker_init_timeout=0.01)
 
     def test_worker_task_timeout(self):
         """
@@ -1426,13 +1470,18 @@ class TimeoutTest(unittest.TestCase):
             print(f"========== {start_method}, exceeding timeout, map ==========")
             with self.subTest('Exceeding timeout, map', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
-                pool.map(self._f2, self.test_data, task_timeout=0.1)
+                pool.map(self._f2, self.test_data, task_timeout=0.01)
 
             print(f"========== {start_method}, exceeding timeout, imap ==========")
             with self.subTest('Exceeding timeout, imap', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
-                for _ in pool.imap(self._f2, self.test_data, task_timeout=0.1):
+                for _ in pool.imap(self._f2, self.test_data, task_timeout=0.01):
                     pass
+
+            print(f"========== {start_method}, exceeding timeout, apply ==========")
+            with self.subTest('Exceeding timeout, apply', start_method=start_method), \
+                    WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
+                pool.apply(self._f2, self.test_data[0], task_timeout=0.01)
 
     def test_worker_exit_timeout(self):
         """
@@ -1450,13 +1499,19 @@ class TimeoutTest(unittest.TestCase):
             print(f"========== {start_method}, exceeding timeout, map ==========")
             with self.subTest('Exceeding timeout, map', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
-                pool.map(self._f1, self.test_data, worker_exit=self._exit2, worker_exit_timeout=0.1)
+                pool.map(self._f1, self.test_data, worker_exit=self._exit2, worker_exit_timeout=0.01)
 
             print(f"========== {start_method}, exceeding timeout, imap ==========")
             with self.subTest('Exceeding timeout, imap', start_method=start_method), \
                     WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
-                for _ in pool.imap(self._f1, self.test_data, worker_exit=self._exit2, worker_exit_timeout=0.1):
+                for _ in pool.imap(self._f1, self.test_data, worker_exit=self._exit2, worker_exit_timeout=0.01):
                     pass
+
+            print(f"========== {start_method}, exceeding timeout, apply ==========")
+            with self.subTest('Exceeding timeout, apply', start_method=start_method), \
+                    WorkerPool(2, start_method=start_method) as pool, self.assertRaises(TimeoutError):
+                pool.apply(self._f1, self.test_data[0], worker_exit=self._exit2, worker_exit_timeout=0.01)
+                pool.stop_and_join()
 
     @staticmethod
     def _init1():

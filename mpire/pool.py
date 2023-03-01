@@ -6,7 +6,7 @@ import signal
 import threading
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Sized, Tuple, Union
+from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Sized, Union
 
 try:
     import numpy as np
@@ -15,8 +15,8 @@ except ImportError:
     np = None
     NUMPY_INSTALLED = False
 
-from mpire.async_result import (AsyncInitResult, AsyncResult, AsyncResultType, UnorderedAsyncExitResultIterator,
-                                UnorderedAsyncResultIterator)
+from mpire.async_result import (AsyncResult, AsyncResultType, AsyncResultWithExceptionGetter,
+                                UnorderedAsyncExitResultIterator, UnorderedAsyncResultIterator)
 from mpire.comms import EXIT_FUNC, INIT_FUNC, MAIN_PROCESS, POISON_PILL, WorkerComms
 from mpire.context import DEFAULT_START_METHOD, RUNNING_WINDOWS
 from mpire.dashboard.connection_utils import get_dashboard_connection_details
@@ -31,8 +31,6 @@ from mpire.worker import MP_CONTEXTS, worker_factory
 
 logger = logging.getLogger(__name__)
 
-
-# TODO: docs
 
 class WorkerPool:
     """
@@ -98,7 +96,8 @@ class WorkerPool:
 
         # Cache for storing intermediate results. Add result objects for the worker_init and worker_exit functions
         self._cache: Dict[int, AsyncResultType] = {}
-        AsyncInitResult(self._cache)
+        AsyncResultWithExceptionGetter(self._cache, MAIN_PROCESS)
+        AsyncResultWithExceptionGetter(self._cache, INIT_FUNC)
         UnorderedAsyncExitResultIterator(self._cache)
 
         # Container of the child processes and corresponding communication objects
@@ -182,6 +181,10 @@ class WorkerPool:
         """
         Spawns the workers and starts them so they're ready to start reading from the tasks queue.
         """
+        self._cache[MAIN_PROCESS].reset()
+        self._cache[INIT_FUNC].reset()
+        self._cache[EXIT_FUNC].reset()
+
         # Init communication primitives
         self._worker_comms.init_comms()
         self._worker_insights.reset_insights(self.pool_params.enable_insights)
@@ -237,12 +240,18 @@ class WorkerPool:
                 if isinstance(result, str) and result == POISON_PILL:
                     return
 
-                if success:
-                    self._cache[job_id]._set(True, result)
-                else:
-                    err, traceback_err = populate_exception(*result)
-                    err.__cause__ = traceback_err
-                    self._cache[job_id]._set(False, err)
+                try:
+                    if success:
+                        self._cache[job_id]._set(True, result)
+                    else:
+                        err, traceback_err = populate_exception(*result)
+                        err.__cause__ = traceback_err
+                        self._cache[job_id]._set(False, err)
+                except KeyError:
+                    # This can happen if the job has already been removed from the cache, which can occur if the job
+                    # has been cancelled, or if the job has been removed from the cache because the timeout has
+                    # expired
+                    pass
 
     def _restart_handler(self) -> None:
         """
@@ -338,8 +347,7 @@ class WorkerPool:
         """
         Enable the use of the ``with`` statement. Gracefully terminates workers, if there are any
         """
-        if self._workers:
-            self.terminate()
+        self.terminate()
 
     def map(self, func: Callable, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int] = None,
             max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
@@ -659,9 +667,11 @@ class WorkerPool:
 
         imap_iterator = None
         try:
+            if self._map_running:
+                self._worker_comms.signal_exception_thrown(MAIN_PROCESS)
+                self._cache[MAIN_PROCESS]._set(False, RuntimeError("Cannot call 'map' while another 'map' is running"))
+                self._handle_exception()
             self._map_running = True
-            self._cache[INIT_FUNC].reset()
-            self._cache[EXIT_FUNC].reset()
 
             # Start tqdm manager if a progress bar is desired. Will only start one when not already started. This has to
             # be done before starting the workers in case nested pools are used
@@ -759,7 +769,7 @@ class WorkerPool:
         if self.pool_params.enable_insights:
             logger.debug(self._worker_insights.get_insights_string())
 
-    def apply(self, func: Callable, args: Tuple = (), kwargs: Dict = None, callback: Optional[Callable] = None,
+    def apply(self, func: Callable, args: Any = (), kwargs: Dict = None, callback: Optional[Callable] = None,
               error_callback: Optional[Callable] = None, worker_init: Optional[Callable] = None,
               worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
               worker_init_timeout: Optional[float] = None, worker_exit_timeout: Optional[float] = None) -> Any:
@@ -796,7 +806,7 @@ class WorkerPool:
         return self.apply_async(func, args, kwargs, callback, error_callback, worker_init, worker_exit,
                                 task_timeout, worker_init_timeout, worker_exit_timeout).get()
 
-    def apply_async(self, func: Callable, args: Tuple = (), kwargs: Dict = None, callback: Optional[Callable] = None,
+    def apply_async(self, func: Callable, args: Any = (), kwargs: Dict = None, callback: Optional[Callable] = None,
                     error_callback: Optional[Callable] = None, worker_init: Optional[Callable] = None,
                     worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
                     worker_init_timeout: Optional[float] = None,
@@ -831,10 +841,6 @@ class WorkerPool:
             MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
         :return: Result of the function ``func`` applied to the task
         """
-        # We can't use the pool if a map is running
-        if self._map_running:
-            raise RuntimeError("Cannot apply a function while a map function is running")
-
         # Check if the pool has been started
         if not self._workers:
             self.map_params = WorkerMapParams(func, worker_init, worker_exit, None, False, task_timeout,
@@ -864,10 +870,9 @@ class WorkerPool:
         # in the timeout handler)
         if self._progress_bar_handler is not None:
             self._progress_bar_handler.set_exception(cause or exception)
-
-        # Join exception queue and progress bar, and terminate workers
-        if self._progress_bar_handler is not None and self._progress_bar_handler.thread is not None:
-            self._progress_bar_handler.thread.join()
+            if self._progress_bar_handler.thread is not None:
+                self._progress_bar_handler.thread.join()
+                self._progress_bar_handler = None
         self.terminate()
 
         # Clear keep order event so we can safely reuse the WorkerPool and use (i)map_unordered after an (i)map call
@@ -879,12 +884,10 @@ class WorkerPool:
     def stop_and_join(self, keep_alive: bool = False) -> None:
         """
         When ``keep_alive=False``: inserts a poison pill, grabs the exit results, waits until the tasks/results queues
-        are done, and wait until all workers are finished.
+        are done, and waits until all workers are finished.
         When ``keep_alive=True``: inserts a non-lethal poison pill, and waits until the tasks/results queues are done.
 
-        Note that the results queue should be drained first before joining the workers, otherwise we can get a deadlock.
-        For more information, see the warnings at:
-        https://docs.python.org/3.4/library/multiprocessing.html#pipes-and-queues.
+        ``join``and ``stop_and_join`` are aliases.
 
         :param keep_alive: Whether to keep the workers alive
         """
@@ -971,15 +974,26 @@ class WorkerPool:
             if not keep_alive:
                 self._worker_comms.join_results_queues(keep_alive=False)
 
+    join = stop_and_join
+
     def terminate(self) -> None:
         """
         Tries to do a graceful shutdown of the workers, by interrupting them. In the case processes deadlock it will
         send a sigkill.
         """
+        if not self._workers:
+            return
+
         # Set exception thrown so workers know to stop fetching new tasks
         if not self._worker_comms.exception_thrown():
             self._worker_comms.signal_exception_thrown(MAIN_PROCESS)
+            self._cache[MAIN_PROCESS]._set(False, RuntimeError("Pool was terminated"))
         self._handler_threads_stop_event.set()
+
+        # If this function is called from handle_exception, the progress bar is already terminated. If not, we need to
+        # terminate it here
+        if self._progress_bar_handler is not None:
+            self._progress_bar_handler.set_exception(RuntimeError("Pool was terminated"))
 
         # When we're working with threads we have to wait for them to join. We can't kill threads in Python
         if self.pool_params.start_method == 'threading':
@@ -1024,10 +1038,9 @@ class WorkerPool:
         # Drain and join the queues
         self._worker_comms.drain_queues()
 
-        # Reset workers and cache. Keep only the init and exit results objects
+        # Reset workers and cache. Keep only the main process, init and exit results objects
         self._workers = []
-        init_result, exit_results = self._cache[INIT_FUNC], self._cache[EXIT_FUNC]
-        self._cache = {INIT_FUNC: init_result, EXIT_FUNC: exit_results}
+        self._cache = {key: self._cache[key] for key in (MAIN_PROCESS, INIT_FUNC, EXIT_FUNC)}
 
     def _terminate_worker(self, worker_id: int, worker_process: Optional[mp.context.Process],
                           dont_wait_event: threading.Event) -> None:

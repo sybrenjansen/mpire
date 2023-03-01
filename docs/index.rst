@@ -1,17 +1,18 @@
 Welcome to the MPIRE documentation!
 ===================================
 
-MPIRE, short for MultiProcessing Is Really Easy, is a Python package for multiprocessing, but faster and more
-user-friendly than the default multiprocessing package. It combines the convenient map like functions of
-``multiprocessing.Pool`` with the benefits of using copy-on-write shared objects of ``multiprocessing.Process``
-(not supported for Windows), together with easy-to-use worker state, worker insights, and progress bar functionality.
+MPIRE, short for MultiProcessing Is Really Easy, is a Python package for multiprocessing. MPIRE is faster in
+most scenarios, packs more features, and is generally more user-friendly than the default multiprocessing package. It
+combines the convenient map like functions of ``multiprocessing.Pool`` with the benefits of using copy-on-write shared
+objects of ``multiprocessing.Process``, together with easy-to-use worker state, worker insights, worker init and exit
+functions, timeouts, and progress bar functionality.
 
 Features
 --------
 
 - Faster execution than other multiprocessing libraries. See benchmarks_.
 - Intuitive, Pythonic syntax
-- Multiprocessing with ``map``/``map_unordered``/``imap``/``imap_unordered`` functions
+- Multiprocessing with ``map``/``map_unordered``/``imap``/``imap_unordered``/``apply``/``apply_async`` functions
 - Easy use of copy-on-write shared objects with a pool of workers (copy-on-write is only available for start method
   ``fork``, so it's not supported on Windows)
 - Each worker can have its own state and with convenient worker init and exit functionality this state can be easily

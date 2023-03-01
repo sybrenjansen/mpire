@@ -118,7 +118,7 @@ more information.
 Worker insights
 ---------------
 
-When you're multiprocessing setup isn't performing as you want it to and you have no clue what's causing it, there's the
+When your multiprocessing setup isn't performing as you want it to and you have no clue what's causing it, there's the
 worker insights functionality. This will give you some insight in your setup, but it will not profile the function
 you're running (there are other libraries for that). Instead, it profiles the worker start up time, waiting time and
 working time. When worker init and exit functions are provided it will time those as well.

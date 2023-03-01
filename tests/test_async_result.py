@@ -1,13 +1,11 @@
 import itertools
 import queue
-import threading
-import time
 import unittest
 from unittest.mock import patch, Mock
 
-from mpire.async_result import AsyncResult, UnorderedAsyncResultIterator, AsyncInitResult, \
-    UnorderedAsyncExitResultIterator
-from mpire.comms import INIT_FUNC, EXIT_FUNC
+from mpire.async_result import (AsyncResult, AsyncResultWithExceptionGetter, UnorderedAsyncExitResultIterator,
+                                UnorderedAsyncResultIterator)
+from mpire.comms import INIT_FUNC, EXIT_FUNC, MAIN_PROCESS
 
 
 class AsyncResultTest(unittest.TestCase):
@@ -305,7 +303,7 @@ class UnorderedAsyncResultIteratorTest(unittest.TestCase):
         self.assertNotIn(r.job_id, self.cache)
 
 
-class AsyncInitResultTest(unittest.TestCase):
+class AsyncResultWithExceptionGetterTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.cache = {}
@@ -314,15 +312,19 @@ class AsyncInitResultTest(unittest.TestCase):
         """
         Test that the result is initialized correctly
         """
-        r = AsyncInitResult(self.cache)
+        r = AsyncResultWithExceptionGetter(self.cache, INIT_FUNC)
         self.assertEqual(r.job_id, INIT_FUNC)
+        self.assertFalse(r._delete_from_cache)
+
+        r = AsyncResultWithExceptionGetter(self.cache, MAIN_PROCESS)
+        self.assertEqual(r.job_id, MAIN_PROCESS)
         self.assertFalse(r._delete_from_cache)
 
     def test_get_exception(self):
         """
         Test that the get_exception method returns the correct exception
         """
-        r = AsyncInitResult(self.cache)
+        r = AsyncResultWithExceptionGetter(self.cache, INIT_FUNC)
         value_error = ValueError('test')
         r._set(False, value_error)
         self.assertEqual(r.get_exception(), value_error)
@@ -332,7 +334,7 @@ class AsyncInitResultTest(unittest.TestCase):
         Test that the reset method resets the result
         """
         value_error = ValueError('test')
-        r = AsyncInitResult(self.cache)
+        r = AsyncResultWithExceptionGetter(self.cache, INIT_FUNC)
         r._set(False, value_error)
         self.assertFalse(r._success)
         self.assertEqual(r._value, value_error)

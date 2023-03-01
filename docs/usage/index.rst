@@ -6,4 +6,5 @@ Usage
 
     workerpool/index
     map/index
+    apply
     dashboard

@@ -71,11 +71,13 @@ class AbstractWorker:
         self.worker_state = {}
 
         # Local variables needed for each worker
+        self.additional_args = None
         self.progress_bar_last_updated = datetime.now()
         self.progress_bar_n_tasks_completed = 0
         self.max_task_duration_last_updated = datetime.now()
         self.max_task_duration_list = self.worker_insights.get_max_task_duration_list(self.worker_id)
         self.last_job_id = None
+        self.init_func_completed = False
 
         # Exception handling variables
         if self.pool_params.start_method == 'threading':
@@ -130,80 +132,60 @@ class AbstractWorker:
         Continuously asks the tasks queue for new task arguments. When not receiving a poisonous pill or when the max
         life span is not yet reached it will execute the new task and put the results in the results queue.
         """
-        # Enable graceful shutdown for Windows. Note that we can't kill threads in Python
-        if RUNNING_WINDOWS and self.pool_params.start_method != "threading" and current_thread() == main_thread():
-            signal.signal(signal.SIGINT, self._exit_gracefully)
-            t = Thread(target=self._exit_gracefully_windows)
-            t.start()
-
-        self.worker_comms.signal_worker_alive(self.worker_id)
-        self.worker_comms.reset_results_received(self.worker_id)
-
-        # Set tqdm and dashboard connection details. This is needed for nested pools and in the case forkserver or
-        # spawn is used as start method
-        TqdmManager.set_connection_details(self.tqdm_connection_details)
-        set_dashboard_connection(self.dashboard_connection_details, auto_connect=False)
-
         n_tasks_executed = 0
         try:
+            # Enable graceful shutdown for Windows. Note that we can't kill threads in Python
+            if RUNNING_WINDOWS and self.pool_params.start_method != "threading" and current_thread() == main_thread():
+                signal.signal(signal.SIGINT, self._exit_gracefully)
+                t = Thread(target=self._exit_gracefully_windows)
+                t.start()
+
+            self.worker_comms.signal_worker_alive(self.worker_id)
+            self.worker_comms.reset_results_received(self.worker_id)
+
+            # Set tqdm and dashboard connection details. This is needed for nested pools and in the case forkserver or
+            # spawn is used as start method
+            TqdmManager.set_connection_details(self.tqdm_connection_details)
+            set_dashboard_connection(self.dashboard_connection_details, auto_connect=False)
+
             # Store how long it took to start up
             self.worker_insights.update_start_up_time(self.worker_id, self.start_time)
 
-            # Obtain additional args to pass to the function
-            additional_args = []
-            if self.pool_params.pass_worker_id:
-                additional_args.append(self.worker_id)
-            if self.pool_params.shared_objects is not None:
-                additional_args.append(self.pool_params.shared_objects)
-            if self.pool_params.use_worker_state:
-                additional_args.append(self.worker_state)
-
-            # Run initialization function. If it returns True it means an exception occurred and we should exit
-            if self.map_params.worker_init and self._run_init_func(additional_args):
-                return
+            # Gather and set additional args to pass to the function
+            self._set_additional_args()
 
             # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
             # with idx support which deals with the provided idx variable.
-            func = self._get_func(self.map_params.func, additional_args)
+            func = self._get_func(self.map_params.func)
 
             while self.map_params.worker_lifespan is None or n_tasks_executed < self.map_params.worker_lifespan:
 
                 # Obtain new chunk of jobs
                 with TimeIt(self.worker_insights.worker_waiting_time, self.worker_id):
                     next_chunked_args = self.worker_comms.get_task(self.worker_id)
+                    apply_func = None
                     is_apply_func = False
 
-                # Force update task insights and progress bar when we got a (non-lethal) poison pill. At this point, we
-                # know for sure that all results have been processed. In case of a lethal pill we additionally run the
-                # worker exit function, wait for all the exit results to be obtained, wait for the progress bar to be
-                # done, and stop. Otherwise, we simply continue
+                # Handle poison pill
                 if next_chunked_args == POISON_PILL or next_chunked_args == NON_LETHAL_POISON_PILL:
-                    self._update_task_insights(force_update=True)
-                    self._update_progress_bar(force_update=True)
-                    self.worker_comms.task_done(self.worker_id)
-                    if next_chunked_args == POISON_PILL:
-                        if self.map_params.worker_exit:
-                            self._run_exit_func(additional_args)
-                        if self.map_params.progress_bar:
-                            self.worker_comms.wait_until_progress_bar_is_complete()
+                    lethal = next_chunked_args == POISON_PILL
+                    self._handle_poison_pill(lethal, n_tasks_executed)
+                    if lethal:
                         return
-                    else:
-                        continue
+                    continue
 
                 # Update the map parameters of this function when new parameters are provided
                 elif next_chunked_args == NEW_MAP_PARAMS_PILL:
-                    self.worker_comms.task_done(self.worker_id)
-                    self.map_params = self.worker_comms.get_task(self.worker_id)
-                    func = self._get_func(self.map_params.func, additional_args)
-                    self.worker_comms.task_done(self.worker_id)
+                    func = self._handle_new_map_params()
+                    if func is None:
+                        return
                     continue
 
                 # When an apply pill is received, we simply execute the function and put the result in the results queue
                 elif next_chunked_args == APPLY_PILL:
-                    self.worker_comms.task_done(self.worker_id)
-                    job_id, (apply_func, args) = self.worker_comms.get_task(self.worker_id)
-                    func = self._get_func(apply_func, additional_args)
-                    next_chunked_args = job_id, (args,)
+                    apply_func, next_chunked_args = self._handle_apply_pill()
+                    if apply_func is None:
+                        return
                     is_apply_func = True
 
                 # When we recieved None this means we need to stop because of an exception in the main process
@@ -212,21 +194,26 @@ class AbstractWorker:
 
                 # Execute jobs in this chunk
                 try:
-                    results = []
                     job_id, next_chunked_args = next_chunked_args
-                    if self.last_job_id != job_id:
-                        self.worker_comms.signal_worker_working_on_job(self.worker_id, job_id)
-                        self.last_job_id = job_id
+
+                    # Run initialization function. If it returns True it means an exception occurred and we should exit.
+                    # This is only run if the init function hasn't been run yet.
+                    if self.map_params.worker_init and self._run_init_func(is_apply_func, job_id):
+                        return
+
+                    results = []
                     for args in next_chunked_args:
 
                         # Try to run this function and save results
-                        results_part, success_part, should_shut_down = self._run_func(func, job_id, args, is_apply_func)
+                        results_part, success, should_shut_down = self._run_func(apply_func if is_apply_func else func,
+                                                                                 job_id, args, is_apply_func)
                         if should_shut_down:
                             return
-                        results.append((job_id, success_part, results_part))
+                        results.append((job_id, success, results_part))
 
                         # Update progress bar info
-                        self._update_progress_bar()
+                        if not is_apply_func:
+                            self._update_progress_bar()
 
                     # Send results back to main process
                     self.worker_comms.add_results(self.worker_id, results)
@@ -242,8 +229,9 @@ class AbstractWorker:
             # Max lifespan reached
             self._update_task_insights(force_update=True)
             self._update_progress_bar(force_update=True)
-            if self.map_params.worker_exit and self._run_exit_func(additional_args):
-                return
+            if self.map_params.worker_exit:
+                if self._run_exit_func():
+                    return
 
         finally:
             # Wait until all results have been received, otherwise the main process might deadlock
@@ -256,41 +244,123 @@ class AbstractWorker:
 
             self.worker_comms.signal_worker_dead(self.worker_id)
 
-    def _get_func(self, func: Callable, additional_args: List) -> Callable:
+    def _set_additional_args(self) -> None:
+        """
+        Gather additional args to pass to the function (worker ID, shared objects, worker state)
+        """
+        self.additional_args = []
+        if self.pool_params.pass_worker_id:
+            self.additional_args.append(self.worker_id)
+        if self.pool_params.shared_objects is not None:
+            self.additional_args.append(self.pool_params.shared_objects)
+        if self.pool_params.use_worker_state:
+            self.additional_args.append(self.worker_state)
+
+    def _get_func(self, func: Callable, is_apply_func: bool = False) -> Callable:
         """
         Determine what function to call. If we have to keep in mind the order (for map) we use the helper function with
-        idx support which deals with the provided idx variable.
+        idx support which deals with the provided idx variable. However, if we are dealing with an apply function, we
+        ignore this as it doesn't matter.
 
-        :param additional_args: Additional args list
+        :param func: Function to call
+        :param is_apply_func: Whether this is an apply function
         :return: Function to call
         """
-        helper_func = self._helper_func_with_idx if self.worker_comms.keep_order() else self._helper_func
-        return partial(helper_func, partial(func, *additional_args))
+        helper_func = (self._helper_func_with_idx if not is_apply_func and self.worker_comms.keep_order() else
+                       self._helper_func)
+        return partial(helper_func, partial(func, *self.additional_args))
 
-    def _run_init_func(self, additional_args: List) -> bool:
+    def _handle_poison_pill(self, lethal: bool, n_tasks_executed: int) -> None:
+        """
+        Force update task insights and progress bar when we got a (non-lethal) poison pill. For a lethal poison pill, we
+        run the worker exit function if this worker actually did some work, and wait for the progress bar to be done.
+        For a non-lethal poison pill, we simply continue.
+
+        :param lethal: Whether this is a lethal poison pill
+        """
+        self._update_task_insights(force_update=True)
+        self._update_progress_bar(force_update=True)
+        self.worker_comms.task_done(self.worker_id)
+        if lethal:
+            if self.map_params.worker_exit and n_tasks_executed > 0:
+                self._run_exit_func()
+            if self.map_params.progress_bar:
+                self.worker_comms.wait_until_progress_bar_is_complete()
+
+    def _handle_new_map_params(self) -> Optional[Callable]:
+        """
+        Handle new map parameters. This means we need to update the map parameters and get the new function to call.
+
+        :return: Function to call
+        """
+        self.worker_comms.task_done(self.worker_id)
+        map_params = self.worker_comms.get_task(self.worker_id)
+
+        # It can happen that at the moment we get a new map params pill, an exception occurred in another process.
+        # Therefore, get_task will return None
+        if map_params is None:
+            return None
+
+        self.map_params = map_params
+        func = self._get_func(self.map_params.func)
+        self.worker_comms.task_done(self.worker_id)
+        return func
+
+    def _handle_apply_pill(self) -> Union[Tuple[Callable, Any], Tuple[None, None]]:
+        """
+        Handle apply pill. This means we need to get the next task and return the function to call and the next chunked
+        args to process
+
+        :return: Function to call and next chunked args to process
+        """
+        self.worker_comms.task_done(self.worker_id)
+        task = self.worker_comms.get_task(self.worker_id)
+
+        # It can happen that at the moment we get an apply pill, an exception occurred in another process. Therefore,
+        # get_task will return None
+        if task is None:
+            return None, None
+
+        job_id, (apply_func, args) = task
+        func = self._get_func(apply_func, is_apply_func=True)
+        next_chunked_args = job_id, (args,)
+
+        return func, next_chunked_args
+
+    def _run_init_func(self, is_apply_func: bool, job_id: int) -> bool:
         """
         Runs the init function when provided.
 
-        :param additional_args: Additional args to pass to the function (worker ID, shared objects, worker state)
+        :param is_apply_func: Whether this is an apply function
+        :param job_id: Job ID
         :return: True when the worker needs to shut down, False otherwise
         """
-        self.worker_comms.signal_worker_working_on_job(self.worker_id, INIT_FUNC)
-        self.last_job_id = INIT_FUNC
+        if self.init_func_completed:
+            return False
+
+        # When we're dealing with an apply function, we set the job ID to the task job ID. This is because we want any
+        # error that occurs in the init function to be associated with the task that caused it. Otherwise we wouldn't
+        # be able to properly handle the error.
+        if not is_apply_func:
+            job_id = INIT_FUNC
+        self.worker_comms.signal_worker_working_on_job(self.worker_id, job_id)
+        self.last_job_id = job_id
 
         def _init_func():
             with TimeIt(self.worker_insights.worker_init_time, self.worker_id):
-                self.map_params.worker_init(*additional_args)
+                self.map_params.worker_init(*self.additional_args)
 
         # Optionally update timeout info
         if self.map_params.worker_init_timeout is not None:
             try:
                 self.worker_comms.signal_worker_init_started(self.worker_id)
-                _, _, should_shut_down = self._run_safely(_init_func, INIT_FUNC, is_apply_func=False)
+                _, _, should_shut_down = self._run_safely(_init_func, job_id, is_apply_func=False)
             finally:
                 self.worker_comms.signal_worker_init_completed(self.worker_id)
         else:
-            _, _, should_shut_down = self._run_safely(_init_func, INIT_FUNC, is_apply_func=False)
+            _, _, should_shut_down = self._run_safely(_init_func, job_id, is_apply_func=False)
 
+        self.init_func_completed = True
         return should_shut_down
 
     def _run_func(self, func: Callable, job_id: Optional[int], args: Optional[List],
@@ -305,6 +375,10 @@ class AbstractWorker:
         :return: Tuple containing results from the function, a boolean value indicating whether the function was run
             successfully, and a boolean value indicating whether the worker needs to shut down
         """
+        if self.last_job_id != job_id:
+            self.worker_comms.signal_worker_working_on_job(self.worker_id, job_id)
+            self.last_job_id = job_id
+
         def _func():
             with TimeIt(self.worker_insights.worker_working_time, self.worker_id,
                         self.max_task_duration_list, lambda: self._format_args(args, is_apply_func, separator=' | ')):
@@ -324,11 +398,10 @@ class AbstractWorker:
 
         return results, success, should_shut_down
 
-    def _run_exit_func(self, additional_args: List) -> bool:
+    def _run_exit_func(self) -> bool:
         """
         Runs the exit function when provided and stores its results.
 
-        :param additional_args: Additional args to pass to the function (worker ID, shared objects, worker state)
         :return: True when the worker needs to shut down, False otherwise
         """
         self.worker_comms.signal_worker_working_on_job(self.worker_id, EXIT_FUNC)
@@ -336,7 +409,7 @@ class AbstractWorker:
 
         def _exit_func():
             with TimeIt(self.worker_insights.worker_exit_time, self.worker_id):
-                return self.map_params.worker_exit(*additional_args)
+                return self.map_params.worker_exit(*self.additional_args)
 
         # Optionally update timeout info
         if self.map_params.worker_exit_timeout is not None:
@@ -402,7 +475,7 @@ class AbstractWorker:
 
         except StopWorker:
             # Stop working
-            return None, True, True
+            return None, False, True
 
         # Carry on
         return results, True, False

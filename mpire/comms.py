@@ -393,6 +393,9 @@ class WorkerComms:
                     self._last_completed_task_worker_id.append(worker_id)
             except queue.Empty as e:
                 queue_empty_error = e
+            except EOFError:
+                # This can occur when an imap function was running, while at the same time terminate() was called
+                return [(None, None, POISON_PILL)]
         if queue_empty_error is not None:
             raise queue_empty_error
         return results

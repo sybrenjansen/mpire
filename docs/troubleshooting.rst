@@ -8,6 +8,8 @@ This section describes some known problems that can arise when using MPIRE.
     :local:
 
 
+.. _troubleshooting_progress_bar:
+
 Progress bar issues with Jupyter notebooks
 ------------------------------------------
 

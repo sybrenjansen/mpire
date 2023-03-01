@@ -20,10 +20,8 @@ When inside a Jupyter/IPython notebook, the progress bar will change automatical
 
 .. note::
 
-    The Jupyter ``tqdm`` widget requires the Javascript widget to run, which might not be enabled by default. You will
-    notice a ``Widget Javascript not detected`` error message in your notebook if so. To remedy this, enable the widget
-    by executing ``jupyter nbextension enable --py --sys-prefix widgetsnbextension`` in your terminal before starting
-    the notebook.
+    If you run into problems with getting the progress bar to work in a Jupyter notebook, have a look at
+    :ref:`troubleshooting_progress_bar`.
 
 
 Progress bar options

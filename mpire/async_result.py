@@ -11,7 +11,7 @@ job_counter = itertools.count()
 
 class AsyncResult(object):
 
-    """ Adapted from multiprocessing.pool.ApplyResult """
+    """ Adapted from ``multiprocessing.pool.ApplyResult``. """
 
     def __init__(self, cache: Dict, callback: Optional[Callable], error_callback: Optional[Callable],
                  job_id: Optional[int] = None, delete_from_cache: bool = True) -> None:
@@ -216,10 +216,10 @@ class UnorderedAsyncResultIterator:
         del self._cache[self.job_id]
 
 
-class AsyncInitResult(AsyncResult):
+class AsyncResultWithExceptionGetter(AsyncResult):
 
-    def __init__(self, cache: Dict) -> None:
-        super().__init__(cache, callback=None, error_callback=None, job_id=INIT_FUNC, delete_from_cache=False)
+    def __init__(self, cache: Dict, job_id: int) -> None:
+        super().__init__(cache, callback=None, error_callback=None, job_id=job_id, delete_from_cache=False)
 
     def get_exception(self) -> Exception:
         """
@@ -260,4 +260,5 @@ class UnorderedAsyncExitResultIterator(UnorderedAsyncResultIterator):
         self._got_exception.clear()
 
 
-AsyncResultType = Union[AsyncResult, AsyncInitResult, UnorderedAsyncResultIterator, UnorderedAsyncExitResultIterator]
+AsyncResultType = Union[AsyncResult, AsyncResultWithExceptionGetter, UnorderedAsyncResultIterator,
+                        UnorderedAsyncExitResultIterator]

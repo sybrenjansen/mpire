@@ -8,10 +8,11 @@ MPIRE (MultiProcessing Is Really Easy)
 .. |Pypi status| image:: https://img.shields.io/pypi/v/mpire
 .. |Python versions| image:: https://img.shields.io/pypi/pyversions/mpire
 
-``MPIRE``, short for MultiProcessing Is Really Easy, is a Python package for multiprocessing, but faster and more
-user-friendly than the default multiprocessing package. It combines the convenient map like functions of
-``multiprocessing.Pool`` with the benefits of using copy-on-write shared objects of ``multiprocessing.Process``,
-together with easy-to-use worker state, worker insights, and progress bar functionality.
+``MPIRE``, short for MultiProcessing Is Really Easy, is a Python package for multiprocessing. ``MPIRE`` is faster in
+most scenarios, packs more features, and is generally more user-friendly than the default multiprocessing package. It
+combines the convenient map like functions of ``multiprocessing.Pool`` with the benefits of using copy-on-write shared
+objects of ``multiprocessing.Process``, together with easy-to-use worker state, worker insights, worker init and exit
+functions, timeouts, and progress bar functionality.
 
 Full documentation is available at https://slimmer-ai.github.io/mpire/.
 
@@ -20,7 +21,7 @@ Features
 
 - Faster execution than other multiprocessing libraries. See benchmarks_.
 - Intuitive, Pythonic syntax
-- Multiprocessing with ``map``/``map_unordered``/``imap``/``imap_unordered`` functions
+- Multiprocessing with ``map``/``map_unordered``/``imap``/``imap_unordered``/``apply``/``apply_async`` functions
 - Easy use of copy-on-write shared objects with a pool of workers (copy-on-write is only available for start method
   ``fork``)
 - Each worker can have its own state and with convenient worker init and exit functionality this state can be easily
@@ -126,7 +127,8 @@ Shared objects
 ~~~~~~~~~~~~~~
 
 Note: Copy-on-write shared objects is only available for start method ``fork``. For ``threading`` the objects are shared
-as-is. For other start methods the shared objects are copied once for each worker.
+as-is. For other start methods the shared objects are copied once for each worker, which can still be better than once
+per task.
 
 If you have one or more objects that you want to share between all workers you can make use of the copy-on-write
 ``shared_objects`` option of MPIRE.  MPIRE will pass on these objects only once for each worker without
@@ -177,7 +179,7 @@ section for more information.
 Worker insights
 ~~~~~~~~~~~~~~~
 
-When you're multiprocessing setup isn't performing as you want it to and you have no clue what's causing it, there's the
+When your multiprocessing setup isn't performing as you want it to and you have no clue what's causing it, there's the
 worker insights functionality. This will give you insight in your setup, but it will not profile the function you're
 running (there are other libraries for that). Instead, it profiles the worker start up time, waiting time and
 working time. When worker init and exit functions are provided it will time those as well.
@@ -204,6 +206,12 @@ Timeouts can be set separately for the target, ``worker_init`` and ``worker_exit
 set and reached, it will throw a ``TimeoutError``:
 
 .. code-block:: python
+
+    def init():
+        ...
+
+    def exit_():
+        ...
 
     # Will raise TimeoutError, provided that the target function takes longer
     # than half a second to complete

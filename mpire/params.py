@@ -3,7 +3,7 @@ import math
 import multiprocessing as mp
 import warnings
 from io import StringIO
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sized, Tuple, Union, Type
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sized, Tuple, Type, Union
 
 from dataclasses import dataclass, field
 from unittest.mock import patch
