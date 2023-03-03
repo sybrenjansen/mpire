@@ -1,11 +1,10 @@
-import sys
 import threading
 import traceback
 from datetime import datetime, timedelta
 from threading import Event, Thread
 from typing import Any, Dict, Optional, Type
 
-from tqdm.auto import tqdm
+from tqdm import tqdm as tqdm_type
 
 from mpire.comms import WorkerComms, POISON_PILL
 from mpire.dashboard.connection_utils import (DashboardConnectionDetails, get_dashboard_connection_details,
@@ -14,7 +13,7 @@ from mpire.exception import remove_highlighting
 from mpire.insights import WorkerInsights
 from mpire.params import WorkerMapParams, WorkerPoolParams
 from mpire.signal import DisableKeyboardInterruptSignal
-from mpire.tqdm_utils import TqdmConnectionDetails, TqdmManager
+from mpire.tqdm_utils import get_tqdm, TqdmConnectionDetails, TqdmManager
 from mpire.utils import format_seconds
 
 # If a user has not installed the dashboard dependencies than the imports below will fail
@@ -37,7 +36,7 @@ DATETIME_FORMAT = "%Y-%m-%d, %H:%M:%S"
 class ProgressBarHandler:
 
     def __init__(self, pool_params: WorkerPoolParams, map_params: WorkerMapParams, show_progress_bar: bool,
-                 progress_bar_options: Dict[str, Any], worker_comms: WorkerComms,
+                 progress_bar_options: Dict[str, Any], progress_bar_backend: Optional[str], worker_comms: WorkerComms,
                  worker_insights: WorkerInsights) -> None:
         """
         :param pool_params: WorkerPool parameters
@@ -45,11 +44,13 @@ class ProgressBarHandler:
         :param show_progress_bar: When ``True`` will display a progress bar
         :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
          ``tqdm.tqdm()`` for details.
+        :param progress_bar_backend: The progress bar backend to use. Can be one of ``None``, ``std``, or ``notebook``
         :param worker_comms: Worker communication objects (queues, locks, events, ...)
         :param worker_insights: WorkerInsights object which stores the worker insights
         """
         self.show_progress_bar = show_progress_bar
         self.progress_bar_options = progress_bar_options
+        self.progress_bar_backend = progress_bar_backend
         self.worker_comms = worker_comms
         self.worker_insights = worker_insights
         if show_progress_bar and DASHBOARD_STARTED_EVENT is not None:
@@ -112,6 +113,9 @@ class ProgressBarHandler:
         :param dashboard_connection_details: Dashboard manager host, port_nr and whether a dashboard is
             started/connected
         """
+        # Obtain the progress bar backend
+        tqdm, in_notebook = get_tqdm(self.progress_bar_backend)
+
         # Set tqdm and dashboard connection details. This is needed for nested pools and in the case forkserver or
         # spawn is used as start method
         TqdmManager.set_connection_details(tqdm_connection_details)
@@ -125,10 +129,6 @@ class ProgressBarHandler:
 
         # In case we're running tqdm in a notebook we need to apply a dirty hack to get progress bars working.
         # Solution adapted from https://github.com/tqdm/tqdm/issues/485#issuecomment-473338308
-        try:
-            in_notebook = 'IPKernelApp' in sys.modules['IPython'].get_ipython().config
-        except (AttributeError, KeyError):
-            in_notebook = False
         if in_notebook and not main_progress_bar:
             print(' ', end='', flush=True)
 
@@ -208,7 +208,7 @@ class ProgressBarHandler:
             if progress_bar.n == progress_bar.last_print_n:
                 self._send_dashboard_update(progress_bar)
 
-    def _register_progress_bar(self, progress_bar: tqdm) -> None:
+    def _register_progress_bar(self, progress_bar: tqdm_type) -> None:
         """
         Register this progress bar to the dashboard
 
@@ -226,7 +226,7 @@ class ProgressBarHandler:
             self._send_dashboard_update(progress_bar)
             dashboard_tqdm_lock.release()
 
-    def _send_dashboard_update(self, progress_bar: tqdm, failed: bool = False,
+    def _send_dashboard_update(self, progress_bar: tqdm_type, failed: bool = False,
                                traceback_str: Optional[str] = None) -> None:
         """
         Adds a progress bar update to the shared dict so the dashboard process can use it, only when a dashboard has
@@ -240,7 +240,7 @@ class ProgressBarHandler:
             self.dashboard_dict.update([(self.progress_bar_id,
                                          self._get_progress_bar_update_dict(progress_bar, failed, traceback_str))])
 
-    def _get_progress_bar_update_dict(self, progress_bar: tqdm, failed: bool,
+    def _get_progress_bar_update_dict(self, progress_bar: tqdm_type, failed: bool,
                                       traceback_str: Optional[str] = None) -> Dict[str, Any]:
         """
         Obtain update dictionary with all the information needed for displaying on the dashboard

@@ -16,13 +16,6 @@ to include a progress bar is by enabling the ``progress_bar`` flag in any of the
 This will display a basic ``tqdm`` progress bar displaying the time elapsed and remaining, number of tasks completed
 (including a percentage value) and the speed (i.e., number of tasks completed per time unit).
 
-When inside a Jupyter/IPython notebook, the progress bar will change automatically to a native Jupyter widget.
-
-.. note::
-
-    If you run into problems with getting the progress bar to work in a Jupyter notebook, have a look at
-    :ref:`troubleshooting_progress_bar`.
-
 
 Progress bar options
 --------------------
@@ -77,5 +70,42 @@ It goes without saying that you shouldn't specify the same progress bar position
 
     Most progress bar options are completely ignored when in a Jupyter/IPython notebook session or in the MPIRE
     dashboard.
+
+
+.. _progress_bar_backend:
+
+Progress bar backend
+--------------------
+
+You can switch to a notebook widget by changing the ``progress_bar_backend`` parameter to ``'notebook'``:
+
+.. code-block:: python
+
+    with WorkerPool(n_jobs=4) as pool:
+        pool.map(task, range(100), progress_bar=True, progress_bar_backend='notebook')
+
+The available backends are:
+
+- ``None``: use the default backend (= ``'std'`` , see below)
+- ``'std'``: use the standard ``tqdm`` progress bar
+- ``'notebook'``: use the Jupyter notebook widget
+
+When in a terminal and using the ``'notebook'`` backend, the progress bar will behave weirdly. This is not recommended.
+
+.. note::
+
+    If you run into problems with getting the progress bar to work in a Jupyter notebook (with ``'notebook'`` backend),
+    have a look at :ref:`troubleshooting_progress_bar`.
+
+Changing the default backend
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+You can change the default backend by setting the :obj:`mpire.tqdm_utils.PROGRESS_BAR_DEFAULT_BACKEND` variable:
+
+.. code-block:: python
+
+    import mpire.tqdm_utils
+
+    mpire.tqdm_utils.PROGRESS_BAR_DEFAULT_BACKEND = 'notebook'
 
 .. _tqdm: https://pypi.python.org/pypi/tqdm

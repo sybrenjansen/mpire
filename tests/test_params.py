@@ -189,35 +189,36 @@ class CheckProgressBarOptions(unittest.TestCase):
             for progress_bar_options in [{}, {"position": 0}, {"desc": "hello", "total": 100},
                                          {"unit": "seconds", "mininterval": 0.1}]:
                 with self.subTest(progress_bar_options=progress_bar_options):
-                    returned_progress_bar_options = check_progress_bar_options(progress_bar_options, None, None)
+                    returned_progress_bar_options = check_progress_bar_options(progress_bar_options, None, None, None)
                     self.assertEqual({k: None if k == "total" else returned_progress_bar_options[k]
                                       for k in progress_bar_options.keys()}, progress_bar_options)
 
             # progress_bar_options should be a dictionary
             for progress_bar_options in ['hello', {8}, 3.14]:
                 with self.subTest(progress_bar_options=progress_bar_options), self.assertRaises(TypeError):
-                    check_progress_bar_options(progress_bar_options, None, None)
+                    check_progress_bar_options(progress_bar_options, None, None, None)
 
             # When a non-existent parameter is passed, it should raise an error
             with self.assertRaises(TqdmKeyError):
-                check_progress_bar_options({"non_existent_param": "hello"}, None, None)
+                check_progress_bar_options({"non_existent_param": "hello"}, None, None, None)
 
             # When a parameter is passed with a wrong type, it should raise an error. Testing other parameters causes
             # deadlocks in other threading tests, which on their own run just fine. It's a tqdm thing which I don't
             # intend to investigate any further (I tried ...)
             for progress_bar_options in [{"position": "hello"}]:
                 with self.subTest(progress_bar_options=progress_bar_options), self.assertRaises(TypeError):
-                    check_progress_bar_options(progress_bar_options, None, None)
+                    check_progress_bar_options(progress_bar_options, None, None, None)
 
             # The total and leave options should be overwritten
             for total, leave in [(1, False), (100, True)]:
-                returned_progress_bar_options = check_progress_bar_options({"total": 3, "leave": leave}, None, total)
+                returned_progress_bar_options = check_progress_bar_options({"total": 3, "leave": leave}, None, total,
+                                                                           None)
                 self.assertEqual(returned_progress_bar_options["total"], total)
                 self.assertTrue(returned_progress_bar_options["leave"])
 
             # Some parameters have a default value
             for param, value in [("position", 3), ("dynamic_ncols", False), ("mininterval", 0.5), ("maxinterval", 0.1)]:
-                returned_progress_bar_options = check_progress_bar_options({param: value}, None, None)
+                returned_progress_bar_options = check_progress_bar_options({param: value}, None, None, None)
                 self.assertEqual(returned_progress_bar_options[param], value)
                 for other_param, expected_value in [("position", 0), ("dynamic_ncols", True),
                                                     ("mininterval", 0.1), ("maxinterval", 0.5)]:
@@ -235,18 +236,30 @@ class CheckProgressBarOptions(unittest.TestCase):
             for progress_bar_position, expected_position in [(None, 0), (0, 0), (1, 1),
                                                              (100, 100), (int(1e8), int(1e8))]:
                 with self.subTest(progress_bar_position=progress_bar_position):
-                    returned_progress_bar_options = check_progress_bar_options(None, progress_bar_position, None)
+                    returned_progress_bar_options = check_progress_bar_options(None, progress_bar_position, None, None)
                     self.assertEqual(returned_progress_bar_options['position'], expected_position)
 
             # progress_bar_position should be an integer
             for progress_bar_position in ['3', {8}, 3.14]:
                 with self.subTest(progress_bar_position=progress_bar_position), self.assertRaises(TypeError):
-                    check_progress_bar_options(None, progress_bar_position, None)
+                    check_progress_bar_options(None, progress_bar_position, None, None)
 
             # progress_bar_position should be positive >= 0
             for progress_bar_position in [-1, -5]:
                 with self.subTest(progress_bar_position=progress_bar_position), self.assertRaises(ValueError):
-                    check_progress_bar_options(None, progress_bar_position, None)
+                    check_progress_bar_options(None, progress_bar_position, None, None)
+
+    def test_progress_bar_backend(self):
+        """
+        Check progress_bar_backend parameter. Should raise when wrong parameter values are used.
+        """
+        for progress_bar_backend in [None, 'std', 'notebook']:
+            with self.subTest(progress_bar_backend=progress_bar_backend):
+                check_progress_bar_options(None, None, None, progress_bar_backend)
+
+        for progress_bar_backend in [-1, 'rich', {}]:
+            with self.subTest(progress_bar_backend=progress_bar_backend), self.assertRaises(ValueError):
+                check_progress_bar_options(None, None, None, progress_bar_backend)
 
 
 class CheckMapParametersTest(unittest.TestCase):
@@ -257,8 +270,8 @@ class CheckMapParametersTest(unittest.TestCase):
         self.check_map_parameters_func = partial(
             check_map_parameters, pool_params=self.pool_params, iterable_of_args=[], iterable_len=None,
             max_tasks_active=None, chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
-            progress_bar_position=None, progress_bar_options=None, task_timeout=None, worker_init_timeout=None,
-            worker_exit_timeout=None
+            progress_bar_position=None, progress_bar_options=None, progress_bar_backend=None, task_timeout=None,
+            worker_init_timeout=None, worker_exit_timeout=None
         )
 
     def test_n_tasks(self):

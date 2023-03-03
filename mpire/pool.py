@@ -22,9 +22,9 @@ from mpire.dashboard.connection_utils import get_dashboard_connection_details
 from mpire.exception import populate_exception
 from mpire.insights import WorkerInsights
 from mpire.params import check_map_parameters, CPUList, WorkerMapParams, WorkerPoolParams
-from mpire.progress_bar import ProgressBarHandler, tqdm
+from mpire.progress_bar import ProgressBarHandler
 from mpire.signal import DisableKeyboardInterruptSignal
-from mpire.tqdm_utils import TqdmManager
+from mpire.tqdm_utils import get_tqdm, TqdmManager
 from mpire.utils import apply_numpy_chunking, chunk_tasks, set_cpu_affinity
 from mpire.worker import MP_CONTEXTS, worker_factory
 
@@ -386,7 +386,8 @@ class WorkerPool:
             progress_bar_position: Optional[int] = None, concatenate_numpy_output: bool = True,
             worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
             task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
-            worker_exit_timeout: Optional[float] = None, progress_bar_options: Optional[Dict[str, Any]] = None) -> Any:
+            worker_exit_timeout: Optional[float] = None, progress_bar_options: Optional[Dict[str, Any]] = None,
+            progress_bar_backend: Optional[str] = None) -> Any:
         """
         Same as ``multiprocessing.map()``. Also allows a user to set the maximum number of tasks available in the queue.
         Note that this function can be slower than the unordered version.
@@ -431,6 +432,7 @@ class WorkerPool:
             MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
         :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
             ``tqdm.tqdm()`` for details. The arguments ``total`` and ``leave`` will be overwritten by MPIRE.
+        :param progress_bar_backend: The progress bar backend to use. Can be one of ``None``, ``std``, or ``notebook``
         :return: List with ordered results
         """
         # Notify workers to keep order in mind
@@ -445,10 +447,11 @@ class WorkerPool:
         # Process all args
         if iterable_len is None and hasattr(iterable_of_args, '__len__'):
             iterable_len = len(iterable_of_args)
-        results = self.map_unordered(func, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)),
-                                     iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan,
-                                     progress_bar, progress_bar_position, worker_init, worker_exit, task_timeout,
-                                     worker_init_timeout, worker_exit_timeout, progress_bar_options)
+        results = self.map_unordered(
+            func, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)), iterable_len, max_tasks_active,
+            chunk_size, n_splits, worker_lifespan, progress_bar, progress_bar_position, worker_init, worker_exit,
+            task_timeout, worker_init_timeout, worker_exit_timeout, progress_bar_options, progress_bar_backend
+        )
 
         # Notify workers to forget about order
         self._worker_comms.clear_keep_order()
@@ -467,7 +470,8 @@ class WorkerPool:
                       progress_bar_position: Optional[int] = None, worker_init: Optional[Callable] = None,
                       worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
                       worker_init_timeout: Optional[float] = None, worker_exit_timeout: Optional[float] = None,
-                      progress_bar_options: Optional[Dict[str, Any]] = None) -> Any:
+                      progress_bar_options: Optional[Dict[str, Any]] = None,
+                      progress_bar_backend: Optional[str] = None) -> Any:
         """
         Same as ``multiprocessing.map()``, but unordered. Also allows a user to set the maximum number of tasks
         available in the queue.
@@ -511,13 +515,14 @@ class WorkerPool:
             MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
         :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
             ``tqdm.tqdm()`` for details. The arguments ``total`` and ``leave`` will be overwritten by MPIRE.
+        :param progress_bar_backend: The progress bar backend to use. Can be one of ``None``, ``std``, or ``notebook``
         :return: List with unordered results
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
         return list(self.imap_unordered(func, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
                                         n_splits, worker_lifespan, progress_bar, progress_bar_position, worker_init,
                                         worker_exit, task_timeout, worker_init_timeout, worker_exit_timeout,
-                                        progress_bar_options))
+                                        progress_bar_options, progress_bar_backend))
 
     def imap(self, func: Callable, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int] = None,
              max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
@@ -525,7 +530,8 @@ class WorkerPool:
              progress_bar_position: Optional[int] = None, worker_init: Optional[Callable] = None,
              worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
              worker_init_timeout: Optional[float] = None, worker_exit_timeout: Optional[float] = None,
-             progress_bar_options: Optional[Dict[str, Any]] = None) -> Generator[Any, None, None]:
+             progress_bar_options: Optional[Dict[str, Any]] = None,
+             progress_bar_backend: Optional[str] = None) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``, but ordered. Also allows a user to set the maximum number of
         tasks available in the queue.
@@ -569,6 +575,7 @@ class WorkerPool:
             MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
         :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
             ``tqdm.tqdm()`` for details. The arguments ``total`` and ``leave`` will be overwritten by MPIRE.
+        :param progress_bar_backend: The progress bar backend to use. Can be one of ``None``, ``std``, or ``notebook``
         :return: Generator yielding ordered results
         """
         # Notify workers to keep order in mind
@@ -590,7 +597,7 @@ class WorkerPool:
                                                       max_tasks_active, chunk_size, n_splits, worker_lifespan,
                                                       progress_bar, progress_bar_position, worker_init, worker_exit,
                                                       task_timeout, worker_init_timeout, worker_exit_timeout,
-                                                      progress_bar_options):
+                                                      progress_bar_options, progress_bar_backend):
 
             # Check if the next one(s) to return is/are temporarily stored. We use a while-true block with dict.pop() to
             # keep the temporary store as small as possible
@@ -623,7 +630,8 @@ class WorkerPool:
                        progress_bar_position: Optional[int] = None, worker_init: Optional[Callable] = None,
                        worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
                        worker_init_timeout: Optional[float] = None, worker_exit_timeout: Optional[float] = None,
-                       progress_bar_options: Optional[Dict[str, Any]] = None) -> Generator[Any, None, None]:
+                       progress_bar_options: Optional[Dict[str, Any]] = None,
+                       progress_bar_backend: Optional[str] = None) -> Generator[Any, None, None]:
         """
         Same as ``multiprocessing.imap_unordered()``. Also allows a user to set the maximum number of tasks available in
         the queue.
@@ -667,6 +675,7 @@ class WorkerPool:
             MPIRE will raise a ``TimeoutError``. Use ``None`` to disable (default).
         :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
             ``tqdm.tqdm()`` for details. The arguments ``total`` and ``leave`` will be overwritten by MPIRE.
+        :param progress_bar_backend: The progress bar backend to use. Can be one of ``None``, ``std``, or ``notebook``
         :return: Generator yielding unordered results
         """
         # If we're dealing with numpy arrays, we have to chunk them here already
@@ -682,8 +691,8 @@ class WorkerPool:
         # modified as well
         n_tasks, max_tasks_active, chunk_size, progress_bar, progress_bar_options = check_map_parameters(
             self.pool_params, iterable_of_args, iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan,
-            progress_bar, progress_bar_position, progress_bar_options, task_timeout, worker_init_timeout,
-            worker_exit_timeout
+            progress_bar, progress_bar_position, progress_bar_options, progress_bar_backend, task_timeout,
+            worker_init_timeout, worker_exit_timeout
         )
         new_map_params = WorkerMapParams(func, worker_init, worker_exit, worker_lifespan, progress_bar, task_timeout,
                                          worker_init_timeout, worker_exit_timeout)
@@ -693,6 +702,7 @@ class WorkerPool:
             iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size, n_splits)
 
         # Grab original lock in case we have a progress bar and we need to restore it
+        tqdm, _ = get_tqdm(progress_bar_backend)
         original_tqdm_lock = tqdm.get_lock()
         tqdm_manager_owner = False
 
@@ -728,7 +738,8 @@ class WorkerPool:
             # Create progress bar handler, which receives progress updates from the workers and updates the progress bar
             # accordingly
             with ProgressBarHandler(self.pool_params, self.map_params, progress_bar, progress_bar_options,
-                                    self._worker_comms, self._worker_insights) as self._progress_bar_handler:
+                                    progress_bar_backend, self._worker_comms,
+                                    self._worker_insights) as self._progress_bar_handler:
                 try:
                     # Process all args in the iterable
                     n_active = 0

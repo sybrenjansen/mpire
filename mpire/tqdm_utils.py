@@ -2,13 +2,35 @@ import logging
 from ctypes import c_char
 from multiprocessing import Array, Event, Lock
 from multiprocessing.managers import SyncManager
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Type
+
+from tqdm import tqdm as tqdm_std
+from tqdm.notebook import tqdm as tqdm_notebook
 
 from mpire.signal import DisableKeyboardInterruptSignal
 
+PROGRESS_BAR_DEFAULT_BACKEND = 'std'
 TqdmConnectionDetails = Tuple[Optional[bytes], bool]
 
 logger = logging.getLogger(__name__)
+
+
+def get_tqdm(progress_bar_backend: Optional[str]) -> Tuple[Type[tqdm_std], bool]:
+    """
+    Get the tqdm class to use based on the progress bar backend
+
+    :param progress_bar_backend: The progress bar backend to use. Can be one of ``None``, ``std``, or ``notebook``
+    :return: A tuple containing the tqdm class to use and a boolean indicating whether the progress bar is a notebook
+    """
+    if progress_bar_backend is None:
+        progress_bar_backend = PROGRESS_BAR_DEFAULT_BACKEND
+    if progress_bar_backend == 'std':
+        return tqdm_std, False
+    elif progress_bar_backend == 'notebook':
+        return tqdm_notebook, True
+    else:
+        raise ValueError(f'Invalid progress bar backend: {progress_bar_backend}. '
+                         f'Use either None (=default), "std", or "notebook"')
 
 
 class TqdmPositionRegister:
