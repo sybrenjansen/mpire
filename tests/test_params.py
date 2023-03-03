@@ -286,10 +286,10 @@ class CheckMapParametersTest(unittest.TestCase):
         """
         with self.subTest("check_number call"), patch('mpire.params.check_number') as p:
             self.check_map_parameters_func(chunk_size=10)
-            chunk_size_call = [call for call in p.call_args_list if call.args[1] == 'chunk_size'][0]
-            self.assertEqual(chunk_size_call.args[0], 10)
-            self.assertDictEqual(chunk_size_call.kwargs,
-                                 {"allowed_types": (int, float), "none_allowed": True, "min_": 1})
+            chunk_size_call = [call for call in p.call_args_list if call[0][1] == 'chunk_size'][0]
+            args, kwargs = chunk_size_call[0], chunk_size_call[1]
+            self.assertEqual(args[0], 10)
+            self.assertDictEqual(kwargs, {"allowed_types": (int, float), "none_allowed": True, "min_": 1})
 
         with self.subTest("chunk_size provided", chunk_size=10):
             _, _, chunk_size, *_ = self.check_map_parameters_func(chunk_size=10)
@@ -325,9 +325,10 @@ class CheckMapParametersTest(unittest.TestCase):
         """
         with patch('mpire.params.check_number') as p:
             self.check_map_parameters_func(n_splits=11)
-            n_splits_call = [call for call in p.call_args_list if call.args[1] == 'n_splits'][0]
-            self.assertEqual(n_splits_call.args[0], 11)
-            self.assertDictEqual(n_splits_call.kwargs, {"allowed_types": (int,), "none_allowed": True, "min_": 1})
+            n_splits_call = [call for call in p.call_args_list if call[0][1] == 'n_splits'][0]
+            args, kwargs = n_splits_call[0], n_splits_call[1]
+            self.assertEqual(args[0], 11)
+            self.assertDictEqual(kwargs, {"allowed_types": (int,), "none_allowed": True, "min_": 1})
 
     def test_max_tasks_active(self):
         """
@@ -335,10 +336,10 @@ class CheckMapParametersTest(unittest.TestCase):
         """
         with self.subTest("check_number call"), patch('mpire.params.check_number') as p:
             self.check_map_parameters_func(max_tasks_active=12)
-            max_tasks_active_call = [call for call in p.call_args_list if call.args[1] == 'max_tasks_active'][0]
-            self.assertEqual(max_tasks_active_call.args[0], 12)
-            self.assertDictEqual(max_tasks_active_call.kwargs,
-                                 {"allowed_types": (int,), "none_allowed": True, "min_": 1})
+            max_tasks_active_call = [call for call in p.call_args_list if call[0][1] == 'max_tasks_active'][0]
+            args, kwargs = max_tasks_active_call[0], max_tasks_active_call[1]
+            self.assertEqual(args[0], 12)
+            self.assertDictEqual(kwargs, {"allowed_types": (int,), "none_allowed": True, "min_": 1})
 
         # When max_active_tasks is None, it should be set to n_jobs * ceil(chunk_size) * 2
         for n_jobs, chunk_size, expected_max_tasks_active in [(1, 10, 20), (2, 1.8, 8), (4, 3.14, 32)]:
@@ -354,10 +355,10 @@ class CheckMapParametersTest(unittest.TestCase):
         """
         with patch('mpire.params.check_number') as p:
             self.check_map_parameters_func(worker_lifespan=11)
-            worker_lifespan_call = [call for call in p.call_args_list if call.args[1] == 'worker_lifespan'][0]
-            self.assertEqual(worker_lifespan_call.args[0], 11)
-            self.assertDictEqual(worker_lifespan_call.kwargs,
-                                 {"allowed_types": (int,), "none_allowed": True, "min_": 1})
+            worker_lifespan_call = [call for call in p.call_args_list if call[0][1] == 'worker_lifespan'][0]
+            args, kwargs = worker_lifespan_call[0], worker_lifespan_call[1]
+            self.assertEqual(args[0], 11)
+            self.assertDictEqual(kwargs, {"allowed_types": (int,), "none_allowed": True, "min_": 1})
 
     def test_windows_threading_progress_bar_error(self):
         """
@@ -376,22 +377,22 @@ class CheckMapParametersTest(unittest.TestCase):
         for timeout in [None, 0.5, 1, 100.5, int(1e8)]:
             with self.subTest(task_timeout=timeout), patch('mpire.params.check_number') as p:
                 self.check_map_parameters_func(task_timeout=timeout)
-                task_timeout_call = [call for call in p.call_args_list if call.args[1] == 'task_timeout'][0]
-                self.assertEqual(task_timeout_call.args[0], timeout)
-                self.assertDictEqual(task_timeout_call.kwargs,
-                                     {"allowed_types": (int, float), "none_allowed": True, "min_": 1e-8})
+                task_timeout_call = [call for call in p.call_args_list if call[0][1] == 'task_timeout'][0]
+                args, kwargs = task_timeout_call[0], task_timeout_call[1]
+                self.assertEqual(args[0], timeout)
+                self.assertDictEqual(kwargs, {"allowed_types": (int, float), "none_allowed": True, "min_": 1e-8})
             with self.subTest(worker_init_timeout=timeout), patch('mpire.params.check_number') as p:
                 self.check_map_parameters_func(worker_init_timeout=timeout)
-                init_timeout_call = [call for call in p.call_args_list if call.args[1] == 'worker_init_timeout'][0]
-                self.assertEqual(init_timeout_call.args[0], timeout)
-                self.assertDictEqual(init_timeout_call.kwargs,
-                                     {"allowed_types": (int, float), "none_allowed": True, "min_": 1e-8})
+                init_timeout_call = [call for call in p.call_args_list if call[0][1] == 'worker_init_timeout'][0]
+                args, kwargs = init_timeout_call[0], init_timeout_call[1]
+                self.assertEqual(args[0], timeout)
+                self.assertDictEqual(kwargs, {"allowed_types": (int, float), "none_allowed": True, "min_": 1e-8})
             with self.subTest(worker_exit_timeout=timeout), patch('mpire.params.check_number') as p:
                 self.check_map_parameters_func(worker_exit_timeout=timeout)
-                exit_timeout_call = [call for call in p.call_args_list if call.args[1] == 'worker_exit_timeout'][0]
-                self.assertEqual(exit_timeout_call.args[0], timeout)
-                self.assertDictEqual(exit_timeout_call.kwargs,
-                                     {"allowed_types": (int, float), "none_allowed": True, "min_": 1e-8})
+                exit_timeout_call = [call for call in p.call_args_list if call[0][1] == 'worker_exit_timeout'][0]
+                args, kwargs = exit_timeout_call[0], exit_timeout_call[1]
+                self.assertEqual(args[0], timeout)
+                self.assertDictEqual(kwargs, {"allowed_types": (int, float), "none_allowed": True, "min_": 1e-8})
 
         # timeout should be an integer, float, or None
         for timeout in ['3', {8}]:

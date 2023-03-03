@@ -64,6 +64,8 @@ class WorkerComms:
         # worker is working on what task
         self._task_queues = None
         self._task_idx = None
+        self._worker_running_task_locks = None
+        self._worker_running_task = None
         self._last_completed_task_worker_id = collections.deque()
         self._worker_working_on_job = None
 
@@ -127,6 +129,8 @@ class WorkerComms:
         """
         # Task related
         self._task_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
+        self._worker_running_task_locks = [self.ctx.RLock() for _ in range(self.n_jobs)]
+        self._worker_running_task = [self.ctx.Value('b', False, lock=False) for _ in range(self.n_jobs)]
         self._worker_working_on_job = [self.ctx.Value('i', 0, lock=True) for _ in range(self.n_jobs)]
 
         # Results related
@@ -343,6 +347,34 @@ class WorkerComms:
         :param worker_id: Worker ID
         """
         self._task_queues[worker_id].task_done()
+
+    def set_worker_running_task(self, worker_id: int, running: bool) -> None:
+        """
+        Set the task the worker is currently running
+
+        :param worker_id: Worker ID
+        :param running: Whether the worker is running a task
+        """
+        with self._worker_running_task_locks[worker_id]:
+            self._worker_running_task[worker_id].value = running
+
+    def get_worker_running_task_lock(self, worker_id: int) -> mp.Lock:
+        """
+        Obtain the lock for the worker running task
+
+        :param worker_id: Worker ID
+        :return: Lock
+        """
+        return self._worker_running_task_locks[worker_id]
+
+    def get_worker_running_task(self, worker_id: int) -> bool:
+        """
+        Obtain whether the worker is running a task. Lock has to be obtained manually
+
+        :param worker_id: Worker ID
+        :return: Whether the worker is running a task
+        """
+        return self._worker_running_task[worker_id].value
 
     def signal_worker_working_on_job(self, worker_id: int, job_id: int) -> None:
         """

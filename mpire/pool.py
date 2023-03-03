@@ -1,5 +1,4 @@
 import logging
-import multiprocessing as mp
 import os
 import queue
 import signal
@@ -277,6 +276,8 @@ class WorkerPool:
     def _unexpected_death_handler(self) -> None:
         """
         Checks that workers that are supposed to be alive, are actually alive. If not, then a worker died unexpectedly.
+        Terminate signals are handled by workers themselves, but if a worker dies for any other reason, then we need
+        to handle it here.
 
         Note that a worker can be alive, but their alive status is still False. This doesn't really matter, because we
         know the worker is alive according to the OS. The only way we know that something bad happened is when a worker
@@ -322,6 +323,7 @@ class WorkerPool:
                             # Obtain task it was working on and set it to failed
                             job_id = self._worker_comms.get_worker_working_on_job(worker_id)
                             self._worker_comms.signal_exception_thrown(job_id)
+                            self._send_kill_signal_to_worker(worker_id)
                             err_msg = f"Worker-{worker_id} {timeout_func_name} timed out"
                             self._cache[job_id]._set(False, TimeoutError(err_msg))
                             return
@@ -1003,8 +1005,8 @@ class WorkerPool:
             threads = []
             dont_wait_event = threading.Event()
             dont_wait_event.set()
-            for worker_id, worker_process in enumerate(self._workers):
-                t = threading.Thread(target=self._terminate_worker, args=(worker_id, worker_process, dont_wait_event))
+            for worker_id in range(self.pool_params.n_jobs):
+                t = threading.Thread(target=self._terminate_worker, args=(worker_id, dont_wait_event))
                 t.start()
                 threads.append(t)
 
@@ -1042,34 +1044,33 @@ class WorkerPool:
         self._workers = []
         self._cache = {key: self._cache[key] for key in (MAIN_PROCESS, INIT_FUNC, EXIT_FUNC)}
 
-    def _terminate_worker(self, worker_id: int, worker_process: Optional[mp.context.Process],
-                          dont_wait_event: threading.Event) -> None:
+    def _terminate_worker(self, worker_id: int, dont_wait_event: threading.Event) -> None:
         """
-        Terminates a single worker process
+        Terminates a single worker process.
+
+        When a process.join() raises an AssertionError, it means the worker hasn't started yet. In that case, we simply
+        return. A ValueError can be raised on Windows systems.
 
         :param worker_id: Worker ID
-        :param worker_process: Worker instance or None when it wasn't initialized yet
         :param dont_wait_event: Event object to indicate whether other termination threads should continue. I.e., when
             we set it to False, threads should wait.
         """
         # When a worker didn't start in the first place, we don't have to do anything
-        if worker_process is None or worker_process.pid is None:
+        if self._workers[worker_id] is None or self._workers[worker_id].pid is None:
             return
+
+        # Send a kill signal to the worker
+        self._send_kill_signal_to_worker(worker_id)
 
         # We wait until workers are done terminating. However, we don't have all the patience in the world. When the
         # patience runs out we terminate them.
         try_count = 10
         while try_count > 0:
-            # Signal handling in Windows is cumbersome, to say the least. Therefore, it handles error handling
-            # differently. See Worker::_exit_gracefully_windows for more information.
-            if not RUNNING_WINDOWS:
-                try:
-                    os.kill(worker_process.pid, signal.SIGUSR1)
-                except (ProcessLookupError, ValueError):
-                    pass
-
-            self._worker_comms.wait_for_dead_worker(worker_id, timeout=0.1)
-            if not self._worker_comms.is_worker_alive(worker_id):
+            try:
+                self._workers[worker_id].join(timeout=0.1)
+            except AssertionError:
+                return
+            if not self._workers[worker_id].is_alive():
                 break
 
             # For properly joining, it can help if we try to get some results here. Workers can still be busy putting
@@ -1083,11 +1084,12 @@ class WorkerPool:
         try_count = 10
         while try_count > 0:
             try:
-                worker_process.join(timeout=0.1)
-                if not worker_process.is_alive():
+                self._workers[worker_id].join(timeout=0.1)
+                if not self._workers[worker_id].is_alive():
                     break
+            except AssertionError:
+                return
             except ValueError:
-                # For Windows compatibility
                 pass
 
             # For properly joining, it can help if we try to get some results here. Workers can still be busy putting
@@ -1100,19 +1102,42 @@ class WorkerPool:
         # If, after all this, the worker is still alive, we terminate it with a brutal kill signal. This shouldn't
         # really happen. But, better safe than sorry
         try:
-            if worker_process.is_alive():
-                worker_process.terminate()
-                worker_process.join()
+            if self._workers[worker_id].is_alive():
+                self._workers[worker_id].terminate()
+                self._workers[worker_id].join()
+        except AssertionError:
+            return
         except ValueError:
-            # For Windows compatibility
             pass
 
         # Added since Python 3.7
-        if hasattr(worker_process, 'close'):
+        if hasattr(self._workers[worker_id], 'close'):
             try:
-                worker_process.close()
+                self._workers[worker_id].close()
+            except AssertionError:
+                return
             except ValueError:
                 pass
+
+    def _send_kill_signal_to_worker(self, worker_id: int) -> None:
+        """
+        Sends a kill signal to a worker process, but only if we know it's running a task.
+
+        :param worker_id: Worker ID
+        """
+        # Signal handling in Windows is cumbersome, to say the least. Therefore, it handles error handling
+        # differently. See Worker::_exit_gracefully_windows for more information.
+        if not RUNNING_WINDOWS and self.pool_params.start_method != "threading":
+            with self._worker_comms.get_worker_running_task_lock(worker_id):
+                if self._worker_comms.get_worker_running_task(worker_id):
+                    # A signal should only be send once
+                    self._worker_comms.set_worker_running_task(worker_id, False)
+
+                    # Send signal
+                    try:
+                        os.kill(self._workers[worker_id].pid, signal.SIGUSR1)
+                    except (ProcessLookupError, ValueError):
+                        pass
 
     def print_insights(self) -> None:
         """

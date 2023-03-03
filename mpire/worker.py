@@ -79,67 +79,16 @@ class AbstractWorker:
         self.last_job_id = None
         self.init_func_completed = False
 
-        # Exception handling variables
-        if self.pool_params.start_method == 'threading':
-            ctx = MP_CONTEXTS['threading']
-        else:
-            ctx = MP_CONTEXTS['mp_dill' if self.pool_params.use_dill else 'mp'][self.pool_params.start_method]
-        self.is_running = False
-        self.is_running_lock = ctx.Lock()
-
-        # Register handler for graceful shutdown. This doesn't work on Windows
-        if not RUNNING_WINDOWS and current_thread() == main_thread():
-            signal.signal(signal.SIGUSR1, self._exit_gracefully)
-
-    def _exit_gracefully(self, *_) -> None:
-        """
-        This function is called when the main process sends a kill signal to this process. This can only mean another
-        child process encountered an exception which means we should exit.
-
-        If this process is in the middle of running the user defined function we raise a StopWorker exception (which is
-        then caught by the ``_run_safely()`` function) so we can quit gracefully.
-        """
-        # A rather complex locking and exception mechanism is used here so we can make sure we only raise an exception
-        # when we should. We want to make sure we only raise an exception when the user function is called. If it is
-        # running the exception is caught and `run` will return. If it is running and the user function throws another
-        # exception first, it depends on who obtains the lock first. If `run` obtains it, it will set `running` to
-        # False, meaning we won't raise and `run` will return. If this function obtains it first it will throw, which
-        # again is caught by the `run` function, which will return.
-        self.worker_comms.signal_kill_signal_received()
-        with self.is_running_lock:
-            if self.is_running:
-                self.is_running = False
-                raise StopWorker
-
-    def _exit_gracefully_windows(self) -> None:
-        """
-        Windows doesn't fully support signals as Unix-based systems do. Therefore, we have to work around it. This
-        function is started in a thread. We wait for a kill signal (Event object) and interrupt the main thread if we
-        got it (derived from https://stackoverflow.com/a/40281422). This will raise a KeyboardInterrupt, which is then
-        caught by the signal handler, which in turn checks if we need to raise a StopWorker.
-
-        Note: functions that release the GIL won't be interupted by this procedure (e.g., time.sleep). If graceful
-        shutdown takes too long the process will be terminated by the main process. If anyone has a better approach for
-        graceful interrupt in Windows, please create a PR.
-        """
-        while self.worker_comms.is_worker_alive(self.worker_id):
-            if self.worker_comms.wait_for_exception_thrown(timeout=0.1):
-                _thread.interrupt_main()
-                return
-
     def run(self) -> None:
         """
         Continuously asks the tasks queue for new task arguments. When not receiving a poisonous pill or when the max
         life span is not yet reached it will execute the new task and put the results in the results queue.
         """
+        # Register handlers for graceful shutdown
+        self._set_signal_handlers()
+
         n_tasks_executed = 0
         try:
-            # Enable graceful shutdown for Windows. Note that we can't kill threads in Python
-            if RUNNING_WINDOWS and self.pool_params.start_method != "threading" and current_thread() == main_thread():
-                signal.signal(signal.SIGINT, self._exit_gracefully)
-                t = Thread(target=self._exit_gracefully_windows)
-                t.start()
-
             self.worker_comms.signal_worker_alive(self.worker_id)
             self.worker_comms.reset_results_received(self.worker_id)
 
@@ -243,6 +192,67 @@ class AbstractWorker:
                 self.worker_comms.signal_worker_restart(self.worker_id)
 
             self.worker_comms.signal_worker_dead(self.worker_id)
+
+    def _set_signal_handlers(self) -> None:
+        """
+        Set signal handlers for graceful shutdown
+        """
+        # Don't set signals when we're using threading as start method
+        if current_thread() != main_thread():
+            return
+
+        # When on unix, we can make use of signals
+        if not RUNNING_WINDOWS:
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            signal.signal(signal.SIGHUP, self._on_kill_exit_gracefully)
+            signal.signal(signal.SIGTERM, self._on_kill_exit_gracefully)
+            signal.signal(signal.SIGUSR1, self._on_exception_exit_gracefully)
+
+        # On Windows, not all signals are available so we have to work around it.
+        elif RUNNING_WINDOWS and self.pool_params.start_method != "threading" and current_thread() == main_thread():
+            signal.signal(signal.SIGINT, self._on_exception_exit_gracefully)
+            t = Thread(target=self._on_exception_exit_gracefully_windows, daemon=True)
+            t.start()
+
+    def _on_kill_exit_gracefully(self, *_) -> None:
+        """
+        When someone manually sends a kill signal to this process, we want to exit gracefully. We do this by raising an
+        exception when a task is running. Otherwise, we call raise() ourselves with the exception. Both will ensure
+        exception_thrown() is set and will shutdown the pool.
+        """
+        err = RuntimeError(f"Worker-{self.worker_id} was killed")
+        with self.worker_comms.get_worker_running_task_lock(self.worker_id):
+            if self.worker_comms.get_worker_running_task(self.worker_id):
+                raise err
+            else:
+                self._raise(self.last_job_id, None, err)
+
+    def _on_exception_exit_gracefully(self, *_) -> None:
+        """
+        This function is called when the main process sends a kill signal to this process. This can only mean another
+        child process encountered an error which means we should exit.
+
+        This signal is only send when either the user defined function, worker init or worker exit function is running.
+        In such cases, a StopWorker exception is raised, which is caught by the ``_run_safely()`` function, so we can
+        quit gracefully.
+        """
+        self.worker_comms.signal_kill_signal_received()
+        raise StopWorker
+
+    def _on_exception_exit_gracefully_windows(self) -> None:
+        """
+        Windows doesn't fully support signals as Unix-based systems do. Therefore, we have to work around it. This
+        function is started in a thread. We wait for a kill signal (Event object) and interrupt the main thread if we
+        got it (derived from https://stackoverflow.com/a/40281422). This will raise a KeyboardInterrupt, which is then
+        caught by the signal handler, which in turn checks if we need to raise a StopWorker.
+
+        Note: functions that release the GIL won't be interupted by this procedure (e.g., time.sleep). If graceful
+        shutdown takes too long the process will be terminated by the main process.
+        """
+        while self.worker_comms.is_worker_alive(self.worker_id):
+            if self.worker_comms.wait_for_exception_thrown(timeout=0.1):
+                _thread.interrupt_main()
+                return
 
     def _set_additional_args(self) -> None:
         """
@@ -448,11 +458,9 @@ class AbstractWorker:
             try:
                 # Obtain lock and try to run the function. During this block a StopWorker exception from the parent
                 # process can come through to signal we should stop
-                with self.is_running_lock:
-                    self.is_running = True
+                self.worker_comms.set_worker_running_task(self.worker_id, True)
                 results = func()
-                with self.is_running_lock:
-                    self.is_running = False
+                self.worker_comms.set_worker_running_task(self.worker_id, False)
 
             except StopWorker:
                 # The main process tells us to stop working, shutting down
@@ -461,8 +469,7 @@ class AbstractWorker:
             except (Exception, SystemExit) as err:
                 # An exception occurred inside the provided function. Let the signal handler know it shouldn't raise any
                 # StopWorker exceptions from the parent process anymore, we got this.
-                with self.is_running_lock:
-                    self.is_running = False
+                self.worker_comms.set_worker_running_task(self.worker_id, False)
 
                 if is_apply_func:
                     # Obtain exception and send it back as normal results. False indicates the job has failed
@@ -488,7 +495,8 @@ class AbstractWorker:
         :param args: Funtion arguments where exception was raised
         :param err: Exception that should be passed on to parent process
         """
-        # Only raise an exception when this process is the first one to raise
+        # Only raise an exception when this process is the first one to raise. It is technically possible that multiple
+        # workers will get through this if statement, but that's fine, it won't cause any problems
         if not self.worker_comms.exception_thrown():
 
             # Let others know we need to stop
