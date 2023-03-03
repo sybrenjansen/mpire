@@ -583,12 +583,6 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertListEqual([comms.is_worker_alive(worker_id) for worker_id in range(5)],
                              [False, False, True, False, False])
 
-        # We test wait by simply checking the call count
-        for worker_id in range(5):
-            with patch.object(comms._workers_dead[worker_id], 'wait') as p:
-                comms.wait_for_dead_worker(worker_id)
-                self.assertEqual(p.call_count, 1)
-
     def test_drain_result_queue_terminate_worker(self):
         """
         get_results should be called once, get_exit_results should be called when exit function is defined

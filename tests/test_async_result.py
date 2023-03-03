@@ -22,7 +22,7 @@ class AsyncResultTest(unittest.TestCase):
         """
         with self.subTest("job_counter=0", job_id=None), \
                 patch('mpire.async_result.job_counter', itertools.count(start=0)):
-            r = AsyncResult(self.cache, None, None, None, True)
+            r = AsyncResult(self.cache, None, None, None, True, None)
             self.assertEqual(r.job_id, 0)
             self.assertEqual(self.cache, {0: r})
 
@@ -30,7 +30,7 @@ class AsyncResultTest(unittest.TestCase):
 
         with self.subTest("job_counter=10", job_id=None), \
                 patch('mpire.async_result.job_counter', itertools.count(start=10)):
-            r = AsyncResult(self.cache, None, None, None, True)
+            r = AsyncResult(self.cache, None, None, None, True, None)
             self.assertEqual(r.job_id, 10)
             self.assertEqual(self.cache, {10: r})
 
@@ -38,20 +38,27 @@ class AsyncResultTest(unittest.TestCase):
 
         with self.subTest("job_counter=0", job_id=42), \
                 patch('mpire.async_result.job_counter', itertools.count(start=0)):
-            r = AsyncResult(self.cache, None, None, 42, True)
+            r = AsyncResult(self.cache, None, None, 42, True, None)
             self.assertEqual(r.job_id, 42)
             self.assertEqual(self.cache, {42: r})
 
         with self.subTest("job_id already exists in cache"), \
                 patch('mpire.async_result.job_counter', itertools.count(start=0)):
             with self.assertRaises(AssertionError):
-                AsyncResult(self.cache, None, None, 42, True)
+                AsyncResult(self.cache, None, None, 42, True, None)
+
+        with self.subTest(timeout=None):
+            r = AsyncResult(self.cache, None, None, None, True, None)
+            self.assertIsNone(r._timeout)
+        with self.subTest(timeout=10):
+            r = AsyncResult(self.cache, None, None, None, True, 10)
+            self.assertEqual(r._timeout, 10)
 
     def test_ready(self):
         """
         Test that the ready method returns the correct value
         """
-        r = AsyncResult(self.cache, None, None, None, True)
+        r = AsyncResult(self.cache, None, None, None, True, None)
         self.assertFalse(r.ready())
         r._ready_event.set()
         self.assertTrue(r.ready())
@@ -60,7 +67,7 @@ class AsyncResultTest(unittest.TestCase):
         """
         Test that the successful method returns the correct value
         """
-        r = AsyncResult(self.cache, None, None, None, True)
+        r = AsyncResult(self.cache, None, None, None, True, None)
 
         # Test that the method raises a ValueError if the task is not finished yet
         with self.assertRaises(ValueError):
@@ -77,7 +84,7 @@ class AsyncResultTest(unittest.TestCase):
         """
         Test that the get method returns the correct value
         """
-        r = AsyncResult(self.cache, None, None, None, True)
+        r = AsyncResult(self.cache, None, None, None, True, None)
         r._value = 42
         r._success = True
         r._ready_event.set()
@@ -90,7 +97,7 @@ class AsyncResultTest(unittest.TestCase):
         """
         Test that the get method raises a TimeoutError if the timeout is exceeded
         """
-        r = AsyncResult(self.cache, None, None, None, True)
+        r = AsyncResult(self.cache, None, None, None, True, None)
         with self.assertRaises(TimeoutError):
             r.get(timeout=0.001)
 
@@ -98,7 +105,7 @@ class AsyncResultTest(unittest.TestCase):
         """
         Test that the get method raises the error if the task has failed
         """
-        r = AsyncResult(self.cache, None, None, None, True)
+        r = AsyncResult(self.cache, None, None, None, True, None)
         r._value = ValueError('test')
         r._success = False
         r._ready_event.set()
@@ -109,7 +116,7 @@ class AsyncResultTest(unittest.TestCase):
         """
         Test that the _set method sets the correct values if the task has succeeded
         """
-        r = AsyncResult(self.cache, None, None, None, True)
+        r = AsyncResult(self.cache, None, None, None, True, None)
         r._set(True, 42)
         self.assertTrue(r._success)
         self.assertEqual(r._value, 42)
@@ -120,7 +127,7 @@ class AsyncResultTest(unittest.TestCase):
         Test that the _set method sets the correct values if the task has failed
         """
         value_error = ValueError('test')
-        r = AsyncResult(self.cache, None, None, None, True)
+        r = AsyncResult(self.cache, None, None, None, True, None)
         r._set(False, value_error)
         self.assertFalse(r._success)
         self.assertEqual(r._value, value_error)
@@ -131,12 +138,12 @@ class AsyncResultTest(unittest.TestCase):
         Test that the _set method deletes the result from the cache if the task has finished
         """
         with self.subTest("delete"):
-            r = AsyncResult(self.cache, None, None, None, True)
+            r = AsyncResult(self.cache, None, None, None, True, None)
             r._set(True, 42)
             self.assertNotIn(r.job_id, self.cache)
 
         with self.subTest("no_delete"):
-            r = AsyncResult(self.cache, None, None, None, False)
+            r = AsyncResult(self.cache, None, None, None, False, None)
             r._set(True, 42)
             self.assertIn(r.job_id, self.cache)
 
@@ -145,7 +152,7 @@ class AsyncResultTest(unittest.TestCase):
         Test that the callback is called if the task has succeeded
         """
         callback = Mock()
-        r = AsyncResult(self.cache, callback, None, None, True)
+        r = AsyncResult(self.cache, callback, None, None, True, None)
         r._set(True, 42)
         callback.assert_called_once_with(42)
 
@@ -155,7 +162,7 @@ class AsyncResultTest(unittest.TestCase):
         """
         callback = Mock()
         value_error = ValueError('test')
-        r = AsyncResult(self.cache, None, callback, None, True)
+        r = AsyncResult(self.cache, None, callback, None, True, None)
         r._set(False, value_error)
         callback.assert_called_once_with(value_error)
 
@@ -174,7 +181,7 @@ class UnorderedAsyncResultIteratorTest(unittest.TestCase):
         """
         with self.subTest("job_counter=0", job_id=None), \
                 patch('mpire.async_result.job_counter', itertools.count(start=0)):
-            r = UnorderedAsyncResultIterator(self.cache, None, None)
+            r = UnorderedAsyncResultIterator(self.cache, None, None, None)
             self.assertEqual(r.job_id, 0)
             self.assertEqual(self.cache, {0: r})
 
@@ -182,7 +189,7 @@ class UnorderedAsyncResultIteratorTest(unittest.TestCase):
 
         with self.subTest("job_counter=10", job_id=None), \
                 patch('mpire.async_result.job_counter', itertools.count(start=10)):
-            r = UnorderedAsyncResultIterator(self.cache, None, None)
+            r = UnorderedAsyncResultIterator(self.cache, None, None, None)
             self.assertEqual(r.job_id, 10)
             self.assertEqual(self.cache, {10: r})
 
@@ -190,27 +197,34 @@ class UnorderedAsyncResultIteratorTest(unittest.TestCase):
 
         with self.subTest("job_counter=0", job_id=42), \
                 patch('mpire.async_result.job_counter', itertools.count(start=0)):
-            r = UnorderedAsyncResultIterator(self.cache, None, 42)
+            r = UnorderedAsyncResultIterator(self.cache, None, 42, None)
             self.assertEqual(r.job_id, 42)
             self.assertEqual(self.cache, {42: r})
 
         with self.subTest("job_id already exists in cache"), \
                 patch('mpire.async_result.job_counter', itertools.count(start=0)):
             with self.assertRaises(AssertionError):
-                UnorderedAsyncResultIterator(self.cache, None, 42)
+                UnorderedAsyncResultIterator(self.cache, None, 42, None)
+
+        with self.subTest(timeout=None):
+            r = UnorderedAsyncResultIterator(self.cache, None, None, None)
+            self.assertIsNone(r._timeout)
+        with self.subTest(timeout=0.001):
+            r = UnorderedAsyncResultIterator(self.cache, None, None, 0.001)
+            self.assertEqual(r._timeout, 0.001)
 
     def test_iter(self):
         """
         Test that the iterator is returned
         """
-        r = UnorderedAsyncResultIterator(self.cache, None, None)
+        r = UnorderedAsyncResultIterator(self.cache, None, None, None)
         self.assertEqual(r, iter(r))
 
     def test_next(self):
         """
         Test that the next method returns the correct value
         """
-        r = UnorderedAsyncResultIterator(self.cache, None, None)
+        r = UnorderedAsyncResultIterator(self.cache, None, None, None)
         r._set(True, 42)
         r._set(True, 1337)
         self.assertEqual(next(r), 42)
@@ -222,7 +236,7 @@ class UnorderedAsyncResultIteratorTest(unittest.TestCase):
         """
         Test that the next method raises a queue.Empty if the timeout is exceeded
         """
-        r = UnorderedAsyncResultIterator(self.cache, None, None)
+        r = UnorderedAsyncResultIterator(self.cache, None, None, None)
         with self.assertRaises(queue.Empty):
             r.next(block=True, timeout=0.001)
         with self.assertRaises(queue.Empty):
@@ -232,7 +246,7 @@ class UnorderedAsyncResultIteratorTest(unittest.TestCase):
         """
         Test that the next method raises a StopIteration if all values have been returned
         """
-        r = UnorderedAsyncResultIterator(self.cache, 2, None)
+        r = UnorderedAsyncResultIterator(self.cache, 2, None, None)
         r._set(True, 42)
         r._set(True, 1337)
         next(r)
@@ -244,7 +258,7 @@ class UnorderedAsyncResultIteratorTest(unittest.TestCase):
         """
         Test that the _set method sets the correct values if the task has succeeded
         """
-        r = UnorderedAsyncResultIterator(self.cache, None, None)
+        r = UnorderedAsyncResultIterator(self.cache, None, None, None)
         r._set(True, 42)
         self.assertIsNone(r._exception)
         self.assertFalse(r._got_exception.is_set())
@@ -258,7 +272,7 @@ class UnorderedAsyncResultIteratorTest(unittest.TestCase):
         """
         Test that the _set method sets the exception if the task has failed
         """
-        r = UnorderedAsyncResultIterator(self.cache, None, None)
+        r = UnorderedAsyncResultIterator(self.cache, None, None, None)
         value_error = ValueError('test')
         r._set(False, value_error)
         self.assertEqual(r._exception, value_error)
@@ -269,7 +283,7 @@ class UnorderedAsyncResultIteratorTest(unittest.TestCase):
         """
         Test that the _set method sets the correct length if it is given
         """
-        r = UnorderedAsyncResultIterator(self.cache, None, None)
+        r = UnorderedAsyncResultIterator(self.cache, None, None, None)
         self.assertIsNone(r._n_tasks)
         r.set_length(2)
         self.assertEqual(r._n_tasks, 2)
@@ -279,7 +293,7 @@ class UnorderedAsyncResultIteratorTest(unittest.TestCase):
         Test that the _set method raises an ValueError if the length is already set. Setting the length to the same
         value should not raise an error.
         """
-        r = UnorderedAsyncResultIterator(self.cache, 2, None)
+        r = UnorderedAsyncResultIterator(self.cache, 2, None, None)
         r.set_length(2)
         with self.assertRaises(ValueError):
             r.set_length(1)
@@ -288,7 +302,7 @@ class UnorderedAsyncResultIteratorTest(unittest.TestCase):
         """
         Test that the get_exception method returns the correct exception
         """
-        r = UnorderedAsyncResultIterator(self.cache, None, None)
+        r = UnorderedAsyncResultIterator(self.cache, None, None, None)
         value_error = ValueError('test')
         r._set(False, value_error)
         self.assertEqual(r.get_exception(), value_error)
@@ -297,7 +311,7 @@ class UnorderedAsyncResultIteratorTest(unittest.TestCase):
         """
         Test that the remove_from_cache method removes the result from the cache
         """
-        r = UnorderedAsyncResultIterator(self.cache, None, None)
+        r = UnorderedAsyncResultIterator(self.cache, None, None, None)
         self.assertIn(r.job_id, self.cache)
         r.remove_from_cache()
         self.assertNotIn(r.job_id, self.cache)

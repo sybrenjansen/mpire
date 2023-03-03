@@ -5,7 +5,7 @@ import signal
 import threading
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Sized, Union
+from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Sized, Union, Tuple
 
 try:
     import numpy as np
@@ -245,7 +245,13 @@ class WorkerPool:
                     else:
                         err, traceback_err = populate_exception(*result)
                         err.__cause__ = traceback_err
-                        self._cache[job_id]._set(False, err)
+
+                        # When a worker_init times out, the pool shuts down and we set all tasks that haven't completed
+                        # yet to failed
+                        job_ids = ((set(self._cache.keys()) - {MAIN_PROCESS, EXIT_FUNC}) if job_id == INIT_FUNC else
+                                   {job_id})
+                        for _job_id in job_ids:
+                            self._cache[_job_id]._set(False, err)
                 except KeyError:
                     # This can happen if the job has already been removed from the cache, which can occur if the job
                     # has been cancelled, or if the job has been removed from the cache because the timeout has
@@ -298,8 +304,13 @@ class WorkerPool:
                     # Obtain task it was working on and set it to failed
                     job_id = self._worker_comms.get_worker_working_on_job(worker_id)
                     self._worker_comms.signal_exception_thrown(job_id)
-                    err_msg = f"Worker-{worker_id} died unexpectedly"
-                    self._cache[job_id]._set(False, RuntimeError(err_msg))
+                    err = RuntimeError(f"Worker-{worker_id} died unexpectedly")
+
+                    # When a worker dies unexpectedly, the pool shuts down and we set all tasks that haven't completed
+                    # yet to failed
+                    job_ids = set(self._cache.keys()) - {MAIN_PROCESS}
+                    for job_id in job_ids:
+                        self._cache[job_id]._set(False, err)
                     return
 
             # Check this every once in a while
@@ -309,24 +320,42 @@ class WorkerPool:
         """
         Check for worker_init/task/worker_exit timeouts
         """
+        def _get_init_config() -> Tuple[str, Optional[float], Callable[[int, float], bool]]:
+            return 'worker_init', self.map_params.worker_init_timeout, self._worker_comms.has_worker_init_timed_out
+
+        def _get_exit_config() -> Tuple[str, Optional[float], Callable[[int, float], bool]]:
+            return 'worker_exit', self.map_params.worker_exit_timeout, self._worker_comms.has_worker_exit_timed_out
+
+        def _get_task_config(_job_id) -> Tuple[str, Optional[float], Callable[[int, float], bool]]:
+            try:
+                return 'task', self._cache[job_id]._timeout, self._worker_comms.has_worker_task_timed_out
+            except KeyError:
+                return 'task', None, self._worker_comms.has_worker_task_timed_out
+
         while not self._worker_comms.exception_thrown() and not self._handler_threads_stop_event.is_set():
 
-            for timeout_var, has_timed_out_func, timeout_func_name in [
-                (self.map_params.worker_init_timeout, self._worker_comms.has_worker_init_timed_out, 'worker_init'),
-                (self.map_params.task_timeout, self._worker_comms.has_worker_task_timed_out, 'task'),
-                (self.map_params.worker_exit_timeout, self._worker_comms.has_worker_exit_timed_out, 'worker_exit'),
-            ]:
-                if timeout_var is not None:
-                    for worker_id in range(self.pool_params.n_jobs):
-                        if has_timed_out_func(worker_id, timeout_var):
+            for worker_id in range(self.pool_params.n_jobs):
+                # Obtain what the worker is working on and obtain corresponding timeout setting
+                job_id = self._worker_comms.get_worker_working_on_job(worker_id)
+                if job_id == INIT_FUNC:
+                    timeout_func_name, timeout_var, has_timed_out_func = _get_init_config()
+                elif job_id == EXIT_FUNC:
+                    timeout_func_name, timeout_var, has_timed_out_func = _get_exit_config()
+                else:
+                    timeout_func_name, timeout_var, has_timed_out_func = _get_task_config(job_id)
 
-                            # Obtain task it was working on and set it to failed
-                            job_id = self._worker_comms.get_worker_working_on_job(worker_id)
-                            self._worker_comms.signal_exception_thrown(job_id)
-                            self._send_kill_signal_to_worker(worker_id)
-                            err_msg = f"Worker-{worker_id} {timeout_func_name} timed out"
-                            self._cache[job_id]._set(False, TimeoutError(err_msg))
-                            return
+                # If timeout has expired, then send kill signal and set job to failed
+                if timeout_var is not None and has_timed_out_func(worker_id, timeout_var):
+                    self._worker_comms.signal_exception_thrown(job_id)
+                    self._send_kill_signal_to_worker(worker_id)
+                    err = TimeoutError(f"Worker-{worker_id} {timeout_func_name} timed out (timeout={timeout_var})")
+
+                    # When a worker_init times out, the pool shuts down and we set all tasks that haven't completed yet
+                    # to failed
+                    job_ids = (set(self._cache.keys()) - {MAIN_PROCESS, EXIT_FUNC}) if job_id == INIT_FUNC else {job_id}
+                    for job_id in job_ids:
+                        self._cache[job_id]._set(False, err)
+                    return
 
             # Check this every once in a while
             time.sleep(0.1)
@@ -693,7 +722,7 @@ class WorkerPool:
 
             # Create async result objects. The imap_iterator container will be used to store the results from the
             # workers. We can yield from that
-            imap_iterator = UnorderedAsyncResultIterator(self._cache, n_tasks)
+            imap_iterator = UnorderedAsyncResultIterator(self._cache, n_tasks, timeout=task_timeout)
             job_id = imap_iterator.job_id
 
             # Create progress bar handler, which receives progress updates from the workers and updates the progress bar
@@ -850,7 +879,7 @@ class WorkerPool:
             self._start_workers()
 
         # Add task to the queue
-        result = AsyncResult(self._cache, callback, error_callback)
+        result = AsyncResult(self._cache, callback, error_callback, timeout=task_timeout)
         self._worker_comms.add_apply_task(result.job_id, func, args, kwargs)
         return result
 

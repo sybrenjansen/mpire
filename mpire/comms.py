@@ -62,45 +62,45 @@ class WorkerComms:
 
         # Queue to pass on tasks to child processes. We keep track of which worker completed the last task and which
         # worker is working on what task
-        self._task_queues = None
-        self._task_idx = None
-        self._worker_running_task_locks = None
-        self._worker_running_task = None
+        self._task_queues: List[mp.JoinableQueue] = None  # type: ignore
+        self._task_idx: int = None  # type: ignore
+        self._worker_running_task_locks: List[mp.RLock] = None  # type: ignore
+        self._worker_running_task: List[mp.Value] = None  # type: ignore
         self._last_completed_task_worker_id = collections.deque()
-        self._worker_working_on_job = None
+        self._worker_working_on_job: List[mp.Value] = None  # type: ignore
 
         # Queue where the child processes can pass on results, and counters to keep track of how many results have been
         # added and received per worker. results_added is a simple list of integers which is only accessed by the worker
         # itself
-        self._results_queue = None
-        self._results_added = None
-        self._results_received = None
+        self._results_queue: mp.JoinableQueue = None  # type: ignore
+        self._results_added: List[int] = None  # type: ignore
+        self._results_received: List[mp.Value] = None  # type: ignore
 
         # Array where the child processes can request a restart
-        self._worker_restart_array = None
+        self._worker_restart_array: List[mp.Value] = None  # type: ignore
         self._worker_restart_condition = self.ctx.Condition(self.ctx.Lock())
 
         # List of Event objects to indicate whether workers are alive
-        self._workers_dead = None
+        self._workers_dead: List[mp.Event] = None  # type: ignore
 
         # Array where the child processes indicate when they started a task, worker_init, and worker_exit used for
         # checking timeouts. The array size is n_jobs * 3, where worker_id * 3 + i is used for indexing. i=0 is used for
         # the worker_init, i=1 for the main task, and i=2 for the worker_exit function.
-        self._workers_time_task_started = None
+        self._workers_time_task_started: List[mp.Value] = None  # type: ignore
 
         # Lock object such that child processes can only throw one at a time. The Event object ensures only one
         # exception can be thrown
         self.exception_lock = self.ctx.Lock()
         self._exception_thrown = self.ctx.Event()
-        self._exception_job_id = None
+        self._exception_job_id: mp.Value = None  # type: ignore
         self._kill_signal_received = self.ctx.Event()
 
         # Array where the number of completed tasks is stored for the progress bar. We don't use the vanilla lock from
         # multiprocessing.Array, but create a lock per worker such that workers can write concurrently.
-        self._tasks_completed_array = None
-        self._progress_bar_last_updated = None
-        self._progress_bar_shutdown = None
-        self._progress_bar_complete = None
+        self._tasks_completed_array: List[mp.Value] = None  # type: ignore
+        self._progress_bar_last_updated: datetime = None  # type: ignore
+        self._progress_bar_shutdown: mp.Event = None  # type: ignore
+        self._progress_bar_complete: mp.Event = None  # type: ignore
 
     ################
     # Initialization
@@ -602,15 +602,6 @@ class WorkerComms:
         :return: Whether the worker is alive
         """
         return not self._workers_dead[worker_id].is_set()
-
-    def wait_for_dead_worker(self, worker_id: int, timeout=None) -> None:
-        """
-        Wait until a worker is dead
-
-        :param worker_id: Worker ID
-        :param timeout: How long to wait for a worker to be dead
-        """
-        self._workers_dead[worker_id].wait(timeout=timeout)
 
     def join_results_queues(self, keep_alive: bool = False) -> None:
         """

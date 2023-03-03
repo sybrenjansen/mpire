@@ -14,7 +14,7 @@ class AsyncResult(object):
     """ Adapted from ``multiprocessing.pool.ApplyResult``. """
 
     def __init__(self, cache: Dict, callback: Optional[Callable], error_callback: Optional[Callable],
-                 job_id: Optional[int] = None, delete_from_cache: bool = True) -> None:
+                 job_id: Optional[int] = None, delete_from_cache: bool = True, timeout: Optional[float] = None) -> None:
         """
         :param cache: Cache for storing intermediate results
         :param callback: Callback function to call when the task is finished. The callback function receives the output
@@ -23,11 +23,14 @@ class AsyncResult(object):
             exception as its argument
         :param job_id: Job ID of the task. If None, a new job ID is generated
         :param delete_from_cache: If True, the result is deleted from the cache when the task is finished
+        :param timeout: Timeout in seconds for a single task. When the timeout is exceeded, MPIRE will raise a
+            ``TimeoutError``. Use ``None`` to disable (default)
         """
         self._cache = cache
         self._callback = callback
         self._error_callback = error_callback
         self._delete_from_cache = delete_from_cache
+        self._timeout = timeout
 
         self.job_id = next(job_counter) if job_id is None else job_id
         self._ready_event = threading.Event()
@@ -102,14 +105,18 @@ class UnorderedAsyncResultIterator:
 
     """ Stores results of a task and provides an iterator to obtain the results in an unordered fashion """
 
-    def __init__(self, cache: Dict, n_tasks: Optional[int], job_id: Optional[int] = None) -> None:
+    def __init__(self, cache: Dict, n_tasks: Optional[int], job_id: Optional[int] = None,
+                 timeout: Optional[float] = None) -> None:
         """
         :param cache: Cache for storing intermediate results
         :param n_tasks: Number of tasks that will be executed. If None, we don't know the lenght yet
         :param job_id: Job ID of the task. If None, a new job ID is generated
+        :param timeout: Timeout in seconds for a single task. When the timeout is exceeded, MPIRE will raise a
+            ``TimeoutError``. Use ``None`` to disable (default)
         """
         self._cache = cache
         self._n_tasks = None
+        self._timeout = timeout
 
         self.job_id = next(job_counter) if job_id is None else job_id
         self._items = collections.deque()
@@ -219,7 +226,8 @@ class UnorderedAsyncResultIterator:
 class AsyncResultWithExceptionGetter(AsyncResult):
 
     def __init__(self, cache: Dict, job_id: int) -> None:
-        super().__init__(cache, callback=None, error_callback=None, job_id=job_id, delete_from_cache=False)
+        super().__init__(cache, callback=None, error_callback=None, job_id=job_id, delete_from_cache=False,
+                         timeout=None)
 
     def get_exception(self) -> Exception:
         """
@@ -240,7 +248,7 @@ class AsyncResultWithExceptionGetter(AsyncResult):
 class UnorderedAsyncExitResultIterator(UnorderedAsyncResultIterator):
 
     def __init__(self, cache: Dict) -> None:
-        super().__init__(cache, n_tasks=None, job_id=EXIT_FUNC)
+        super().__init__(cache, n_tasks=None, job_id=EXIT_FUNC, timeout=None)
 
     def get_results(self) -> List[Any]:
         """

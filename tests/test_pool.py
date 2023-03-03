@@ -396,6 +396,31 @@ class ApplyAsyncTest(unittest.TestCase):
                 pool.apply_async(self._raise_exception, (value_error,), error_callback=callback).get()
             self.assertIsInstance(callback.call_args[0][0], ValueError)
 
+    def test_second_apply_raises(self):
+        """
+        When a second apply task raises an exception, the first task should still be able to complete. I.e., the second
+        worker shouldn't cause the entire pool to shutdown
+        """
+        with self.subTest("exception is raised"), WorkerPool(2) as pool:
+            event = pool.ctx.Event()
+            pool.set_shared_objects(event)
+            first_result = pool.apply_async(self._wait_and_return, (42,))
+            with self.assertRaises(ValueError):
+                pool.apply_async(self._raise_exception_2).get()
+            self.assertFalse(first_result.ready())
+            event.set()
+            self.assertEqual(first_result.get(), 42)
+
+        with self.subTest("timeout is raised"), WorkerPool(2) as pool:
+            event = pool.ctx.Event()
+            pool.set_shared_objects(event)
+            first_result = pool.apply_async(self._wait_and_return, (42,))
+            with self.assertRaises(TimeoutError):
+                pool.apply_async(self._wait_and_return, (1337,), task_timeout=0.01).get()
+            self.assertFalse(first_result.ready())
+            event.set()
+            self.assertEqual(first_result.get(), 42)
+
     @staticmethod
     def _square(x):
         return x * x
@@ -403,6 +428,15 @@ class ApplyAsyncTest(unittest.TestCase):
     @staticmethod
     def _raise_exception(exception):
         raise exception
+
+    @staticmethod
+    def _raise_exception_2(_):
+        raise ValueError
+
+    @staticmethod
+    def _wait_and_return(e, x):
+        e.wait()
+        return x
 
 
 class WorkerIDTest(unittest.TestCase):
@@ -653,8 +687,13 @@ class InitFuncTest(unittest.TestCase):
         """
         When an exception occurs in the init function it should properly shut down
         """
-        with self.assertRaises(ValueError), WorkerPool(n_jobs=4, shared_objects=(None,), use_worker_state=True) as pool:
+        with self.subTest("map"), self.assertRaises(ValueError), \
+                WorkerPool(n_jobs=4, shared_objects=(None,), use_worker_state=True) as pool:
             pool.map(self._f, self.test_data, worker_init=self._init_error)
+
+        with self.subTest("apply"), self.assertRaises(ValueError), \
+                WorkerPool(n_jobs=2, shared_objects=(None,), use_worker_state=True) as pool:
+            pool.apply(self._f, args=(0,), worker_init=self._init_error)
 
     def test_start_methods(self):
         """
@@ -762,9 +801,13 @@ class ExitFuncTest(unittest.TestCase):
         When an exception occurs in the exit function it should properly shut down
         """
         for worker_lifespan in [None, 2]:
-            with self.subTest(worker_lifespan=worker_lifespan), self.assertRaises(ValueError), \
+            with self.subTest("map", worker_lifespan=worker_lifespan), self.assertRaises(ValueError), \
                     WorkerPool(n_jobs=4) as pool:
                 pool.map(self._f2, range(10), worker_lifespan=worker_lifespan, worker_exit=self._exit_error)
+
+        with self.subTest("apply"), self.assertRaises(ValueError), WorkerPool(n_jobs=2) as pool:
+            pool.apply(self._f2, args=(0,), worker_exit=self._exit_error)
+            pool.stop_and_join()
 
     def test_start_methods(self):
         """

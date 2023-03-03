@@ -147,25 +147,28 @@ class AbstractWorker:
 
                     # Run initialization function. If it returns True it means an exception occurred and we should exit.
                     # This is only run if the init function hasn't been run yet.
-                    if self.map_params.worker_init and self._run_init_func(is_apply_func, job_id):
+                    if self.map_params.worker_init and self._run_init_func():
                         return
 
                     results = []
                     for args in next_chunked_args:
 
                         # Try to run this function and save results
-                        results_part, success, should_shut_down = self._run_func(apply_func if is_apply_func else func,
-                                                                                 job_id, args, is_apply_func)
+                        results_part, success, send_results, should_shut_down = self._run_func(
+                            apply_func if is_apply_func else func, job_id, args, is_apply_func
+                        )
                         if should_shut_down:
                             return
-                        results.append((job_id, success, results_part))
+                        if send_results:
+                            results.append((job_id, success, results_part))
 
                         # Update progress bar info
                         if not is_apply_func:
                             self._update_progress_bar()
 
                     # Send results back to main process
-                    self.worker_comms.add_results(self.worker_id, results)
+                    if results:
+                        self.worker_comms.add_results(self.worker_id, results)
                     n_tasks_executed += len(results)
 
                 # In case an exception occurred and we need to return, we want to call task_done no matter what
@@ -337,24 +340,17 @@ class AbstractWorker:
 
         return func, next_chunked_args
 
-    def _run_init_func(self, is_apply_func: bool, job_id: int) -> bool:
+    def _run_init_func(self) -> bool:
         """
         Runs the init function when provided.
 
-        :param is_apply_func: Whether this is an apply function
-        :param job_id: Job ID
         :return: True when the worker needs to shut down, False otherwise
         """
         if self.init_func_completed:
             return False
 
-        # When we're dealing with an apply function, we set the job ID to the task job ID. This is because we want any
-        # error that occurs in the init function to be associated with the task that caused it. Otherwise we wouldn't
-        # be able to properly handle the error.
-        if not is_apply_func:
-            job_id = INIT_FUNC
-        self.worker_comms.signal_worker_working_on_job(self.worker_id, job_id)
-        self.last_job_id = job_id
+        self.worker_comms.signal_worker_working_on_job(self.worker_id, INIT_FUNC)
+        self.last_job_id = INIT_FUNC
 
         def _init_func():
             with TimeIt(self.worker_insights.worker_init_time, self.worker_id):
@@ -364,17 +360,17 @@ class AbstractWorker:
         if self.map_params.worker_init_timeout is not None:
             try:
                 self.worker_comms.signal_worker_init_started(self.worker_id)
-                _, _, should_shut_down = self._run_safely(_init_func, job_id, is_apply_func=False)
+                _, _, _, should_shut_down = self._run_safely(_init_func, INIT_FUNC, is_apply_func=False)
             finally:
                 self.worker_comms.signal_worker_init_completed(self.worker_id)
         else:
-            _, _, should_shut_down = self._run_safely(_init_func, job_id, is_apply_func=False)
+            _, _, _, should_shut_down = self._run_safely(_init_func, INIT_FUNC, is_apply_func=False)
 
         self.init_func_completed = True
         return should_shut_down
 
     def _run_func(self, func: Callable, job_id: Optional[int], args: Optional[List],
-                  is_apply_func: bool) -> Tuple[Any, bool, bool]:
+                  is_apply_func: bool) -> Tuple[Any, bool, bool, bool]:
         """
         Runs the main function when provided.
 
@@ -382,8 +378,9 @@ class AbstractWorker:
         :param job_id: Job ID
         :param args: Args to pass to the function
         :param is_apply_func: Whether this is an apply function
-        :return: Tuple containing results from the function, a boolean value indicating whether the function was run
-            successfully, and a boolean value indicating whether the worker needs to shut down
+        :return: Tuple containing results from the function and boolean values indicating whether the function was run
+            successfully, whether the results should send on the queue, and indicating whether the worker needs to shut
+            down
         """
         if self.last_job_id != job_id:
             self.worker_comms.signal_worker_working_on_job(self.worker_id, job_id)
@@ -396,17 +393,14 @@ class AbstractWorker:
             self.worker_insights.update_n_completed_tasks(self.worker_id)
             return _results
 
-        # Optionally update timeout info
-        if self.map_params.task_timeout is not None:
-            try:
-                self.worker_comms.signal_worker_task_started(self.worker_id)
-                results, success, should_shut_down = self._run_safely(_func, job_id, args, is_apply_func)
-            finally:
-                self.worker_comms.signal_worker_task_completed(self.worker_id)
-        else:
-            results, success, should_shut_down = self._run_safely(_func, job_id, args, is_apply_func)
+        # Update timeout info
+        try:
+            self.worker_comms.signal_worker_task_started(self.worker_id)
+            results, success, send_results, should_shut_down = self._run_safely(_func, job_id, args, is_apply_func)
+        finally:
+            self.worker_comms.signal_worker_task_completed(self.worker_id)
 
-        return results, success, should_shut_down
+        return results, success, send_results, should_shut_down
 
     def _run_exit_func(self) -> bool:
         """
@@ -425,20 +419,22 @@ class AbstractWorker:
         if self.map_params.worker_exit_timeout is not None:
             try:
                 self.worker_comms.signal_worker_exit_started(self.worker_id)
-                results, success, should_shut_down = self._run_safely(_exit_func, EXIT_FUNC, is_apply_func=False)
+                results, success, send_results, should_shut_down = self._run_safely(_exit_func, EXIT_FUNC,
+                                                                                    is_apply_func=False)
             finally:
                 self.worker_comms.signal_worker_exit_completed(self.worker_id)
         else:
-            results, success, should_shut_down = self._run_safely(_exit_func, EXIT_FUNC, is_apply_func=False)
+            results, success, send_results, should_shut_down = self._run_safely(_exit_func, EXIT_FUNC,
+                                                                                is_apply_func=False)
 
         if should_shut_down:
             return True
-        else:
+        elif send_results:
             self.worker_comms.add_results(self.worker_id, [(EXIT_FUNC, True, results)])
-            return False
+        return False
 
     def _run_safely(self, func: Callable, job_id: Optional[int], exception_args: Optional[Any] = None,
-                    is_apply_func: bool = False) -> Tuple[Any, bool, bool]:
+                    is_apply_func: bool = False) -> Tuple[Any, bool, bool, bool]:
         """
         A rather complex locking and exception mechanism is used here so we can make sure we only raise an exception
         when we should. See `_exit_gracefully` for more information.
@@ -447,11 +443,12 @@ class AbstractWorker:
         :param job_id: Job ID
         :param exception_args: Arguments to pass to `_format_args` when an exception occurred
         :param is_apply_func: Whether this is an apply function
-        :return: Tuple containing results from the function, a boolean value indicating whether the function was run
-            successfully, and a boolean value indicating whether the worker needs to shut down
+        :return: Tuple containing results from the function and boolean values indicating whether the function was run
+            successfully, whether the results should send on the queue, and indicating whether the worker needs to shut
+            down
         """
         if self.worker_comms.exception_thrown():
-            return None, True, True
+            return None, True, False, True
 
         try:
 
@@ -463,7 +460,10 @@ class AbstractWorker:
                 self.worker_comms.set_worker_running_task(self.worker_id, False)
 
             except StopWorker:
-                # The main process tells us to stop working, shutting down
+                # The main process tells us to stop working. When we were running an apply function, we're just going to
+                # continue. Otherwise, we're shutting down
+                if is_apply_func:
+                    return None, False, False, False
                 raise
 
             except (Exception, SystemExit) as err:
@@ -474,7 +474,7 @@ class AbstractWorker:
                 if is_apply_func:
                     # Obtain exception and send it back as normal results. False indicates the job has failed
                     exception = self._get_exception(exception_args, True, err)
-                    return exception, False, False
+                    return exception, False, True, False
                 else:
                     # Pass exception to parent process and stop
                     self._raise(job_id, exception_args, err)
@@ -482,10 +482,10 @@ class AbstractWorker:
 
         except StopWorker:
             # Stop working
-            return None, False, True
+            return None, False, False, True
 
         # Carry on
-        return results, True, False
+        return results, True, True, False
 
     def _raise(self, job_id: Optional[int], args: Optional[Any], err: Union[Exception, SystemExit]) -> None:
         """
