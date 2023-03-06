@@ -36,7 +36,7 @@ DATETIME_FORMAT = "%Y-%m-%d, %H:%M:%S"
 class ProgressBarHandler:
 
     def __init__(self, pool_params: WorkerPoolParams, map_params: WorkerMapParams, show_progress_bar: bool,
-                 progress_bar_options: Dict[str, Any], progress_bar_backend: Optional[str], worker_comms: WorkerComms,
+                 progress_bar_options: Dict[str, Any], progress_bar_style: Optional[str], worker_comms: WorkerComms,
                  worker_insights: WorkerInsights) -> None:
         """
         :param pool_params: WorkerPool parameters
@@ -44,13 +44,13 @@ class ProgressBarHandler:
         :param show_progress_bar: When ``True`` will display a progress bar
         :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
          ``tqdm.tqdm()`` for details.
-        :param progress_bar_backend: The progress bar backend to use. Can be one of ``None``, ``std``, or ``notebook``
+        :param progress_bar_style: The progress bar style to use
         :param worker_comms: Worker communication objects (queues, locks, events, ...)
         :param worker_insights: WorkerInsights object which stores the worker insights
         """
         self.show_progress_bar = show_progress_bar
         self.progress_bar_options = progress_bar_options
-        self.progress_bar_backend = progress_bar_backend
+        self.progress_bar_style = progress_bar_style
         self.worker_comms = worker_comms
         self.worker_insights = worker_insights
         if show_progress_bar and DASHBOARD_STARTED_EVENT is not None:
@@ -113,8 +113,8 @@ class ProgressBarHandler:
         :param dashboard_connection_details: Dashboard manager host, port_nr and whether a dashboard is
             started/connected
         """
-        # Obtain the progress bar backend
-        tqdm, in_notebook = get_tqdm(self.progress_bar_backend)
+        # Obtain the progress bar tqdm class
+        tqdm, in_notebook = get_tqdm(self.progress_bar_style)
 
         # Set tqdm and dashboard connection details. This is needed for nested pools and in the case forkserver or
         # spawn is used as start method

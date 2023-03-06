@@ -7,7 +7,7 @@ Dev
 * Added the :meth:`mpire.WorkerPool.apply` and :meth:`mpire.WorkerPool.apply_async` functions (`#63`_)
 * When inside a Jupyter notebook, the progress bar will not automatically switch to a widget anymore. ``tqdm`` cannot
   always determine with certainty that someone is in a notebook or, e.g., a Jupyter console. Another reason is to avoid
-  the many errors people get when having widgets or javascript disabled. See :ref:`progress_bar_backend` for changing
+  the many errors people get when having widgets or javascript disabled. See :ref:`progress_bar_style` for changing
   the progress bar to a widget (`#71`_)
 * The :meth:`mpire.dashboard.connect_to_dashboard` function now raises a `ConnectionRefused` error when the dashboard
   isn't running, instead of silently failing and deadlocking the next ``map`` call with a progress bar (`#68`_)

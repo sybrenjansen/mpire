@@ -249,17 +249,17 @@ class CheckProgressBarOptions(unittest.TestCase):
                 with self.subTest(progress_bar_position=progress_bar_position), self.assertRaises(ValueError):
                     check_progress_bar_options(None, progress_bar_position, None, None)
 
-    def test_progress_bar_backend(self):
+    def test_progress_bar_style(self):
         """
-        Check progress_bar_backend parameter. Should raise when wrong parameter values are used.
+        Check progress_bar_style parameter. Should raise when wrong parameter values are used.
         """
-        for progress_bar_backend in [None, 'std', 'notebook']:
-            with self.subTest(progress_bar_backend=progress_bar_backend):
-                check_progress_bar_options(None, None, None, progress_bar_backend)
+        for progress_bar_style in [None, 'std', 'notebook']:
+            with self.subTest(progress_bar_style=progress_bar_style):
+                check_progress_bar_options(None, None, None, progress_bar_style)
 
-        for progress_bar_backend in [-1, 'rich', {}]:
-            with self.subTest(progress_bar_backend=progress_bar_backend), self.assertRaises(ValueError):
-                check_progress_bar_options(None, None, None, progress_bar_backend)
+        for progress_bar_style in [-1, 'rich', {}]:
+            with self.subTest(progress_bar_style=progress_bar_style), self.assertRaises(ValueError):
+                check_progress_bar_options(None, None, None, progress_bar_style)
 
 
 class CheckMapParametersTest(unittest.TestCase):
@@ -270,7 +270,7 @@ class CheckMapParametersTest(unittest.TestCase):
         self.check_map_parameters_func = partial(
             check_map_parameters, pool_params=self.pool_params, iterable_of_args=[], iterable_len=None,
             max_tasks_active=None, chunk_size=None, n_splits=None, worker_lifespan=None, progress_bar=False,
-            progress_bar_position=None, progress_bar_options=None, progress_bar_backend=None, task_timeout=None,
+            progress_bar_position=None, progress_bar_options=None, progress_bar_style=None, task_timeout=None,
             worker_init_timeout=None, worker_exit_timeout=None
         )
 

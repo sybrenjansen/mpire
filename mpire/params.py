@@ -149,7 +149,7 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
                          iterable_len: Optional[int], max_tasks_active: Optional[int],
                          chunk_size: Optional[Union[int, float]], n_splits: Optional[int],
                          worker_lifespan: Optional[int], progress_bar: bool, progress_bar_position: Optional[int],
-                         progress_bar_options: Optional[Dict[str, Any]], progress_bar_backend: Optional[str],
+                         progress_bar_options: Optional[Dict[str, Any]], progress_bar_style: Optional[str],
                          task_timeout: Optional[float], worker_init_timeout: Optional[float],
                          worker_exit_timeout: Optional[float]) \
         -> Tuple[Optional[int], int, Optional[int], bool, Dict[str, Any]]:
@@ -174,7 +174,7 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
         instead.
     :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
          ``tqdm.tqdm()`` for details. The arguments ``total`` and ``leave`` will be overwritten by MPIRE.
-    :param progress_bar_backend: Backend to use for the progress bar
+    :param progress_bar_style: Style to use for the progress bar
     :param task_timeout: Timeout in seconds for a single task
     :param worker_init_timeout: Timeout in seconds for the ``worker_init`` function
     :param worker_exit_timeout: Timeout in seconds for the ``worker_exit`` function
@@ -214,7 +214,7 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
 
     # Check progress bar parameters and set default values
     progress_bar_options = check_progress_bar_options(progress_bar_options, progress_bar_position, n_tasks,
-                                                      progress_bar_backend)
+                                                      progress_bar_style)
 
     # Timeout parameters can't be negative
     for timeout_var, timeout_var_name in [(task_timeout, 'task_timeout'),
@@ -263,7 +263,7 @@ def check_number(var: Any, var_name: str, allowed_types: Tuple[Type, ...], none_
 
 
 def check_progress_bar_options(progress_bar_options: Optional[Dict[str, Any]], progress_bar_position: Optional[int],
-                               n_tasks: Optional[int], progress_bar_backend: Optional[str]) -> Dict[str, Any]:
+                               n_tasks: Optional[int], progress_bar_style: Optional[str]) -> Dict[str, Any]:
     """
     Check that the progress bar options are properly formatted and set some defaults
 
@@ -275,7 +275,7 @@ def check_progress_bar_options(progress_bar_options: Optional[Dict[str, Any]], p
         DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
         instead.
     :param n_tasks: Number of tasks to process
-    :param progress_bar_backend: Progress bar backend to use
+    :param progress_bar_style: Progress bar style to use
     :return: Dictionary containing the progress bar options
     """
     # Progress bar options should be a dictionary. Issue a warning for "total" and "leave".
@@ -309,8 +309,8 @@ def check_progress_bar_options(progress_bar_options: Optional[Dict[str, Any]], p
     progress_bar_options.setdefault("mininterval", 0.1)
     progress_bar_options.setdefault("maxinterval", 0.5)
 
-    # Get the tqdm progress bar backend. This will also check that the backend is valid
-    get_tqdm(progress_bar_backend)
+    # Check if the tqdm progress bar style is valid
+    get_tqdm(progress_bar_style)
 
     # Check that all progress bar options are properly formatted. We need to that here, because when an error occurs
     # within the progress bar handler it will deadlock (it's not technically impossible to do it there, but might as

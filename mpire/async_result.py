@@ -216,7 +216,7 @@ class UnorderedAsyncResultIterator:
         self._got_exception.wait()
         return self._exception
 
-    def remove_from_cache(self):
+    def remove_from_cache(self) -> None:
         """
         Remove the iterator from the cache
         """

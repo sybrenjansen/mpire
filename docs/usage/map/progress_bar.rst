@@ -72,40 +72,40 @@ It goes without saying that you shouldn't specify the same progress bar position
     dashboard.
 
 
-.. _progress_bar_backend:
+.. _progress_bar_style:
 
-Progress bar backend
---------------------
+Progress bar style
+------------------
 
-You can switch to a notebook widget by changing the ``progress_bar_backend`` parameter to ``'notebook'``:
+You can switch to a notebook widget by changing the ``progress_bar_style`` parameter to ``'notebook'``:
 
 .. code-block:: python
 
     with WorkerPool(n_jobs=4) as pool:
-        pool.map(task, range(100), progress_bar=True, progress_bar_backend='notebook')
+        pool.map(task, range(100), progress_bar=True, progress_bar_style='notebook')
 
-The available backends are:
+The available styles are:
 
-- ``None``: use the default backend (= ``'std'`` , see below)
+- ``None``: use the default style (= ``'std'`` , see below)
 - ``'std'``: use the standard ``tqdm`` progress bar
 - ``'notebook'``: use the Jupyter notebook widget
 
-When in a terminal and using the ``'notebook'`` backend, the progress bar will behave weirdly. This is not recommended.
+When in a terminal and using the ``'notebook'`` style, the progress bar will behave weirdly. This is not recommended.
 
 .. note::
 
-    If you run into problems with getting the progress bar to work in a Jupyter notebook (with ``'notebook'`` backend),
+    If you run into problems with getting the progress bar to work in a Jupyter notebook (with ``'notebook'`` style),
     have a look at :ref:`troubleshooting_progress_bar`.
 
-Changing the default backend
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Changing the default style
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-You can change the default backend by setting the :obj:`mpire.tqdm_utils.PROGRESS_BAR_DEFAULT_BACKEND` variable:
+You can change the default style by setting the :obj:`mpire.tqdm_utils.PROGRESS_BAR_DEFAULT_STYLE` variable:
 
 .. code-block:: python
 
     import mpire.tqdm_utils
 
-    mpire.tqdm_utils.PROGRESS_BAR_DEFAULT_BACKEND = 'notebook'
+    mpire.tqdm_utils.PROGRESS_BAR_DEFAULT_STYLE = 'notebook'
 
 .. _tqdm: https://pypi.python.org/pypi/tqdm

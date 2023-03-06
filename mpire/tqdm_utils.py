@@ -9,27 +9,28 @@ from tqdm.notebook import tqdm as tqdm_notebook
 
 from mpire.signal import DisableKeyboardInterruptSignal
 
-PROGRESS_BAR_DEFAULT_BACKEND = 'std'
+PROGRESS_BAR_DEFAULT_STYLE = 'std'
 TqdmConnectionDetails = Tuple[Optional[bytes], bool]
 
 logger = logging.getLogger(__name__)
 
 
-def get_tqdm(progress_bar_backend: Optional[str]) -> Tuple[Type[tqdm_std], bool]:
+def get_tqdm(progress_bar_style: Optional[str]) -> Tuple[Type[tqdm_std], bool]:
     """
-    Get the tqdm class to use based on the progress bar backend
+    Get the tqdm class to use based on the progress bar style
 
-    :param progress_bar_backend: The progress bar backend to use. Can be one of ``None``, ``std``, or ``notebook``
+    :param progress_bar_style: The progress bar style to use. Can be one of ``None``, ``std``, or ``notebook``
     :return: A tuple containing the tqdm class to use and a boolean indicating whether the progress bar is a notebook
+        widget
     """
-    if progress_bar_backend is None:
-        progress_bar_backend = PROGRESS_BAR_DEFAULT_BACKEND
-    if progress_bar_backend == 'std':
+    if progress_bar_style is None:
+        progress_bar_style = PROGRESS_BAR_DEFAULT_STYLE
+    if progress_bar_style == 'std':
         return tqdm_std, False
-    elif progress_bar_backend == 'notebook':
+    elif progress_bar_style == 'notebook':
         return tqdm_notebook, True
     else:
-        raise ValueError(f'Invalid progress bar backend: {progress_bar_backend}. '
+        raise ValueError(f'Invalid progress bar style: {progress_bar_style}. '
                          f'Use either None (=default), "std", or "notebook"')
 
 
