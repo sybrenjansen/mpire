@@ -113,8 +113,7 @@ It's as simple as setting the ``progress_bar`` parameter to ``True``:
     with WorkerPool(n_jobs=5) as pool:
         results = pool.map(time_consuming_function, range(10), progress_bar=True)
 
-And it will output a nicely formatted tqdm_ progress bar. In case you're running your code inside a notebook it will
-automatically switch to a widget.
+And it will output a nicely formatted tqdm_ progress bar.
 
 MPIRE also offers a dashboard, for which you need to install additional dependencies_. See Dashboard_ for more
 information.

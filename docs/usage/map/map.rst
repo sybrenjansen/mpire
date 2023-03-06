@@ -138,8 +138,8 @@ exception:
 Make sure to first finish the ``imap`` function before starting a new ``map`` function. This holds for all ``map``
 functions.
 
-Not exhausting an lazy ``imap`` function
-----------------------------------------
+Not exhausting a lazy ``imap`` function
+---------------------------------------
 
 If you don't exhaust a lazy ``imap`` function, but do close the pool, the remaining tasks and results will be lost.
 E.g., the following will raise an exception:
