@@ -13,7 +13,10 @@ from mpire.insights import RUNNING_WINDOWS, WorkerInsights
 from tests.utils import MockDatetimeNow
 
 
-def square(x):
+def square(barrier, x):
+    # Wait until all workers are ready
+    barrier.wait()
+
     # time.sleep is added for Windows compatibility, otherwise it says 0.0 time has passed
     sleep(0.001)
     return x * x
@@ -130,7 +133,13 @@ class WorkerInsightsTest(unittest.TestCase):
                 for idx in range(3):
                     with self.subTest('enabled', idx=idx):
 
-                        pool.map(square, self._get_tasks(10), worker_init=self._init, worker_exit=self._exit)
+                        # We add a barrier so we know that all workers are ready. After that, the workers start working.
+                        # Additionally, we set chunk size to 1, max tasks active to 2, and have a time.sleep in the
+                        # get_tasks function, so we know for sure that there will be waiting time
+                        barrier = pool.ctx.Barrier(2)
+                        pool.set_shared_objects(barrier)
+                        pool.map(square, self._get_tasks(10), worker_init=self._init, worker_exit=self._exit,
+                                 max_tasks_active=2, chunk_size=1)
 
                         # Basic sanity checks for the values. Some max task args can be empty, in that case the duration
                         # should be 0 (= no data)
@@ -153,6 +162,8 @@ class WorkerInsightsTest(unittest.TestCase):
 
                 # Disabling should set things to None again
                 with self.subTest('disable'):
+                    barrier = pool.ctx.Barrier(2)
+                    pool.set_shared_objects(barrier)
                     pool.map(square, range(10))
                     self.assertIsNone(pool._worker_insights.insights_manager)
                     self.assertIsNone(pool._worker_insights.insights_manager_lock)
@@ -388,11 +399,11 @@ class WorkerInsightsTest(unittest.TestCase):
             yield i
 
     @staticmethod
-    def _init():
+    def _init(*_):
         # sleep is added for Windows compatibility, otherwise it says 0.0 time has passed
         sleep(0.001)
 
     @staticmethod
-    def _exit():
+    def _exit(*_):
         # sleep is added for Windows compatibility, otherwise it says 0.0 time has passed
         sleep(0.001)
