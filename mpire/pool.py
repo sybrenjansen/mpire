@@ -986,34 +986,9 @@ class WorkerPool:
             if self._worker_comms.exception_thrown():
                 self._handle_exception()
 
+            # Stop handler threads and join and close the results queue if we're not keeping the workers alive
             if not keep_alive:
-                self._handler_threads_stop_event.set()
-
-                # Join results listener thread
-                if self._results_handler_thread is not None and self._results_handler_thread.is_alive():
-                    self._worker_comms.insert_poison_pill_results_listener()
-                    self._results_handler_thread.join()
-                    self._results_handler_thread = None
-
-                # Join restart handler thread
-                if self._restart_handler_thread is not None and self._restart_handler_thread.is_alive():
-                    self._worker_comms.signal_worker_restart_condition()
-                    self._restart_handler_thread.join()
-                    self._restart_handler_thread = None
-
-                # Join timeout handler thread
-                if self._timeout_handler_thread is not None and self._timeout_handler_thread.is_alive():
-                    self._timeout_handler_thread.join()
-                    self._timeout_handler_thread = None
-
-                # Join unexpected death handler thread
-                if (self._unexpected_death_handler_thread is not None and
-                        self._unexpected_death_handler_thread.is_alive()):
-                    self._unexpected_death_handler_thread.join()
-                    self._unexpected_death_handler_thread = None
-
-            # Join and close the results queue if needed
-            if not keep_alive:
+                self._stop_handler_threads()
                 self._worker_comms.join_results_queues(keep_alive=False)
 
     join = stop_and_join
@@ -1030,7 +1005,6 @@ class WorkerPool:
         if not self._worker_comms.exception_thrown():
             self._worker_comms.signal_exception_thrown(MAIN_PROCESS)
             self._cache[MAIN_PROCESS]._set(False, RuntimeError("Pool was terminated"))
-        self._handler_threads_stop_event.set()
 
         # If this function is called from handle_exception, the progress bar is already terminated. If not, we need to
         # terminate it here
@@ -1054,28 +1028,8 @@ class WorkerPool:
         for t in threads:
             t.join()
 
-        # Join results listener thread
-        if self._results_handler_thread is not None and self._results_handler_thread.is_alive():
-            self._worker_comms.insert_poison_pill_results_listener()
-            self._results_handler_thread.join()
-            self._results_handler_thread = None
-
-        # Join restart thread
-        if self._restart_handler_thread is not None and self._restart_handler_thread.is_alive():
-            self._worker_comms.signal_worker_restart_condition()
-            self._restart_handler_thread.join()
-            self._restart_handler_thread = None
-
-        # Join timeout handler thread
-        if self._timeout_handler_thread is not None and self._timeout_handler_thread.is_alive():
-            self._timeout_handler_thread.join()
-            self._timeout_handler_thread = None
-
-        # Join unexpected death handler thread
-        if (self._unexpected_death_handler_thread is not None and
-                self._unexpected_death_handler_thread.is_alive()):
-            self._unexpected_death_handler_thread.join()
-            self._unexpected_death_handler_thread = None
+        # Stop handler threads
+        self._stop_handler_threads()
 
         # Drain and join the queues
         self._worker_comms.drain_queues()
@@ -1178,6 +1132,35 @@ class WorkerPool:
                         os.kill(self._workers[worker_id].pid, signal.SIGUSR1)
                     except (ProcessLookupError, ValueError):
                         pass
+
+    def _stop_handler_threads(self) -> None:
+        """
+        Stops results, restart, timeout, and unexpected death handler threads.
+        """
+        self._handler_threads_stop_event.set()
+
+        # Join results listener thread
+        if self._results_handler_thread is not None and self._results_handler_thread.is_alive():
+            self._worker_comms.insert_poison_pill_results_listener()
+            self._results_handler_thread.join()
+            self._results_handler_thread = None
+
+        # Join restart thread
+        if self._restart_handler_thread is not None and self._restart_handler_thread.is_alive():
+            self._worker_comms.signal_worker_restart_condition()
+            self._restart_handler_thread.join()
+            self._restart_handler_thread = None
+
+        # Join timeout handler thread
+        if self._timeout_handler_thread is not None and self._timeout_handler_thread.is_alive():
+            self._timeout_handler_thread.join()
+            self._timeout_handler_thread = None
+
+        # Join unexpected death handler thread
+        if (self._unexpected_death_handler_thread is not None and
+                self._unexpected_death_handler_thread.is_alive()):
+            self._unexpected_death_handler_thread.join()
+            self._unexpected_death_handler_thread = None
 
     def print_insights(self) -> None:
         """
