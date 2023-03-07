@@ -181,9 +181,8 @@ class AbstractWorker:
             # Max lifespan reached
             self._update_task_insights(force_update=True)
             self._update_progress_bar(force_update=True)
-            if self.map_params.worker_exit:
-                if self._run_exit_func():
-                    return
+            if self.map_params.worker_exit and self._run_exit_func():
+                return
 
         finally:
             # Wait until all results have been received, otherwise the main process might deadlock
