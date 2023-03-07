@@ -44,7 +44,7 @@ class AsyncResultTest(unittest.TestCase):
 
         with self.subTest("job_id already exists in cache"), \
                 patch('mpire.async_result.job_counter', itertools.count(start=0)):
-            with self.assertRaises(AssertionError):
+            with self.assertRaises(ValueError):
                 AsyncResult(self.cache, None, None, 42, True, None)
 
         with self.subTest(timeout=None):
@@ -203,7 +203,7 @@ class UnorderedAsyncResultIteratorTest(unittest.TestCase):
 
         with self.subTest("job_id already exists in cache"), \
                 patch('mpire.async_result.job_counter', itertools.count(start=0)):
-            with self.assertRaises(AssertionError):
+            with self.assertRaises(ValueError):
                 UnorderedAsyncResultIterator(self.cache, None, 42, None)
 
         with self.subTest(timeout=None):

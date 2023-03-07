@@ -36,7 +36,8 @@ class AsyncResult(object):
         self._ready_event = threading.Event()
         self._success = None
         self._value = None
-        assert self.job_id not in self._cache, f"Job ID {job_id} already exists in cache"
+        if self.job_id in self._cache:
+            raise ValueError(f"Job ID {job_id} already exists in cache")
         self._cache[self.job_id] = self
 
     def ready(self) -> bool:
@@ -125,7 +126,8 @@ class UnorderedAsyncResultIterator:
         self._n_returned = 0
         self._exception = None
         self._got_exception = threading.Event()
-        assert self.job_id not in self._cache, f"Job ID {job_id} already exists in cache"
+        if self.job_id in self._cache:
+            raise ValueError(f"Job ID {job_id} already exists in cache")
         self._cache[self.job_id] = self
 
         if n_tasks is not None:
