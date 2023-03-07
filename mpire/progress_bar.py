@@ -255,13 +255,13 @@ class ProgressBarHandler:
         n = details["n"]
         total = details["total"]
         now = datetime.now()
-        remaining_time = (total - n) / details["rate"] if total is not None and details["rate"] else None
+        remaining_time = (total - n) / details["rate"] if total and details["rate"] else None
 
         return {"id": self.progress_bar_id,
                 "success": not failed,
                 "n": n,
                 "total": total,
-                "percentage": None if total is None else n / total,
+                "percentage": None if total else n / total,
                 "duration": str(now - self.start_t).rsplit('.', 1)[0],
                 "remaining": format_seconds(remaining_time, False),
                 "started_raw": self.start_t,
