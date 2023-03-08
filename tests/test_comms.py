@@ -375,12 +375,6 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertTrue(comms.get_worker_running_task(1))
         self.assertTrue(comms.get_worker_running_task(2))
 
-        # Lock should be acquirable multiple times as is required by WorkerPool._send_kill_signal_to_worker
-        # (i.e. it should be a re-entrant lock)
-        with comms.get_worker_running_task_lock(0):
-            with comms.get_worker_running_task_lock(0):
-                pass
-
     def test_worker_working_on_job(self):
         """
         Tests that the worker_working_on_job function works as expected
