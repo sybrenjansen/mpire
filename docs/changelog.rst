@@ -1,8 +1,10 @@
 Changelog
 =========
 
-Dev
----
+2.7.0
+-----
+
+*(2023-03-17)*
 
 * Added the :meth:`mpire.WorkerPool.apply` and :meth:`mpire.WorkerPool.apply_async` functions (`#63`_)
 * When inside a Jupyter notebook, the progress bar will not automatically switch to a widget anymore. ``tqdm`` cannot
