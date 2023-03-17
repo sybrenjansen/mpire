@@ -471,7 +471,7 @@ class AbstractWorker:
                 self.worker_comms.set_worker_running_task(self.worker_id, False)
 
                 if is_apply_func:
-                    # Obtain exception and send it back as normal results. False indicates the job has failed
+                    # Obtain exception and send it back as normal results. The first False indicates the job has failed
                     exception = self._get_exception(exception_args, True, err)
                     return exception, False, True, False
                 else:
@@ -518,9 +518,8 @@ class AbstractWorker:
         :return: Tuple containing the exception type, args, state, and a traceback string
         """
         # Create traceback string
-        traceback_str = "\n\nException occurred in Worker-%d with the following arguments:\n%s\n%s" % (
-            self.worker_id, self._format_args(args, is_apply_func), traceback.format_exc()
-        )
+        traceback_str = f"\n\nException occurred in Worker-{self.worker_id} with the following arguments:\n" \
+                        f"{self._format_args(args, is_apply_func)}\n{traceback.format_exc()}"
 
         # Sometimes an exception cannot be pickled (i.e., we get the _pickle.PickleError: Can't pickle
         # <class ...>: it's not the same object as ...). We check that here by trying the pickle.dumps manually.
@@ -555,8 +554,8 @@ class AbstractWorker:
 
         # Format arguments
         formatted_args = []
-        formatted_args.extend(["Arg %d: %s" % (arg_nr, repr(arg)) for arg_nr, arg in enumerate(func_args)])
-        formatted_args.extend(["Arg %s: %s" % (str(key), repr(value)) for key, value in func_kwargs.items()])
+        formatted_args.extend([f"Arg {arg_nr}: {repr(arg)}" for arg_nr, arg in enumerate(func_args)])
+        formatted_args.extend([f"Arg {str(key)}: {repr(value)}" for key, value in func_kwargs.items()])
 
         return separator.join(formatted_args)
 
@@ -613,7 +612,7 @@ class AbstractWorker:
             args = ()
         elif (isinstance(args, collections.abc.Iterable) and not isinstance(args, (str, bytes)) and not
                 (NUMPY_INSTALLED and isinstance(args, np.ndarray))):
-            args = args
+            pass
         else:
             args = args,
         if kwargs is None:

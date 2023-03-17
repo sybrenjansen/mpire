@@ -407,30 +407,23 @@ class WorkerComms:
 
     def get_results(self, block: bool = True, timeout: Optional[float] = None) -> Any:
         """
-        Obtain the next result from the results queue. We catch the queue.Empty and raise it again after the
-        DelayedKeyboardInterrupt, to clean up the exception traceback whenever a keyboard interrupt is issued. If we
-        wouldn't have done this, there would be an additional queue.Empty error traceback, which we don't want.
+        Obtain the next result from the results queue
 
         :param block: Whether to block (wait for results)
         :param timeout: How long to wait for results in case ``block==True``
         :return: The next result from the queue, which is the result of calling the function
         """
-        queue_empty_error = None
-        with DelayedKeyboardInterrupt():
-            try:
+        try:
+            with DelayedKeyboardInterrupt():
                 worker_id, results = self._results_queue.get(block=block, timeout=timeout)
                 self._results_queue.task_done()
                 if worker_id is not None:
                     self._results_received[worker_id].value += 1
                     self._last_completed_task_worker_id.append(worker_id)
-            except queue.Empty as e:
-                queue_empty_error = e
-            except EOFError:
-                # This can occur when an imap function was running, while at the same time terminate() was called
-                return [(None, None, POISON_PILL)]
-        if queue_empty_error is not None:
-            raise queue_empty_error
-        return results
+                return results
+        except EOFError:
+            # This can occur when an imap function was running, while at the same time terminate() was called
+            return [(None, None, POISON_PILL)]
 
     def reset_results_received(self, worker_id: int) -> None:
         """
@@ -446,9 +439,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        while True:
-            if self._results_received[worker_id].value == self._results_added[worker_id]:
-                break
+        while self._results_received[worker_id].value != self._results_added[worker_id]:
             time.sleep(0.01)
 
     def add_new_map_params(self, map_params: WorkerMapParams) -> None:
