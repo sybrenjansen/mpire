@@ -16,15 +16,6 @@ to include a progress bar is by enabling the ``progress_bar`` flag in any of the
 This will display a basic ``tqdm`` progress bar displaying the time elapsed and remaining, number of tasks completed
 (including a percentage value) and the speed (i.e., number of tasks completed per time unit).
 
-When inside a Jupyter/IPython notebook, the progress bar will change automatically to a native Jupyter widget.
-
-.. note::
-
-    The Jupyter ``tqdm`` widget requires the Javascript widget to run, which might not be enabled by default. You will
-    notice a ``Widget Javascript not detected`` error message in your notebook if so. To remedy this, enable the widget
-    by executing ``jupyter nbextension enable --py --sys-prefix widgetsnbextension`` in your terminal before starting
-    the notebook.
-
 
 Progress bar options
 --------------------
@@ -79,5 +70,42 @@ It goes without saying that you shouldn't specify the same progress bar position
 
     Most progress bar options are completely ignored when in a Jupyter/IPython notebook session or in the MPIRE
     dashboard.
+
+
+.. _progress_bar_style:
+
+Progress bar style
+------------------
+
+You can switch to a notebook widget by changing the ``progress_bar_style`` parameter to ``'notebook'``:
+
+.. code-block:: python
+
+    with WorkerPool(n_jobs=4) as pool:
+        pool.map(task, range(100), progress_bar=True, progress_bar_style='notebook')
+
+The available styles are:
+
+- ``None``: use the default style (= ``'std'`` , see below)
+- ``'std'``: use the standard ``tqdm`` progress bar
+- ``'notebook'``: use the Jupyter notebook widget
+
+When in a terminal and using the ``'notebook'`` style, the progress bar will behave weirdly. This is not recommended.
+
+.. note::
+
+    If you run into problems with getting the progress bar to work in a Jupyter notebook (with ``'notebook'`` style),
+    have a look at :ref:`troubleshooting_progress_bar`.
+
+Changing the default style
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+You can change the default style by setting the :obj:`mpire.tqdm_utils.PROGRESS_BAR_DEFAULT_STYLE` variable:
+
+.. code-block:: python
+
+    import mpire.tqdm_utils
+
+    mpire.tqdm_utils.PROGRESS_BAR_DEFAULT_STYLE = 'notebook'
 
 .. _tqdm: https://pypi.python.org/pypi/tqdm

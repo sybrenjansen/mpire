@@ -1,6 +1,36 @@
 Changelog
 =========
 
+Dev
+---
+
+* Added the :meth:`mpire.WorkerPool.apply` and :meth:`mpire.WorkerPool.apply_async` functions (`#63`_)
+* When inside a Jupyter notebook, the progress bar will not automatically switch to a widget anymore. ``tqdm`` cannot
+  always determine with certainty that someone is in a notebook or, e.g., a Jupyter console. Another reason is to avoid
+  the many errors people get when having widgets or javascript disabled. See :ref:`progress_bar_style` for changing
+  the progress bar to a widget (`#71`_)
+* The :meth:`mpire.dashboard.connect_to_dashboard` function now raises a `ConnectionRefused` error when the dashboard
+  isn't running, instead of silently failing and deadlocking the next ``map`` call with a progress bar (`#68`_)
+* Added support for a progress bar without knowing the size of the iterable. It used to disable the progress bar when
+  the size was unknown
+* Changed how ``max_tasks_active`` is handled. It now applies to the number of tasks that are currently being
+  processed, instead of the number of chunks of tasks, as you would expect from the name. Previously, when the chunk
+  size was set to anything other than 1, the number of active tasks could be higher than ``max_tasks_active``
+* Updated some exception messages and docs (`#69`_)
+* Changed how worker results, restarts, timeouts, unexpected deaths, and exceptions are handled. They are now handled
+  by individual threads such that the main thread is more responsive. The API is the same, so no user changes are
+  needed
+* Mixing multiple ``map`` calls now raises an error (see :ref:`mixing-multiple-map-calls`)
+* Fixed a bug where calling a ``map`` function with a progress bar multiple times in a row didn't display the progress
+  bar correctly
+* Fixed a bug where the dashboard didn't show an error when an exit function raised an exception
+
+.. _#63: https://github.com/Slimmer-AI/mpire/issues/63
+.. _#68: https://github.com/Slimmer-AI/mpire/issues/68
+.. _#69: https://github.com/Slimmer-AI/mpire/issues/69
+.. _#71: https://github.com/Slimmer-AI/mpire/issues/71
+
+
 2.6.0
 -----
 

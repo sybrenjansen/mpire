@@ -21,8 +21,10 @@ RUNNING_WINDOWS = platform.system() == "Windows"
 class ThreadingContext:
 
     Barrier = threading.Barrier
+    Condition = threading.Condition
     Event = threading.Event
     Lock = threading.Lock
+    RLock = threading.RLock
     Thread = threading.Thread
 
     # threading doesn't have Array and JoinableQueue, so we take it from multiprocessing. Both are thread-safe. We need

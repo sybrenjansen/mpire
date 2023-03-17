@@ -53,6 +53,8 @@ def progress_bar_update() -> str:
     result = []
     for pb_id in sorted(_DASHBOARD_TQDM_DICT.keys()):
         progress = _DASHBOARD_TQDM_DICT.get(pb_id)
+        if progress['total'] is None:
+            progress['total'] = '?'
         if progress['success'] and progress['n'] != progress['total']:
             progress['duration'] = str(now - progress['started_raw']).rsplit('.', 1)[0]
             progress['remaining'] = (str(progress['finished_raw'] - now).rsplit('.', 1)[0]
@@ -143,16 +145,24 @@ def connect_to_dashboard(manager_port_nr: int, manager_host: Optional[Union[byte
     """
     global _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
 
-    if not DASHBOARD_STARTED_EVENT.is_set():
-        # Set connection variables so we can connect to the right manager
-        manager_host = manager_host or "127.0.0.1"
-        if isinstance(manager_host, str):
-            manager_host = manager_host.encode()
-        DASHBOARD_MANAGER_HOST.value = manager_host
-        DASHBOARD_MANAGER_PORT.value = manager_port_nr
-        DASHBOARD_STARTED_EVENT.set()
-    else:
+    if DASHBOARD_STARTED_EVENT.is_set():
         raise RuntimeError("You're already connected to a running dashboard")
+
+    # Set connection variables so we can connect to the right manager
+    manager_host = manager_host or "127.0.0.1"
+    if isinstance(manager_host, str):
+        manager_host = manager_host.encode()
+    DASHBOARD_MANAGER_HOST.value = manager_host
+    DASHBOARD_MANAGER_PORT.value = manager_port_nr
+
+    # Try to connect
+    try:
+        get_manager_client_dicts()
+    except ConnectionRefusedError:
+        raise ConnectionRefusedError("Could not connect to dashboard manager at "
+                                     f"{manager_host.decode()}:{manager_port_nr}")
+
+    DASHBOARD_STARTED_EVENT.set()
 
 
 def _run(started: Event, manager_host: str, manager_port_nr: int, dashboard_port_nr: Value,

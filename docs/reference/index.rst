@@ -11,6 +11,14 @@ WorkerPool
   :special-members:
 
 
+AsyncResult
+-----------
+
+.. autoclass:: mpire.async_result.AsyncResult
+  :members:
+  :special-members:
+
+
 Task chunking
 -------------
 .. autofunction:: mpire.utils.chunk_tasks

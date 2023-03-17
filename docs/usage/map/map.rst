@@ -117,3 +117,50 @@ There is a utility function available that does this transformation for you:
 :meth:`mpire.utils.make_single_arguments` expects an iterable of arguments and converts them to tuples accordingly. The
 second argument of this function specifies if you want the function to return a generator or a materialized list. If we
 would like to return a generator we would need to pass on the iterable length as well.
+
+.. _mixing-multiple-map-calls:
+
+Mixing ``map`` functions
+------------------------
+
+``map`` functions cannot be used while another ``map`` function is still running. E.g., the following will raise an
+exception:
+
+.. code-block:: python
+
+    with WorkerPool(n_jobs=4) as pool:
+        imap_results = pool.imap(multiply, zip(range(100), range(100, 200)), iterable_len=100)
+        next(imap_results)  # We actually have to start the imap function
+
+        # Will raise because the imap function is still running
+        map_results = pool.map(square, range(100))
+
+Make sure to first finish the ``imap`` function before starting a new ``map`` function. This holds for all ``map``
+functions.
+
+Not exhausting a lazy ``imap`` function
+---------------------------------------
+
+If you don't exhaust a lazy ``imap`` function, but do close the pool, the remaining tasks and results will be lost.
+E.g., the following will raise an exception:
+
+.. code-block:: python
+
+    with WorkerPool(n_jobs=4) as pool:
+        imap_results = pool.imap(multiply, zip(range(100), range(100, 200)), iterable_len=100)
+        first_result = next(imap_results)  # We actually have to start the imap function
+        pool.terminate()
+
+        # This will raise
+        results = list(imap_results)
+
+Similarly, exiting the ``with`` block terminates the pool as well:
+
+.. code-block:: python
+
+    with WorkerPool(n_jobs=4) as pool:
+        imap_results = pool.imap(multiply, zip(range(100), range(100, 200)), iterable_len=100)
+        first_result = next(imap_results)  # We actually have to start the imap function
+
+    # This will raise
+    results = list(imap_results)

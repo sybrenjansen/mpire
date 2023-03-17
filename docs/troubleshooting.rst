@@ -8,6 +8,47 @@ This section describes some known problems that can arise when using MPIRE.
     :local:
 
 
+.. _troubleshooting_progress_bar:
+
+Progress bar issues with Jupyter notebooks
+------------------------------------------
+
+When using the progress bar in a Jupyter notebook you might encounter some issues. A few of these are described below,
+together with possible solutions.
+
+IProgress not found
+~~~~~~~~~~~~~~~~~~~
+
+When you something like ``ImportError: IProgress not found. Please update jupyter and ipywidgets.``, this means
+``ipywidgets`` is not installed. You can install it using ``pip``:
+
+.. code-block:: bash
+
+    pip install ipywidgets
+
+or conda:
+
+.. code-block:: bash
+
+    conda install -c conda-forge ipywidgets
+
+Have a look at the `ipywidgets documentation`_ for more information.
+
+.. _ipywidgets documentation: https://ipywidgets.readthedocs.io/en/stable/user_install.html
+
+Widget Javascript not detected
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When you see something like ``Widget Javascript not detected. It may not be enabled properly.``, this means the
+Javascript extension is not enabled. You can enable it using the following command before starting your notebook:
+
+.. code-block:: bash
+
+    jupyter nbextension enable --py --sys-prefix widgetsnbextension
+
+Note that you have to restart your notebook server after enabling the extension, simply restarting the kernel won't be
+enough.
+
 Unit tests
 ----------
 

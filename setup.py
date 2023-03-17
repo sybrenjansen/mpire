@@ -34,7 +34,7 @@ if __name__ == '__main__':
                      'sphinxcontrib-images==0.9.2',
                      'sphinx-versions==1.0.1'],
             'testing': ['dataclasses; python_version<"3.7"',
-                        'multiprocess', 
+                        'multiprocess',
                         'numpy',
                         'pywin32==225; platform_system=="Windows" and python_version=="3.6"',
                         'pywin32>=301; platform_system=="Windows" and python_version>"3.6"'],

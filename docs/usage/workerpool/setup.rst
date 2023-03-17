@@ -6,8 +6,8 @@ Starting a WorkerPool
     :local:
 
 The :obj:`mpire.WorkerPool` class controls a pool of worker processes similarly to a ``multiprocessing.Pool``. It
-contains all the ``map`` like functions (with the addition of :meth:`mpire.WorkerPool.map_unordered`), but currently
-lacks the ``apply`` and ``apply_async`` functions.
+contains all the ``map`` like functions (with the addition of :meth:`mpire.WorkerPool.map_unordered`), together with
+the ``apply`` and ``apply_async`` functions (see :ref:`apply-family`).
 
 An :obj:`mpire.WorkerPool` can be started in two different ways. The first and recommended way to do so is using a
 context manager:
@@ -36,7 +36,7 @@ The other way is to do it manually:
 
     # Only needed when keep_alive=True:
     # Clean up pool (this will block until all processing has completed)
-    pool.stop_and_join()
+    pool.stop_and_join()  # or use pool.join() which is an alias of stop_and_join()
 
     # In the case you want to kill the processes, even though they are still busy
     pool.terminate()

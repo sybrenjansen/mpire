@@ -57,8 +57,7 @@ It's as simple as setting the ``progress_bar`` parameter to ``True``:
     with WorkerPool(n_jobs=5) as pool:
         results = pool.map(time_consuming_function, range(10), progress_bar=True)
 
-And it will output a nicely formatted tqdm_ progress bar. In case you're running your code inside a notebook it will
-automatically switch to a widget.
+And it will output a nicely formatted tqdm_ progress bar.
 
 MPIRE also offers a dashboard, for which you need to install additional :ref:`dependencies <dashboarddep>`. See
 :ref:`Dashboard` for more information.
@@ -118,7 +117,7 @@ more information.
 Worker insights
 ---------------
 
-When you're multiprocessing setup isn't performing as you want it to and you have no clue what's causing it, there's the
+When your multiprocessing setup isn't performing as you want it to and you have no clue what's causing it, there's the
 worker insights functionality. This will give you some insight in your setup, but it will not profile the function
 you're running (there are other libraries for that). Instead, it profiles the worker start up time, waiting time and
 working time. When worker init and exit functions are provided it will time those as well.

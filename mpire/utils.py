@@ -4,7 +4,7 @@ import math
 import os
 from datetime import datetime, timedelta
 from multiprocessing import Array, cpu_count
-from typing import Callable, Generator, Iterable, List, Optional, Tuple, Union
+from typing import Callable, Collection, Generator, Iterable, List, Optional, Tuple, Union
 
 try:
     import numpy as np
@@ -60,7 +60,7 @@ def set_cpu_affinity(pid: int, mask: List[int]) -> None:
 
 def chunk_tasks(iterable_of_args: Iterable, iterable_len: Optional[int] = None,
                 chunk_size: Optional[Union[int, float]] = None, n_splits: Optional[int] = None) \
-        -> Generator[Iterable, None, None]:
+        -> Generator[Collection, None, None]:
     """
     Chunks tasks such that individual workers will receive chunks of tasks rather than individual ones, which can
     speed up processing drastically.
@@ -85,8 +85,8 @@ def chunk_tasks(iterable_of_args: Iterable, iterable_len: Optional[int] = None,
         elif hasattr(iterable_of_args, '__len__'):
             n_tasks = len(iterable_of_args)
         else:
-            raise ValueError('Failed to obtain length of iterable when chunk size is None. Remedy: either provide an '
-                             'iterable with a len() function or specify iterable_len in the function call')
+            raise ValueError('Either iterable_len or an iterable with a len() function should be provided when '
+                             'chunk_size and n_splits are None')
 
         # Determine chunk size
         chunk_size = n_tasks / n_splits

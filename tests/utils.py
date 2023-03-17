@@ -36,4 +36,3 @@ class ConditionalDecorator:
             return self.decorator(func)
         else:
             return func
-
