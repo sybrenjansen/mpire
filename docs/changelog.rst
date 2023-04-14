@@ -1,6 +1,13 @@
 Changelog
 =========
 
+2.7.1
+-----
+
+*(2023-04-14)*
+
+* Transfered ownership of the project from `Slimmer AI` to `sybrenjansen`
+
 2.7.0
 -----
 
@@ -27,10 +34,10 @@ Changelog
   bar correctly
 * Fixed a bug where the dashboard didn't show an error when an exit function raised an exception
 
-.. _#63: https://github.com/Slimmer-AI/mpire/issues/63
-.. _#68: https://github.com/Slimmer-AI/mpire/issues/68
-.. _#69: https://github.com/Slimmer-AI/mpire/issues/69
-.. _#71: https://github.com/Slimmer-AI/mpire/issues/71
+.. _#63: https://github.com/sybrenjansen/mpire/issues/63
+.. _#68: https://github.com/sybrenjansen/mpire/issues/68
+.. _#69: https://github.com/sybrenjansen/mpire/issues/69
+.. _#71: https://github.com/sybrenjansen/mpire/issues/71
 
 
 2.6.0
@@ -49,10 +56,10 @@ Changelog
 * Fixed a bug where exceptions with init arguments weren't handled correctly (`#58`_)
 * Fixed a rare and weird bug in Windows that could cause a deadlock (probably fixes `#55`_)
 
-.. _#55: https://github.com/Slimmer-AI/mpire/issues/55
-.. _#56: https://github.com/Slimmer-AI/mpire/issues/56
-.. _#57: https://github.com/Slimmer-AI/mpire/issues/57
-.. _#58: https://github.com/Slimmer-AI/mpire/issues/58
+.. _#55: https://github.com/sybrenjansen/mpire/issues/55
+.. _#56: https://github.com/sybrenjansen/mpire/issues/56
+.. _#57: https://github.com/sybrenjansen/mpire/issues/57
+.. _#58: https://github.com/sybrenjansen/mpire/issues/58
 
 
 2.5.0
@@ -63,7 +70,7 @@ Changelog
 * Added the option to fix the order of tasks given to the workers (`#46`_)
 * Fixed a bug where updated WorkerPool parameters aren't used in subsequent ``map`` calls when ``keep_alive`` is enabled
 
-.. _#46: https://github.com/Slimmer-AI/mpire/issues/46
+.. _#46: https://github.com/sybrenjansen/mpire/issues/46
 
 2.4.0
 -----
@@ -74,8 +81,8 @@ Changelog
   stopped (`#36`_)
 * A WorkerPool can now be started within a thread which isn't the main thread (`#44`_)
 
-.. _#36: https://github.com/Slimmer-AI/mpire/issues/36
-.. _#44: https://github.com/Slimmer-AI/mpire/issues/44
+.. _#36: https://github.com/sybrenjansen/mpire/issues/36
+.. _#44: https://github.com/sybrenjansen/mpire/issues/44
 
 
 2.3.5
@@ -86,8 +93,8 @@ Changelog
 * MPIRE now handles defunct child processes properly, instead of deadlocking (`#34`_)
 * Added benchmark highlights to README (`#38`_)
 
-.. _#34: https://github.com/Slimmer-AI/mpire/issues/34
-.. _#38: https://github.com/Slimmer-AI/mpire/issues/38
+.. _#34: https://github.com/sybrenjansen/mpire/issues/34
+.. _#38: https://github.com/sybrenjansen/mpire/issues/38
 
 
 2.3.4
@@ -101,8 +108,8 @@ Changelog
 * Fixes insights unit tests that could sometime fail because it was too fast
 
 .. _PEP-508: https://www.python.org/dev/peps/pep-0508/#environment-markers
-.. _#30: https://github.com/Slimmer-AI/mpire/issues/30
-.. _#32: https://github.com/Slimmer-AI/mpire/issues/32
+.. _#30: https://github.com/sybrenjansen/mpire/issues/30
+.. _#32: https://github.com/sybrenjansen/mpire/issues/32
 
 2.3.3
 -----
@@ -120,7 +127,7 @@ Changelog
 
 * Included license file in source distribution (`#25`_)
 
-.. _#25: https://github.com/Slimmer-AI/mpire/pull/25
+.. _#25: https://github.com/sybrenjansen/mpire/pull/25
 
 2.3.1
 -----
@@ -129,7 +136,7 @@ Changelog
 
 * Made connecting to the tqdm manager more robust (`#23`_)
 
-.. _#23: https://github.com/Slimmer-AI/mpire/issues/23
+.. _#23: https://github.com/sybrenjansen/mpire/issues/23
 
 2.3.0
 -----
@@ -143,8 +150,8 @@ Changelog
   deprecated and will be removed in MPIRE v2.6.0.
 * Restructured docs and updated several sections for Windows users.
 
-.. _#13: https://github.com/Slimmer-AI/mpire/pull/13
-.. _#15: https://github.com/Slimmer-AI/mpire/issues/15
+.. _#13: https://github.com/sybrenjansen/mpire/pull/13
+.. _#15: https://github.com/sybrenjansen/mpire/issues/15
 
 2.2.1
 -----
@@ -153,7 +160,7 @@ Changelog
 
 * Fixed compatibility with newer tqdm versions (``>= 4.62.2``) (`#11`_)
 
-.. _#11: https://github.com/Slimmer-AI/mpire/issues/11
+.. _#11: https://github.com/sybrenjansen/mpire/issues/11
 
 2.2.0
 -----
@@ -167,8 +174,8 @@ Changelog
   * When using ``dill`` and an exception occurs, or when the exception occurs in an exit function, it can print
     additional ``OSError`` messages in the terminal, but these can be safely ignored.
 
-.. _#6: https://github.com/Slimmer-AI/mpire/issues/6
-.. _#7: https://github.com/Slimmer-AI/mpire/issues/7
+.. _#6: https://github.com/sybrenjansen/mpire/issues/6
+.. _#7: https://github.com/sybrenjansen/mpire/issues/7
 
 2.1.1
 -----

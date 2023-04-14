@@ -10,11 +10,11 @@ if __name__ == '__main__':
     # For Python < 3.7 we need dataclasses. On Windows, we need pywin32 for CPU pinning
     setup(
         name='mpire',
-        version='2.7.0',
-        author='Slimmer AI',
+        version='2.7.1',
+        author='Sybren Jansen',
         description='A Python package for easy multiprocessing, but faster than multiprocessing',
         long_description=read_description(),
-        url='https://github.com/Slimmer-AI/mpire',
+        url='https://github.com/sybrenjansen/mpire',
         license='MIT',
         packages=find_packages(),
         scripts=['bin/mpire-dashboard'],

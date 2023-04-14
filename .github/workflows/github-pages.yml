@@ -28,7 +28,7 @@ jobs:
       uses: peaceiris/actions-gh-pages@v3.8.0
       with:
         deploy_key: ${{ secrets.DEPLOY_GITHUB_PAGES_KEY }}
-        external_repository: slimmer-ai/slimmer-ai.github.io
-        publish_branch: master
+        external_repository: sybrenjansen/sybrenjansen.github.io
+        publish_branch: main
         publish_dir: ./docs/_build/html/
         destination_dir: mpire

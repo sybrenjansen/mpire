@@ -3,8 +3,8 @@ MPIRE (MultiProcessing Is Really Easy)
 
 |Build status| |Docs status| |Pypi status| |Python versions|
 
-.. |Build status| image:: https://github.com/Slimmer-AI/mpire/workflows/Build/badge.svg?branch=master
-.. |Docs status| image:: https://github.com/Slimmer-AI/mpire/workflows/Docs/badge.svg?branch=master
+.. |Build status| image:: https://github.com/sybrenjansen/mpire/workflows/Build/badge.svg?branch=master
+.. |Docs status| image:: https://github.com/sybrenjansen/mpire/workflows/Docs/badge.svg?branch=master
 .. |Pypi status| image:: https://img.shields.io/pypi/v/mpire
 .. |Python versions| image:: https://img.shields.io/pypi/pyversions/mpire
 
@@ -14,7 +14,7 @@ combines the convenient map like functions of ``multiprocessing.Pool`` with the 
 objects of ``multiprocessing.Process``, together with easy-to-use worker state, worker insights, worker init and exit
 functions, timeouts, and progress bar functionality.
 
-Full documentation is available at https://slimmer-ai.github.io/mpire/.
+Full documentation is available at https://sybrenjansen.github.io/mpire/.
 
 Features
 --------
@@ -48,7 +48,7 @@ found here_.
 .. _multiprocess: https://github.com/uqfoundation/multiprocess
 .. _dill: https://pypi.org/project/dill/
 .. _tqdm: https://tqdm.github.io/
-.. _here: https://slimmer-ai.github.io/mpire/troubleshooting.html#windows
+.. _here: https://sybrenjansen.github.io/mpire/troubleshooting.html#windows
 
 
 Installation
@@ -118,8 +118,8 @@ And it will output a nicely formatted tqdm_ progress bar.
 MPIRE also offers a dashboard, for which you need to install additional dependencies_. See Dashboard_ for more
 information.
 
-.. _dependencies: https://slimmer-ai.github.io/mpire/install.html#dashboard
-.. _Dashboard: https://slimmer-ai.github.io/mpire/usage/dashboard.html
+.. _dependencies: https://sybrenjansen.github.io/mpire/install.html#dashboard
+.. _Dashboard: https://sybrenjansen.github.io/mpire/usage/dashboard.html
 
 
 Shared objects
@@ -146,7 +146,7 @@ copying/serialization. Only when you alter the object in the worker function it 
 
 See shared_objects_ for more details.
 
-.. _shared_objects: https://slimmer-ai.github.io/mpire/usage/workerpool/shared_objects.html
+.. _shared_objects: https://sybrenjansen.github.io/mpire/usage/workerpool/shared_objects.html
 
 Worker initialization
 ~~~~~~~~~~~~~~~~~~~~~
@@ -172,7 +172,7 @@ Similarly, you can use the ``worker_exit`` feature to let MPIRE call a function 
 even let this exit function return results, which can be obtained later on. See the `worker_init and worker_exit`_
 section for more information.
 
-.. _worker_init and worker_exit: https://slimmer-ai.github.io/mpire/usage/map/worker_init_exit.html
+.. _worker_init and worker_exit: https://sybrenjansen.github.io/mpire/usage/map/worker_init_exit.html
 
 
 Worker insights
@@ -195,7 +195,7 @@ respectively:
 
 See `worker insights`_ for a more detailed example and expected output.
 
-.. _worker insights: https://slimmer-ai.github.io/mpire/usage/workerpool/worker_insights.html
+.. _worker insights: https://sybrenjansen.github.io/mpire/usage/workerpool/worker_insights.html
 
 
 Timeouts
@@ -228,7 +228,7 @@ When using ``threading`` as start method MPIRE won't be able to interrupt certai
 
 See timeouts_ for more details.
 
-.. _timeouts: https://slimmer-ai.github.io/mpire/usage/map/timeouts.html
+.. _timeouts: https://sybrenjansen.github.io/mpire/usage/map/timeouts.html
 
 Benchmarks
 ----------
@@ -262,7 +262,7 @@ averaged over 5 runs.
 Documentation
 -------------
 
-See the full documentation at https://slimmer-ai.github.io/mpire/ for information on all the other features of MPIRE.
+See the full documentation at https://sybrenjansen.github.io/mpire/ for information on all the other features of MPIRE.
 
 If you want to build the documentation yourself, please install the documentation dependencies by executing:
 
