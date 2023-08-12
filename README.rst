@@ -4,9 +4,17 @@ MPIRE (MultiProcessing Is Really Easy)
 |Build status| |Docs status| |Pypi status| |Python versions|
 
 .. |Build status| image:: https://github.com/sybrenjansen/mpire/workflows/Build/badge.svg?branch=master
+    :target: https://github.com/sybrenjansen/mpire/actions/workflows/python-package.yml
+    :alt: Build status
 .. |Docs status| image:: https://github.com/sybrenjansen/mpire/workflows/Docs/badge.svg?branch=master
-.. |Pypi status| image:: https://img.shields.io/pypi/v/mpire
+    :target: https://sybrenjansen.github.io/mpire/
+    :alt: Documentation
+.. |PyPI status| image:: https://img.shields.io/pypi/v/mpire
+    :target: https://pypi.org/project/mpire/
+    :alt: PyPI project page
 .. |Python versions| image:: https://img.shields.io/pypi/pyversions/mpire
+    :target: https://pypi.org/project/mpire/
+    :alt: PyPI project page
 
 ``MPIRE``, short for MultiProcessing Is Really Easy, is a Python package for multiprocessing. ``MPIRE`` is faster in
 most scenarios, packs more features, and is generally more user-friendly than the default multiprocessing package. It
