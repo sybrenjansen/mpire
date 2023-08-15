@@ -694,7 +694,7 @@ class WorkerComms:
             while not q.empty() or n != 0:
                 q.get(block=True, timeout=1.0)
                 n -= 1
-        except (OSError, EOFError, queue.Empty):
+        except (OSError, EOFError, queue.Empty, ValueError):
             pass
 
         # Join
@@ -703,7 +703,7 @@ class WorkerComms:
                 q.join()
                 q.close()
                 q.join_thread()
-            except OSError:
+            except (OSError, ValueError):
                 pass
 
     ################

@@ -529,7 +529,7 @@ class AbstractWorker:
             pickle.dumps(type(err))
             pickle.dumps(err.args)
             pickle.dumps(err.__dict__)
-        except pickle.PicklingError:
+        except (pickle.PicklingError, TypeError):
             err = CannotPickleExceptionError(repr(err))
 
         return type(err), err.args, err.__dict__, traceback_str
