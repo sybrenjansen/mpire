@@ -1,6 +1,11 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+* Added support for Python 3.11
+
 2.7.1
 -----
 
