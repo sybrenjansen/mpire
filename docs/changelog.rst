@@ -1,10 +1,14 @@
 Changelog
 =========
 
-Unreleased
-----------
+2.8.0
+-----
 
-* Added support for Python 3.11
+*(2023-08-16)*
+
+* Added support for Python 3.11 (`#67`_)
+
+.. _#67: https://github.com/sybrenjansen/mpire/issues/67
 
 2.7.1
 -----

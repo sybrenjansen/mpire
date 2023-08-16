@@ -57,4 +57,5 @@ Contents
     usage/index
     troubleshooting
     reference/index
+    contributing
     changelog
