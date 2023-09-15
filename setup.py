@@ -15,7 +15,7 @@ if __name__ == '__main__':
         long_description=read_description(),
         url='https://github.com/sybrenjansen/mpire',
         license='MIT',
-        packages=find_packages(),
+        packages=find_packages(exclude=['*tests*']),
         scripts=['bin/mpire-dashboard'],
         install_requires=['dataclasses; python_version<"3.7"',
                           'pywin32==225; platform_system=="Windows" and python_version=="3.6"',

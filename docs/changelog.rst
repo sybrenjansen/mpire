@@ -1,6 +1,14 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+* Excluded the ``tests`` folder from MPIRE distributions (`#89`_)
+
+.. _#89: https://github.com/sybrenjansen/mpire/issues/89
+
+
 2.8.0
 -----
 
