@@ -5,7 +5,7 @@ name: Build
 
 on:
   push:
-    #branches: [ master ]
+    branches: [ master ]
   pull_request:
     branches: [ master ]
 
@@ -15,8 +15,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # os: [ubuntu-20.04, windows-latest, macos-11]
-        os: [macos-latest]
+        os: [ubuntu-20.04, windows-latest, macos-11]
         python-version: ["3.6", "3.7", "3.8", "3.9", "3.10", "3.11"]
 
     steps:
@@ -41,5 +40,6 @@ jobs:
     - name: Test with pytest
       timeout-minutes: 30
       run: |
+        # mpire needs a lot of file descriptors, too many for macOS' default settings
         ulimit -n 5000
         pytest -v -o log_cli=true -s
