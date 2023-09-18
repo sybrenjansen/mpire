@@ -1,3 +1,4 @@
+import gc
 import logging
 import os
 import queue
@@ -999,6 +1000,8 @@ class WorkerPool:
         send a sigkill.
         """
         if not self._workers:
+            # Force collection of semaphore objects
+            gc.collect()
             return
 
         # Set exception thrown so workers know to stop fetching new tasks
