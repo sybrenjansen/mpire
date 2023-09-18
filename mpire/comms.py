@@ -1,4 +1,5 @@
 import collections
+import gc
 import multiprocessing as mp
 import queue
 import threading
@@ -231,7 +232,8 @@ class WorkerComms:
         """
         Clears the progress bar shutdown signal
         """
-        self._progress_bar_shutdown.clear()
+        if self._progress_bar_shutdown is not None:
+            self._progress_bar_shutdown.clear()
 
     def signal_progress_bar_complete(self) -> None:
         """
@@ -243,13 +245,15 @@ class WorkerComms:
         """
         Clear that the progress bar is complete
         """
-        self._progress_bar_complete.clear()
+        if self._progress_bar_complete is not None:
+            self._progress_bar_complete.clear()
 
     def wait_until_progress_bar_is_complete(self) -> None:
         """
         Waits until the progress bar is completed
         """
-        self._progress_bar_complete.wait()
+        if self._progress_bar_complete is not None:
+            self._progress_bar_complete.wait()
 
     ################
     # Order modifiers
@@ -635,6 +639,8 @@ class WorkerComms:
         except (queue.Empty, OSError):
             if got_results:
                 dont_wait_event.set()
+        # Force collection of semaphore objects
+        gc.collect()
 
     def drain_queues(self) -> None:
         """
@@ -656,7 +662,7 @@ class WorkerComms:
         if RUNNING_WINDOWS:
             self._drain_and_join_queue(q, join)
         else:
-            process = mp.Process(target=self._drain_and_join_queue, args=(q, join))
+            process = self.ctx.Process(target=self._drain_and_join_queue, args=(q, join))
             process.start()
             process.join(timeout=5)
             if process.is_alive():
