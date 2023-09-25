@@ -1,6 +1,7 @@
 import collections
 import gc
 import multiprocessing as mp
+import platform
 import queue
 import threading
 import time
@@ -639,8 +640,10 @@ class WorkerComms:
         except (queue.Empty, OSError):
             if got_results:
                 dont_wait_event.set()
-        # Force collection of semaphore objects
-        gc.collect()
+        if platform.system() == "Darwin":
+            # Force collection of semaphore objects.
+            # TODO: This is a workaround for semaphore leakage on macOS.
+            gc.collect()
 
     def drain_queues(self) -> None:
         """

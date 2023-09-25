@@ -1,6 +1,7 @@
 import gc
 import logging
 import os
+import platform
 import queue
 import signal
 import threading
@@ -1000,8 +1001,10 @@ class WorkerPool:
         send a sigkill.
         """
         if not self._workers:
-            # Force collection of semaphore objects
-            gc.collect()
+            if platform.system() == "Darwin":
+                # Force collection of semaphore objects.
+                # TODO: This is a workaround for semaphore leakage on macOS.
+                gc.collect()
             return
 
         # Set exception thrown so workers know to stop fetching new tasks
