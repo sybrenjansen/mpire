@@ -155,3 +155,15 @@ Windows support has some caveats:
 * Progress bar is not supported when using threading as start method;
 * When using ``dill`` and an exception occurs, or when the exception occurs in an exit function, it can print additional
   ``OSError`` messages in the terminal, but they can be safely ignored.
+
+
+.. _troubleshooting_macos:
+
+macOS
+-----
+
+macOS is not yet officially supported. It seems to work mostly fine, with these caveats:
+
+* Use ``ulimit -n <number>`` to increase the limit of the number of open files.
+  This is required because mpire uses a lot of file-descriptor based synchronization primitives.
+  `<Number>` should be large enough to accomodate all of mpire's file descriptors, eg. `<number> = 65536`.
