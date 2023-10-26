@@ -261,7 +261,7 @@ class ProgressBarHandler:
                 "success": not failed,
                 "n": n,
                 "total": total,
-                "percentage": None if total else n / total,
+                "percentage": n / total if total else None,
                 "duration": str(now - self.start_t).rsplit('.', 1)[0],
                 "remaining": format_seconds(remaining_time, False),
                 "started_raw": self.start_t,
