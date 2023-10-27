@@ -1556,6 +1556,19 @@ class TimeoutTest(unittest.TestCase):
                 pool.apply(self._f1, self.test_data[0], worker_exit=self._exit2, worker_exit_timeout=0.01)
                 pool.stop_and_join()
 
+    def test_apply_async_multiple_task_timeout(self):
+        """ Test that some apply_async() tasks time out correctly and don't kill the whole pool """
+        print()
+        for start_method in tqdm(TEST_START_METHODS):
+            with WorkerPool(n_jobs=3, start_method=start_method) as pool:
+                results = [pool.apply_async(self._f3, (i,), task_timeout=0.1) for i in range(6)]
+                for i, result in enumerate(results):
+                    if i % 2 == 0:
+                        self.assertEqual(result.get(), i)
+                    else:
+                        with self.assertRaises(TimeoutError):
+                            result.get()
+
     @staticmethod
     def _init1():
         pass
@@ -1580,6 +1593,14 @@ class TimeoutTest(unittest.TestCase):
     @staticmethod
     def _exit2():
         time.sleep(1)
+
+    @staticmethod
+    def _f3(x):
+        if x % 2 == 0:
+            return x
+        else:
+            time.sleep(1)
+            return x
 
 
 class OrderTasksTest(unittest.TestCase):

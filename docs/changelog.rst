@@ -5,11 +5,15 @@ Unreleased
 ----------
 
 * Excluded the ``tests`` folder from MPIRE distributions (`#89`_)
-* Added a workaround for semaphore leakage on macOS and fixed a bug when working in a fork context while the system default is spawn (`#92`_)
+* Added a workaround for semaphore leakage on macOS and fixed a bug when working in a fork context while the system
+  default is spawn (`#92`_)
 * Fix progressbar percentage on dashboard (`#101`_)
+* Fixed a bug where starting multiple `apply_async` tasks with a task timeout didn't interrupt all tasks when the
+  timeout was reached (`#98`_)
 
 .. _#89: https://github.com/sybrenjansen/mpire/issues/89
 .. _#92: https://github.com/sybrenjansen/mpire/issues/92
+.. _#98: https://github.com/sybrenjansen/mpire/issues/98
 .. _#101: https://github.com/sybrenjansen/mpire/pull/101
 
 

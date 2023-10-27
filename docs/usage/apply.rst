@@ -155,4 +155,9 @@ Timeouts
 
 The ``apply`` family of functions also has ``task_timeout``, ``worker_init_timeout`` and ``worker_exit_timeout``
 arguments. These are timeouts for the task, the ``worker_init`` function and the ``worker_exit`` function, respectively.
-They work completely the same as for the ``map`` functions. See :ref:`timeouts` for more information.
+They work similarly as those for the ``map`` functions.
+
+When a single task times out, only that task is cancelled. The other tasks will continue to run. When a worker init or
+exit times out, the entire pool is stopped.
+
+See :ref:`timeouts` for more information.
