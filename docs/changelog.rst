@@ -10,11 +10,13 @@ Unreleased
 * Fix progressbar percentage on dashboard (`#101`_)
 * Fixed a bug where starting multiple `apply_async` tasks with a task timeout didn't interrupt all tasks when the
   timeout was reached (`#98`_)
+* Add testing python 3.12 to workflow and drop 3.6 and 3.7 (`#102`_)
 
 .. _#89: https://github.com/sybrenjansen/mpire/issues/89
 .. _#92: https://github.com/sybrenjansen/mpire/issues/92
 .. _#98: https://github.com/sybrenjansen/mpire/issues/98
 .. _#101: https://github.com/sybrenjansen/mpire/pull/101
+.. _#102: https://github.com/sybrenjansen/mpire/pull/102
 
 
 2.8.0
