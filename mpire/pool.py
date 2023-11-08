@@ -243,7 +243,7 @@ class WorkerPool:
 
                 try:
                     if success:
-                        self._cache[job_id]._set(True, result)
+                        self._cache[job_id]._set(success=True, result=result)
                     else:
                         err, traceback_err = populate_exception(*result)
                         err.__cause__ = traceback_err
@@ -253,7 +253,7 @@ class WorkerPool:
                         job_ids = ((set(self._cache.keys()) - {MAIN_PROCESS, EXIT_FUNC}) if job_id == INIT_FUNC else
                                    {job_id})
                         for _job_id in job_ids:
-                            self._cache[_job_id]._set(False, err)
+                            self._cache[_job_id]._set(success=False, result=err)
                 except KeyError:
                     # This can happen if the job has already been removed from the cache, which can occur if the job
                     # has been cancelled, or if the job has been removed from the cache because the timeout has
@@ -312,7 +312,7 @@ class WorkerPool:
                     # yet to failed
                     job_ids = set(self._cache.keys()) - {MAIN_PROCESS}
                     for job_id in job_ids:
-                        self._cache[job_id]._set(False, err)
+                        self._cache[job_id]._set(success=False, result=err)
                     return
 
             # Check this every once in a while
@@ -346,18 +346,28 @@ class WorkerPool:
                 else:
                     timeout_func_name, timeout_var, has_timed_out_func = _get_task_config(job_id)
 
-                # If timeout has expired, then send kill signal and set job to failed
+                # If timeout has expired set job to failed
                 if timeout_var is not None and has_timed_out_func(worker_id, timeout_var):
-                    self._worker_comms.signal_exception_thrown(job_id)
+
+                    # If we're dealing with a map/init/exit task, send a kill signal to all workers. Otherwise, we're
+                    # dealing with an apply task and we only interrupt that one
+                    kill_pool = (
+                        job_id in {INIT_FUNC, EXIT_FUNC} or
+                        isinstance(self._cache[job_id], UnorderedAsyncResultIterator)
+                    )
+                    if kill_pool:
+                        self._worker_comms.signal_exception_thrown(job_id)
                     self._send_kill_signal_to_worker(worker_id)
-                    err = TimeoutError(f"Worker-{worker_id} {timeout_func_name} timed out (timeout={timeout_var})")
 
                     # When a worker_init times out, the pool shuts down and we set all tasks that haven't completed yet
                     # to failed
+                    err = TimeoutError(f"Worker-{worker_id} {timeout_func_name} timed out (timeout={timeout_var})")
                     job_ids = (set(self._cache.keys()) - {MAIN_PROCESS, EXIT_FUNC}) if job_id == INIT_FUNC else {job_id}
                     for job_id in job_ids:
-                        self._cache[job_id]._set(False, err)
-                    return
+                        self._cache[job_id]._set(success=False, result=err)
+
+                    if kill_pool:
+                        return
 
             # Check this every once in a while
             time.sleep(0.1)
@@ -712,7 +722,8 @@ class WorkerPool:
         try:
             if self._map_running:
                 self._worker_comms.signal_exception_thrown(MAIN_PROCESS)
-                self._cache[MAIN_PROCESS]._set(False, RuntimeError("Cannot call 'map' while another 'map' is running"))
+                self._cache[MAIN_PROCESS]._set(success=False, 
+                                               result=RuntimeError("Cannot call 'map' while another 'map' is running"))
                 self._handle_exception()
             self._map_running = True
 
@@ -1010,7 +1021,7 @@ class WorkerPool:
         # Set exception thrown so workers know to stop fetching new tasks
         if not self._worker_comms.exception_thrown():
             self._worker_comms.signal_exception_thrown(MAIN_PROCESS)
-            self._cache[MAIN_PROCESS]._set(False, RuntimeError("Pool was terminated"))
+            self._cache[MAIN_PROCESS]._set(success=False, result=RuntimeError("Pool was terminated"))
 
         # If this function is called from handle_exception, the progress bar is already terminated. If not, we need to
         # terminate it here

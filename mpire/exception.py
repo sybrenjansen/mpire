@@ -9,7 +9,12 @@ ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
 
 class StopWorker(Exception):
-    """ Exception used to kill workers from the main process """
+    """ Exception used to kill a worker """
+    pass
+
+
+class InterruptWorker(Exception):
+    """ Exception used to interrupt a worker """
     pass
 
 

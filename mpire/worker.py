@@ -28,7 +28,7 @@ from mpire.comms import (APPLY_PILL, EXIT_FUNC, INIT_FUNC, NEW_MAP_PARAMS_PILL, 
                          WorkerComms)
 from mpire.context import FORK_AVAILABLE, MP_CONTEXTS, RUNNING_WINDOWS
 from mpire.dashboard.connection_utils import DashboardConnectionDetails, set_dashboard_connection
-from mpire.exception import CannotPickleExceptionError, StopWorker
+from mpire.exception import CannotPickleExceptionError, InterruptWorker, StopWorker
 from mpire.insights import WorkerInsights
 from mpire.params import WorkerMapParams, WorkerPoolParams
 from mpire.tqdm_utils import TqdmConnectionDetails, TqdmManager
@@ -76,6 +76,7 @@ class AbstractWorker:
         self.progress_bar_n_tasks_completed = 0
         self.max_task_duration_last_updated = datetime.now()
         self.max_task_duration_list = self.worker_insights.get_max_task_duration_list(self.worker_id)
+        self.is_apply_func = False
         self.last_job_id = None
         self.init_func_completed = False
 
@@ -150,12 +151,15 @@ class AbstractWorker:
                     if self.map_params.worker_init and self._run_init_func():
                         return
 
+                    # We only set the is_apply_func flag when we are not running the init/exit functions
+                    self.is_apply_func = is_apply_func
+
                     results = []
                     for args in next_chunked_args:
 
                         # Try to run this function and save results
                         results_part, success, send_results, should_shut_down = self._run_func(
-                            apply_func if is_apply_func else func, job_id, args, is_apply_func
+                            apply_func if is_apply_func else func, job_id, args
                         )
                         if should_shut_down:
                             return
@@ -173,6 +177,7 @@ class AbstractWorker:
 
                 # In case an exception occurred and we need to return, we want to call task_done no matter what
                 finally:
+                    self.is_apply_func = False
                     self.worker_comms.task_done(self.worker_id)
 
                 # Update task insights
@@ -231,22 +236,27 @@ class AbstractWorker:
 
     def _on_exception_exit_gracefully(self, *_) -> None:
         """
-        This function is called when the main process sends a kill signal to this process. This can only mean another
-        child process encountered an error which means we should exit.
+        This function is called when the main process sends a kill signal to this process. This can mean two things:
+        - Another child process encountered an error in either the init/exit or map function which means we should exit
+        - The current task timed out and we should interrupt it
 
         This signal is only send when either the user defined function, worker init or worker exit function is running.
         In such cases, a StopWorker exception is raised, which is caught by the ``_run_safely()`` function, so we can
         quit gracefully.
         """
-        self.worker_comms.signal_kill_signal_received()
-        raise StopWorker
+        exception_job_id = self.worker_comms.get_worker_working_on_job(self.worker_comms.exception_thrown_by())
+        if exception_job_id in {INIT_FUNC, EXIT_FUNC} or not self.is_apply_func:
+            self.worker_comms.signal_kill_signal_received()
+            raise StopWorker
+        else:
+            raise InterruptWorker
 
     def _on_exception_exit_gracefully_windows(self) -> None:
         """
         Windows doesn't fully support signals as Unix-based systems do. Therefore, we have to work around it. This
         function is started in a thread. We wait for a kill signal (Event object) and interrupt the main thread if we
         got it (derived from https://stackoverflow.com/a/40281422). This will raise a KeyboardInterrupt, which is then
-        caught by the signal handler, which in turn checks if we need to raise a StopWorker.
+        caught by the signal handler, which in turn checks if we need to raise a StopWorker or InterruptWorker.
 
         Note: functions that release the GIL won't be interupted by this procedure (e.g., time.sleep). If graceful
         shutdown takes too long the process will be terminated by the main process.
@@ -359,24 +369,22 @@ class AbstractWorker:
         if self.map_params.worker_init_timeout is not None:
             try:
                 self.worker_comms.signal_worker_init_started(self.worker_id)
-                _, _, _, should_shut_down = self._run_safely(_init_func, INIT_FUNC, is_apply_func=False)
+                _, _, _, should_shut_down = self._run_safely(_init_func, INIT_FUNC)
             finally:
                 self.worker_comms.signal_worker_init_completed(self.worker_id)
         else:
-            _, _, _, should_shut_down = self._run_safely(_init_func, INIT_FUNC, is_apply_func=False)
+            _, _, _, should_shut_down = self._run_safely(_init_func, INIT_FUNC)
 
         self.init_func_completed = True
         return should_shut_down
 
-    def _run_func(self, func: Callable, job_id: Optional[int], args: Optional[List],
-                  is_apply_func: bool) -> Tuple[Any, bool, bool, bool]:
+    def _run_func(self, func: Callable, job_id: Optional[int], args: Optional[List]) -> Tuple[Any, bool, bool, bool]:
         """
         Runs the main function when provided.
 
         :param func: Function to call
         :param job_id: Job ID
         :param args: Args to pass to the function
-        :param is_apply_func: Whether this is an apply function
         :return: Tuple containing results from the function and boolean values indicating whether the function was run
             successfully, whether the results should send on the queue, and indicating whether the worker needs to shut
             down
@@ -386,16 +394,16 @@ class AbstractWorker:
             self.last_job_id = job_id
 
         def _func():
-            with TimeIt(self.worker_insights.worker_working_time, self.worker_id,
-                        self.max_task_duration_list, lambda: self._format_args(args, is_apply_func, separator=' | ')):
-                _results = func(*args) if is_apply_func else func(args)
+            with TimeIt(self.worker_insights.worker_working_time, self.worker_id, self.max_task_duration_list,
+                        lambda: self._format_args(args, separator=' | ')):
+                _results = func(*args) if self.is_apply_func else func(args)
             self.worker_insights.update_n_completed_tasks(self.worker_id)
             return _results
 
         # Update timeout info
         try:
             self.worker_comms.signal_worker_task_started(self.worker_id)
-            results, success, send_results, should_shut_down = self._run_safely(_func, job_id, args, is_apply_func)
+            results, success, send_results, should_shut_down = self._run_safely(_func, job_id, args)
         finally:
             self.worker_comms.signal_worker_task_completed(self.worker_id)
 
@@ -418,13 +426,11 @@ class AbstractWorker:
         if self.map_params.worker_exit_timeout is not None:
             try:
                 self.worker_comms.signal_worker_exit_started(self.worker_id)
-                results, success, send_results, should_shut_down = self._run_safely(_exit_func, EXIT_FUNC,
-                                                                                    is_apply_func=False)
+                results, success, send_results, should_shut_down = self._run_safely(_exit_func, EXIT_FUNC)
             finally:
                 self.worker_comms.signal_worker_exit_completed(self.worker_id)
         else:
-            results, success, send_results, should_shut_down = self._run_safely(_exit_func, EXIT_FUNC,
-                                                                                is_apply_func=False)
+            results, success, send_results, should_shut_down = self._run_safely(_exit_func, EXIT_FUNC)
 
         if should_shut_down:
             return True
@@ -432,8 +438,9 @@ class AbstractWorker:
             self.worker_comms.add_results(self.worker_id, [(EXIT_FUNC, True, results)])
         return False
 
-    def _run_safely(self, func: Callable, job_id: Optional[int], exception_args: Optional[Any] = None,
-                    is_apply_func: bool = False) -> Tuple[Any, bool, bool, bool]:
+    def _run_safely(
+        self, func: Callable, job_id: Optional[int], exception_args: Optional[Any] = None
+    ) -> Tuple[Any, bool, bool, bool]:
         """
         A rather complex locking and exception mechanism is used here so we can make sure we only raise an exception
         when we should. See `_exit_gracefully` for more information.
@@ -441,7 +448,6 @@ class AbstractWorker:
         :param func: Function to run
         :param job_id: Job ID
         :param exception_args: Arguments to pass to `_format_args` when an exception occurred
-        :param is_apply_func: Whether this is an apply function
         :return: Tuple containing results from the function and boolean values indicating whether the function was run
             successfully, whether the results should send on the queue, and indicating whether the worker needs to shut
             down
@@ -458,21 +464,19 @@ class AbstractWorker:
                 results = func()
                 self.worker_comms.set_worker_running_task(self.worker_id, False)
 
-            except StopWorker:
-                # The main process tells us to stop working. When we were running an apply function, we're just going to
-                # continue. Otherwise, we're shutting down
-                if is_apply_func:
-                    return None, False, False, False
-                raise
+            except InterruptWorker:
+                # The main process tells us to interrupt the current task. This means a timeout has expired and we
+                # need to stop this task and continue with the next one
+                return None, False, False, False
 
             except (Exception, SystemExit) as err:
                 # An exception occurred inside the provided function. Let the signal handler know it shouldn't raise any
-                # StopWorker exceptions from the parent process anymore, we got this.
+                # StopWorker or InterruptWorker exceptions from the parent process anymore, we got this.
                 self.worker_comms.set_worker_running_task(self.worker_id, False)
 
-                if is_apply_func:
+                if self.is_apply_func:
                     # Obtain exception and send it back as normal results. The first False indicates the job has failed
-                    exception = self._get_exception(exception_args, True, err)
+                    exception = self._get_exception(exception_args, err)
                     return exception, False, True, False
                 else:
                     # Pass exception to parent process and stop
@@ -480,7 +484,8 @@ class AbstractWorker:
                     raise StopWorker
 
         except StopWorker:
-            # Stop working
+            # Either the main process tells us to stop working and kill all workers, or an exception occurred in this
+            # worker and we need to stop.
             return None, False, False, True
 
         # Carry on
@@ -502,24 +507,22 @@ class AbstractWorker:
             self.worker_comms.signal_exception_thrown(job_id)
 
             # Get exception and traceback string
-            exception = self._get_exception(args, False, err)
+            exception = self._get_exception(args, err)
 
             # Add exception
             self.worker_comms.add_results(self.worker_id, [(job_id, False, exception)])
 
-    def _get_exception(self, args: Optional[Any], is_apply_func: bool,
-                       err: Union[Exception, SystemExit]) -> Tuple[type, Tuple, Dict, str]:
+    def _get_exception(self, args: Optional[Any], err: Union[Exception, SystemExit]) -> Tuple[type, Tuple, Dict, str]:
         """
         Try to pickle the exception and create a traceback string
 
         :param args: Funtion arguments where exception was raised
-        :param is_apply_func: Whether this is an apply function
         :param err: Exception that was raised
         :return: Tuple containing the exception type, args, state, and a traceback string
         """
         # Create traceback string
         traceback_str = f"\n\nException occurred in Worker-{self.worker_id} with the following arguments:\n" \
-                        f"{self._format_args(args, is_apply_func)}\n{traceback.format_exc()}"
+                        f"{self._format_args(args)}\n{traceback.format_exc()}"
 
         # Sometimes an exception cannot be pickled (i.e., we get the _pickle.PickleError: Can't pickle
         # <class ...>: it's not the same object as ...). We check that here by trying the pickle.dumps manually.
@@ -534,17 +537,16 @@ class AbstractWorker:
 
         return type(err), err.args, err.__dict__, traceback_str
 
-    def _format_args(self, args: Optional[Any], is_apply_func: bool = False, separator: str = '\n') -> str:
+    def _format_args(self, args: Optional[Any], separator: str = '\n') -> str:
         """
         Format the function arguments to a string form.
 
         :param args: Funtion arguments
-        :param is_apply_func: Whether this is an apply function
         :param separator: String to use as separator between arguments
         :return: String containing the task arguments
         """
         # Determine function arguments
-        if is_apply_func:
+        if self.is_apply_func:
             func_args, func_kwargs = args
         else:
             func_args = args[1] if args and self.worker_comms.keep_order() else args
