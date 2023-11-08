@@ -1,8 +1,8 @@
 Changelog
 =========
 
-Unreleased
-----------
+2.8.1
+-----
 
 * Excluded the ``tests`` folder from MPIRE distributions (`#89`_)
 * Added a workaround for semaphore leakage on macOS and fixed a bug when working in a fork context while the system

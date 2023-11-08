@@ -9,7 +9,7 @@ def read_description():
 if __name__ == '__main__':
     setup(
         name='mpire',
-        version='2.8.0',
+        version='2.8.1',
         author='Sybren Jansen',
         description='A Python package for easy multiprocessing, but faster than multiprocessing',
         long_description=read_description(),
