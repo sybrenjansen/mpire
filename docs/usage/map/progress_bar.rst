@@ -89,6 +89,7 @@ The available styles are:
 - ``None``: use the default style (= ``'std'`` , see below)
 - ``'std'``: use the standard ``tqdm`` progress bar
 - ``'notebook'``: use the Jupyter notebook widget
+- ``'dashboard'``: use only the progressbar on the dashboard
 
 When in a terminal and using the ``'notebook'`` style, the progress bar will behave weirdly. This is not recommended.
 

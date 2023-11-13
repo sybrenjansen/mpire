@@ -29,9 +29,22 @@ def get_tqdm(progress_bar_style: Optional[str]) -> Tuple[Type[tqdm_std], bool]:
         return tqdm_std, False
     elif progress_bar_style == 'notebook':
         return tqdm_notebook, True
+    elif progress_bar_style == 'dashboard':
+        return TqdmDashboardOnly, False
     else:
         raise ValueError(f'Invalid progress bar style: {progress_bar_style}. '
                          f'Use either None (=default), "std", or "notebook"')
+
+
+class TqdmDashboardOnly(tqdm_std):
+
+    """
+    A tqdm class that gives no output, but will still update the internal progress-bar attributes that the
+    dashboard relies on.
+    """
+
+    def display(self, *args, **kwargs) -> None:
+        pass
 
 
 class TqdmPositionRegister:

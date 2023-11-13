@@ -1,6 +1,14 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+* Add the option to only show progress on the dashboard. (`#104`_)
+
+.. _#104: https://github.com/sybrenjansen/mpire/pull/104
+
+
 2.8.1
 -----
 
