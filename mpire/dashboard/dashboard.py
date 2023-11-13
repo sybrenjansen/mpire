@@ -8,7 +8,8 @@ from multiprocessing import Event, Process, Value
 from pkg_resources import resource_string
 from typing import Dict, Optional, Sequence, Union
 
-from flask import escape, Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request
+from markupsafe import escape
 from werkzeug.serving import make_server
 
 from mpire.signal import DisableKeyboardInterruptSignal, ignore_keyboard_interrupt

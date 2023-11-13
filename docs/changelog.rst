@@ -4,9 +4,11 @@ Changelog
 Unreleased
 ----------
 
-* Add the option to only show progress on the dashboard. (`#104`_)
+* Add the option to only show progress on the dashboard. (`#107`_)
+* Import escape directly from markupsafe, instead of from flask. (`#106`_)
 
-.. _#104: https://github.com/sybrenjansen/mpire/pull/104
+.. _#108: https://github.com/sybrenjansen/mpire/pull/107
+.. _#107: https://github.com/sybrenjansen/mpire/issues/106
 
 
 2.8.1
