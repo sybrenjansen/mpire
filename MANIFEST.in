@@ -5,3 +5,4 @@ recursive-include mpire/dashboard/templates *.html
 include requirements.txt
 include setup.cfg
 include MANIFEST.in
+include mpire/py.typed
