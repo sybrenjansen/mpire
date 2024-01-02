@@ -1,14 +1,13 @@
 import ctypes
 import math
 import multiprocessing.context
-import multiprocessing.managers
+import os
 from datetime import datetime
 from functools import partial
 from typing import Dict, Optional, List, Tuple
 
 from mpire.context import RUNNING_WINDOWS
-from mpire.signal import ignore_keyboard_interrupt
-from mpire.utils import format_seconds
+from mpire.utils import PicklableSyncManager, format_seconds
 
 
 class WorkerInsights:
@@ -69,9 +68,8 @@ class WorkerInsights:
             # When we're on Windows, we don't use a Manager as it's giving authentication errors. The max_task_args
             # information is therefore not available on Windows systems. This needs to be fixed at some point in time
             if not RUNNING_WINDOWS:
-                # We need to ignore the KeyboardInterrupt signal for the manager to avoid BrokenPipeErrors
-                self.insights_manager = multiprocessing.managers.SyncManager(ctx=self.ctx)
-                self.insights_manager.start(ignore_keyboard_interrupt)
+                self.insights_manager = PicklableSyncManager(authkey=os.urandom(24))
+                self.insights_manager.start()
             self.insights_manager_lock = self.ctx.Lock()
             self.worker_start_up_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
             self.worker_init_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
@@ -148,9 +146,9 @@ class WorkerInsights:
         now = datetime.now()
         if self.insights_enabled and (force_update or (now - max_task_duration_last_updated).total_seconds() > 2):
             task_durations, task_args = zip(*max_task_duration_list)
-            self.max_task_duration[worker_id * 5:(worker_id + 1) * 5] = task_durations
+            self.max_task_duration[worker_id * 5 : (worker_id + 1) * 5] = task_durations
             with self.insights_manager_lock:
-                self.max_task_args[worker_id * 5:(worker_id + 1) * 5] = task_args
+                self.max_task_args[worker_id * 5 : (worker_id + 1) * 5] = task_args
             max_task_duration_last_updated = now
 
         return max_task_duration_last_updated
@@ -161,6 +159,7 @@ class WorkerInsights:
 
         :return: dictionary containing worker insights
         """
+
         def argsort(seq):
             """
             argsort, as to not be dependent on numpy, by
@@ -214,7 +213,7 @@ class WorkerInsights:
                         top_5_max_task_durations=top_5_max_task_durations,
                         top_5_max_task_args=top_5_max_task_args)
 
-        insights['total_time'] = format_seconds_func(total_time)
+        insights["total_time"] = format_seconds_func(total_time)
 
         # Calculate ratio, mean and standard deviation of different parts of the worker lifespan
         for part, total in (('start_up', total_start_up_time),

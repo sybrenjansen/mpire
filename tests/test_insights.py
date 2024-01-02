@@ -10,6 +10,7 @@ from unittest.mock import patch
 from mpire import WorkerPool
 from mpire.context import DEFAULT_START_METHOD
 from mpire.insights import RUNNING_WINDOWS, WorkerInsights
+from mpire.utils import PicklableSyncManager
 from tests.utils import MockDatetimeNow
 
 
@@ -57,7 +58,7 @@ class WorkerInsightsTest(unittest.TestCase):
                 if RUNNING_WINDOWS:
                     self.assertIsNone(insights.insights_manager)
                 else:
-                    self.assertIsInstance(insights.insights_manager, managers.SyncManager)
+                    self.assertIsInstance(insights.insights_manager, PicklableSyncManager)
                 self.assertIsInstance(insights.worker_start_up_time, ctypes.Array)
                 self.assertIsInstance(insights.worker_init_time, ctypes.Array)
                 self.assertIsInstance(insights.worker_n_completed_tasks, ctypes.Array)
