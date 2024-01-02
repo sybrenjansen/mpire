@@ -6,7 +6,6 @@ from datetime import datetime
 from functools import partial
 from typing import Dict, Optional, List, Tuple
 
-from mpire.context import RUNNING_WINDOWS
 from mpire.utils import PicklableSyncManager, format_seconds
 
 
@@ -65,11 +64,8 @@ class WorkerInsights:
         :param enable_insights: Whether to enable worker insights
         """
         if enable_insights:
-            # When we're on Windows, we don't use a Manager as it's giving authentication errors. The max_task_args
-            # information is therefore not available on Windows systems. This needs to be fixed at some point in time
-            if not RUNNING_WINDOWS:
-                self.insights_manager = PicklableSyncManager(authkey=os.urandom(24))
-                self.insights_manager.start()
+            self.insights_manager = PicklableSyncManager(authkey=os.urandom(24))
+            self.insights_manager.start()
             self.insights_manager_lock = self.ctx.Lock()
             self.worker_start_up_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
             self.worker_init_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
@@ -78,11 +74,7 @@ class WorkerInsights:
             self.worker_working_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
             self.worker_exit_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
             self.max_task_duration = self.ctx.Array(ctypes.c_double, self.n_jobs * 5, lock=False)
-            if RUNNING_WINDOWS:
-                # Doesn't actually do anything, but reduces the amount of if/else statements in other code parts
-                self.max_task_args = [""] * self.n_jobs * 5
-            else:
-                self.max_task_args = self.insights_manager.list([""] * self.n_jobs * 5)
+            self.max_task_args = self.insights_manager.list([""] * self.n_jobs * 5)
         else:
             self.insights_manager = None
             self.insights_manager_lock = None
@@ -187,10 +179,10 @@ class WorkerInsights:
         for idx in sorted_idx:
             if self.max_task_duration[idx] == 0:
                 break
-            if self.max_task_args[idx] == "" and not RUNNING_WINDOWS:
+            if self.max_task_args[idx] == "":
                 continue
             top_5_max_task_durations.append(format_seconds_func(self.max_task_duration[idx]))
-            top_5_max_task_args.append("" if RUNNING_WINDOWS else self.max_task_args[idx])
+            top_5_max_task_args.append(self.max_task_args[idx])
 
         # Populate
         total_start_up_time = sum(self.worker_start_up_time)
@@ -268,9 +260,8 @@ class WorkerInsights:
         insights_str.extend(["",
                              "Top 5 longest tasks",
                              "-------------------"])
-        max_task_duration_args_separator = "" if RUNNING_WINDOWS else " - "
         for task_idx, (duration, args) in enumerate(zip(insights['top_5_max_task_durations'],
                                                         insights['top_5_max_task_args']), start=1):
-            insights_str.append(f"{task_idx}. Time: {duration}{max_task_duration_args_separator}{args}")
+            insights_str.append(f"{task_idx}. Time: {duration} - {args}")
 
         return "\n".join(insights_str)
