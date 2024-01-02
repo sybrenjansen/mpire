@@ -7,13 +7,11 @@ from typing import Any, Dict, Optional, Type
 from tqdm import tqdm as tqdm_type
 
 from mpire.comms import WorkerComms, POISON_PILL
-from mpire.dashboard.connection_utils import (DashboardConnectionDetails, get_dashboard_connection_details,
-                                              set_dashboard_connection)
 from mpire.exception import remove_highlighting
 from mpire.insights import WorkerInsights
 from mpire.params import WorkerMapParams, WorkerPoolParams
 from mpire.signal import DisableKeyboardInterruptSignal
-from mpire.tqdm_utils import get_tqdm, TqdmConnectionDetails, TqdmManager
+from mpire.tqdm_utils import get_tqdm, TqdmManager
 from mpire.utils import format_seconds
 
 # If a user has not installed the dashboard dependencies than the imports below will fail
@@ -81,8 +79,7 @@ class ProgressBarHandler:
 
             # Disable the interrupt signal. We let the thread die gracefully
             with DisableKeyboardInterruptSignal():
-                self.thread = Thread(target=self._progress_bar_handler, args=(TqdmManager.get_connection_details(),
-                                                                              get_dashboard_connection_details()))
+                self.thread = Thread(target=self._progress_bar_handler)
                 self.thread.start()
                 self.thread_started.wait()
 
@@ -104,22 +101,12 @@ class ProgressBarHandler:
                 self.worker_comms.signal_progress_bar_shutdown()
             self.thread.join()
 
-    def _progress_bar_handler(self, tqdm_connection_details: TqdmConnectionDetails,
-                              dashboard_connection_details: DashboardConnectionDetails) -> None:
+    def _progress_bar_handler(self) -> None:
         """
         Keeps track of the progress made by the workers and updates the progress bar accordingly
-
-        :param tqdm_connection_details: Tqdm manager host, and whether the manager is started/connected
-        :param dashboard_connection_details: Dashboard manager host, port_nr and whether a dashboard is
-            started/connected
         """
         # Obtain the progress bar tqdm class
         tqdm, in_notebook = get_tqdm(self.progress_bar_style)
-
-        # Set tqdm and dashboard connection details. This is needed for nested pools and in the case forkserver or
-        # spawn is used as start method
-        TqdmManager.set_connection_details(tqdm_connection_details)
-        set_dashboard_connection(dashboard_connection_details)
 
         # Connect to the tqdm manager
         tqdm_manager = TqdmManager()

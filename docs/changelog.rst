@@ -6,6 +6,7 @@ Unreleased
 
 * Add the option to only show progress on the dashboard. (`#107`_)
 * Import escape directly from markupsafe, instead of from flask. (`#106`_)
+* Progress bars are now supported on Windows.
 
 .. _#108: https://github.com/sybrenjansen/mpire/pull/107
 .. _#107: https://github.com/sybrenjansen/mpire/issues/106

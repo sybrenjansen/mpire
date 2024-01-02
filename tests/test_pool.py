@@ -1068,16 +1068,10 @@ class ProgressBarTest(unittest.TestCase):
         """
         print()
         for start_method in TEST_START_METHODS:
-            with self.subTest(start_method=start_method), \
-                    WorkerPool(n_jobs=2, start_method=start_method) as pool:
-                # Progress bar on Windows with threading is currently not supported
-                if RUNNING_WINDOWS and start_method == 'threading':
-                    with self.assertRaises(ValueError):
-                        pool.map(square, self.test_data, progress_bar=True)
-                else:
-                    results_list = pool.map(square, self.test_data, progress_bar=True)
-                    self.assertIsInstance(results_list, list)
-                    self.assertEqual(self.test_desired_output, results_list)
+            with self.subTest(start_method=start_method), WorkerPool(n_jobs=2, start_method=start_method) as pool:
+                results_list = pool.map(square, self.test_data, progress_bar=True)
+                self.assertIsInstance(results_list, list)
+                self.assertEqual(self.test_desired_output, results_list)
 
 
 class KeepAliveTest(unittest.TestCase):

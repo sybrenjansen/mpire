@@ -1,8 +1,8 @@
 import logging
-from ctypes import c_char
-from multiprocessing import Array, Event, Lock
+from multiprocessing import Lock
 from multiprocessing.managers import SyncManager
-from typing import Optional, Tuple, Type
+import os
+from typing import Optional, Tuple, Type, Union
 
 from tqdm import tqdm as tqdm_std
 from tqdm.notebook import tqdm as tqdm_notebook
@@ -10,7 +10,7 @@ from tqdm.notebook import tqdm as tqdm_notebook
 from mpire.signal import DisableKeyboardInterruptSignal
 
 PROGRESS_BAR_DEFAULT_STYLE = 'std'
-TqdmConnectionDetails = Tuple[Optional[bytes], bool]
+TqdmConnectionDetails = Tuple[Union[str, bytes, None], bytes, bool]
 
 logger = logging.getLogger(__name__)
 
@@ -118,15 +118,16 @@ class TqdmManager:
     POSITION_REGISTER = TqdmPositionRegister()
 
     MANAGER = None
-    MANAGER_HOST = Array(c_char, 10000, lock=True)
-    MANAGER_STARTED = Event()
+    MANAGER_HOST: Union[str, bytes, None] = None
+    MANAGER_AUTHKEY = b""
+    MANAGER_STARTED = False
 
     def __init__(self) -> None:
         """
         Tqdm manager wrapper for syncing multiple progress bars, independent of process start method used.
         """
         # Connect to existing manager, if it exists
-        if self.MANAGER_STARTED.is_set():
+        if self.MANAGER_STARTED:
             self.connect_to_manager()
 
     @classmethod
@@ -137,28 +138,22 @@ class TqdmManager:
         :return: Whether the manager was started
         """
         # Don't do anything when there's already a connected tqdm manager
-        if cls.MANAGER_STARTED.is_set():
+        if cls.MANAGER_STARTED:
             return False
 
         logger.debug("Starting TQDM manager")
 
         # Create manager
         with DisableKeyboardInterruptSignal():
-            cls.MANAGER = SyncManager(authkey=b'mpire_tqdm')
+            cls.MANAGER = SyncManager(authkey=os.urandom(24))
             cls.MANAGER.register('get_tqdm_lock', cls._get_tqdm_lock)
             cls.MANAGER.register('get_tqdm_position_register', cls._get_tqdm_position_register)
             cls.MANAGER.start()
-        cls.MANAGER_STARTED.set()
 
-        # Set host so other processes know where to connect to. On some systems and Python versions address is a bytes
-        # object, on others it's a string. On some it's also prefixed by a null byte which needs to be removed (null
-        # byte doesn't work with Array).
-        address = cls.MANAGER.address
-        if isinstance(address, str):
-            address = address.encode()
-        if address[0] == 0:
-            address = address[1:]
-        cls.MANAGER_HOST.value = address
+        # Set host and authkey so other processes know where to connect to
+        cls.MANAGER_HOST = cls.MANAGER.address
+        cls.MANAGER_AUTHKEY = bytes(cls.MANAGER._authkey)
+        cls.MANAGER_STARTED = True
 
         return True
 
@@ -166,20 +161,10 @@ class TqdmManager:
         """
         Connect to the tqdm manager
         """
-        # Connect to a server. On some systems and Python versions the address is prefixed by a null byte (which was
-        # stripped when setting the host value, due to restrictions in Array). Address needs to be a string.
-        address = self.MANAGER_HOST.value.decode()
-        try:
-            self.MANAGER = SyncManager(address=address, authkey=b'mpire_tqdm')
-            self.MANAGER.register('get_tqdm_lock')
-            self.MANAGER.register('get_tqdm_position_register')
-            self.MANAGER.connect()
-        except FileNotFoundError:
-            address = f"\x00{address}"
-            self.MANAGER = SyncManager(address=address, authkey=b'mpire_tqdm')
-            self.MANAGER.register('get_tqdm_lock')
-            self.MANAGER.register('get_tqdm_position_register')
-            self.MANAGER.connect()
+        self.MANAGER = SyncManager(address=self.MANAGER_HOST, authkey=self.MANAGER_AUTHKEY)
+        self.MANAGER.register('get_tqdm_lock')
+        self.MANAGER.register('get_tqdm_position_register')
+        self.MANAGER.connect()
 
     @classmethod
     def stop_manager(cls) -> None:
@@ -188,8 +173,9 @@ class TqdmManager:
         """
         cls.MANAGER.shutdown()
         cls.MANAGER = None
-        cls.MANAGER_HOST.value = b''
-        cls.MANAGER_STARTED.clear()
+        cls.MANAGER_HOST = None
+        cls.MANAGER_AUTHKEY = b""
+        cls.MANAGER_STARTED = False
 
     @staticmethod
     def _get_tqdm_lock() -> Lock:
@@ -223,9 +209,9 @@ class TqdmManager:
         Obtains the connection details of the tqdm manager. These details are needed to be passed on to child process
         when the start method is either forkserver or spawn.
 
-        :return: TQDM manager host and whether a manager is started/connected
+        :return: TQDM manager host, authkey, and whether a manager is started/connected
         """
-        return cls.MANAGER_HOST.value, cls.MANAGER_STARTED.is_set()
+        return cls.MANAGER_HOST, cls.MANAGER_AUTHKEY, cls.MANAGER_STARTED
 
     @classmethod
     def set_connection_details(cls, tqdm_connection_details: TqdmConnectionDetails) -> None:
@@ -234,8 +220,8 @@ class TqdmManager:
 
         :param tqdm_connection_details: TQDM manager host, and whether a manager is started/connected
         """
-        tqdm_manager_host, tqdm_manager_started = tqdm_connection_details
-        if not cls.MANAGER_STARTED.is_set():
-            cls.MANAGER_HOST.value = tqdm_manager_host
-            if tqdm_manager_started:
-                cls.MANAGER_STARTED.set()
+        tqdm_manager_host, tqdm_manager_authkey, tqdm_manager_started = tqdm_connection_details
+        if not cls.MANAGER_STARTED:
+            cls.MANAGER_HOST = tqdm_manager_host
+            cls.MANAGER_AUTHKEY = tqdm_manager_authkey
+            cls.MANAGER_STARTED = tqdm_manager_started
