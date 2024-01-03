@@ -151,7 +151,6 @@ Windows
 
 Windows support has some caveats:
 
-* When using worker insights the arguments of the top 5 longest tasks are not available;
 * Progress bar is not supported when using threading as start method;
 * When using ``dill`` and an exception occurs, or when the exception occurs in an exit function, it can print additional
   ``OSError`` messages in the terminal, but they can be safely ignored.

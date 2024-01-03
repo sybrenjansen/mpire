@@ -80,7 +80,3 @@ information.
 
     When using `imap` or `imap_unordered` you can view the insights during execution. Simply call ``get_insights()``
     or ``print_insights()`` inside your loop where you process the results.
-
-.. note::
-
-    When using Windows the arguments of the top 5 longest tasks are not available.
