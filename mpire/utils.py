@@ -1,9 +1,11 @@
 import heapq
 import itertools
 import math
+import multiprocessing
 import os
 from datetime import datetime, timedelta
 from multiprocessing import Array, cpu_count
+from multiprocessing.managers import SyncManager
 from typing import Callable, Collection, Generator, Iterable, List, Optional, Tuple, Union
 
 try:
@@ -241,3 +243,42 @@ class TimeIt:
         if self.max_time_array is not None and duration > self.max_time_array[0][0]:
             heapq.heappushpop(self.max_time_array,
                               (duration, self.format_args_func() if self.format_args_func is not None else None))
+
+    
+class PicklableSyncManager:
+    """ SyncManager wrapper that can be pickled """
+    
+    def __init__(self, authkey: bytes) -> None:
+        self.authkey = authkey
+        self.manager = SyncManager(authkey=authkey)
+        
+    def __getattr__(self, item):
+        return getattr(self.manager, item)
+
+    def __getstate__(self) -> dict:
+        """
+        Returns the state excluding the manager object, as this is not picklable. The address of the manager is added
+        to the state instead, which can be used to reconnect to the manager.
+        
+        :return: State dict
+        """
+        state = self.__dict__.copy()
+        state["manager_address"] = self.manager.address
+        del state["manager"]
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """
+        Set the state and reconnect to the manager using the stored address.
+        
+        :param state: State dict
+        """
+        address = state.pop("manager_address")
+        self.__dict__ = state
+        
+        # This line is needed because otherwise we can get "multiprocessing.context.AuthenticationError: digest sent 
+        # was rejected" errors. See https://bugs.python.org/issue7503 for more information
+        multiprocessing.current_process().authkey = self.authkey
+        
+        self.manager = SyncManager(address=address, authkey=self.authkey)
+        self.manager.connect()
