@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from unittest.mock import patch
 from tqdm import tqdm, TqdmKeyError
 
-from mpire.context import DEFAULT_START_METHOD, RUNNING_WINDOWS
+from mpire.context import DEFAULT_START_METHOD
 from mpire.tqdm_utils import get_tqdm
 
 # Typedefs
@@ -206,11 +206,6 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
 
     # If worker lifespan is not None or not a positive integer, raise
     check_number(worker_lifespan, 'worker_lifespan', allowed_types=(int,), none_allowed=True, min_=1)
-
-    # Progress bar is currently not supported on Windows when using threading as start method. For reasons still
-    # unknown we get a TypeError: cannot pickle '_thread.Lock' object.
-    if RUNNING_WINDOWS and progress_bar and pool_params.start_method == "threading":
-        raise ValueError("Progress bar is currently not supported on Windows when using start_method='threading'")
 
     # Check progress bar parameters and set default values
     progress_bar_options = check_progress_bar_options(progress_bar_options, progress_bar_position, n_tasks,

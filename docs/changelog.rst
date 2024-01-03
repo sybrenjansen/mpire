@@ -8,6 +8,7 @@ Unreleased
 * Import escape directly from markupsafe, instead of from flask. (`#106`_)
 * Insights now also work when using the ``forkserver`` and ``spawn`` start methods. (`#104`_)
 * When using insights on Windows the arguments of the top 5 longest tasks are now available as well.
+* Progress bars are now supported on Windows.
 
 .. _#108: https://github.com/sybrenjansen/mpire/pull/107
 .. _#107: https://github.com/sybrenjansen/mpire/issues/106

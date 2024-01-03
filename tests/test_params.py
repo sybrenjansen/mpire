@@ -278,8 +278,6 @@ class CheckMapParametersTest(unittest.TestCase):
         """
         Should raise when wrong parameter values are used
         """
-        pool_params = WorkerPoolParams(None, None)
-
         # Get number of tasks
         with self.subTest('get n_tasks', iterable_of_args=range(100)):
             n_tasks, *_ = self.check_map_parameters_func(iterable_of_args=range(100), iterable_len=None)
@@ -372,14 +370,6 @@ class CheckMapParametersTest(unittest.TestCase):
             args, kwargs = worker_lifespan_call[0], worker_lifespan_call[1]
             self.assertEqual(args[0], 11)
             self.assertDictEqual(kwargs, {"allowed_types": (int,), "none_allowed": True, "min_": 1})
-
-    def test_windows_threading_progress_bar_error(self):
-        """
-        Check that when a progress bar is requested on windows when threading is used, a ValueError is raised.
-        """
-        with patch('mpire.params.RUNNING_WINDOWS', side_effect=True), self.assertRaises(ValueError):
-            pool_params = WorkerPoolParams(2, None, start_method='threading')
-            self.check_map_parameters_func(pool_params=pool_params, progress_bar=True)
 
     def test_timeout(self):
         """
