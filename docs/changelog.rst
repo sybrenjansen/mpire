@@ -10,11 +10,13 @@ Unreleased
 * Insights now also work when using the ``forkserver`` and ``spawn`` start methods. (`#104`_)
 * When using insights on Windows the arguments of the top 5 longest tasks are now available as well.
 * Fixed deprecated ``escape`` import from ``flask`` by importing directly from ``markupsafe``. (`#106`_)
+* Added ``py.typed`` file to prompt ``mypy`` for type checking. (`#108`_)
 
 .. _#96: https://github.com/sybrenjansen/mpire/issues/96
 .. _#107: https://github.com/sybrenjansen/mpire/pull/107
 .. _#104: https://github.com/sybrenjansen/mpire/issues/104
 .. _#106: https://github.com/sybrenjansen/mpire/issues/106
+.. _#108: https://github.com/sybrenjansen/mpire/pull/108
 
 
 2.8.1
