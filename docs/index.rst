@@ -18,7 +18,7 @@ Features
 - Each worker can have its own state and with convenient worker init and exit functionality this state can be easily
   manipulated (e.g., to load a memory-intensive model only once for each worker without the need of sending it through a
   queue)
-- Progress bar support using tqdm_
+- Progress bar support using tqdm_ (``rich`` and notebook widgets are supported)
 - Progress dashboard support
 - Worker insights to provide insight into your multiprocessing efficiency
 - Graceful and user-friendly exception handling

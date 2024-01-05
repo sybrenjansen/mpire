@@ -714,7 +714,7 @@ class WorkerPool:
             iterator_of_chunked_args = chunk_tasks(iterable_of_args, n_tasks, chunk_size, n_splits)
 
         # Grab original lock in case we have a progress bar and we need to restore it
-        tqdm, _ = get_tqdm(progress_bar_style)
+        tqdm = get_tqdm(progress_bar_style)
         original_tqdm_lock = tqdm.get_lock()
         tqdm_manager_owner = False
 

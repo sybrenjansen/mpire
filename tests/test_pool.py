@@ -1,8 +1,10 @@
+import io
 import os
 import time
 import types
 import unittest
 import warnings
+from contextlib import redirect_stderr, redirect_stdout
 from itertools import product, repeat
 from multiprocessing import Barrier, Value
 from threading import current_thread, main_thread, Thread
@@ -1072,6 +1074,37 @@ class ProgressBarTest(unittest.TestCase):
                 results_list = pool.map(square, self.test_data, progress_bar=True)
                 self.assertIsInstance(results_list, list)
                 self.assertEqual(self.test_desired_output, results_list)
+                
+    def test_progres_bar_styles(self):
+        """
+        Test different progress bar styles. The std style will give updates by overwriting the previous line, so all
+        progress update lines will be there (including the 0% from the start). The rich progress bar updates the 
+        widget, so the 0% won't be there. The notebook won't update correctly in a terminal, which is fine. This means
+        it won't show the 100% here. Finally, the dashboard style won't give any output.
+        """
+        print()
+        for progress_bar_style, expected_outputs in [
+            (None, ["None", "0%", "100%", "13/13"]),
+            ('std', ["std", "0%", "100%", "13/13"]),
+            ('rich', ["rich", "100%", "13/13"]),
+            ('notebook', ["notebook", "0%", "0/13"]),
+            ('dashboard', []),
+        ]:
+            # Some progress bars write to stdout, others to stderr. We'll capture both.
+            output = io.StringIO()
+            with self.subTest(progress_bar_style=progress_bar_style), redirect_stderr(output), \
+                    redirect_stdout(output), WorkerPool(n_jobs=2) as pool:
+                results_list = pool.map(square, self.test_data, progress_bar=True,
+                                        progress_bar_style=progress_bar_style, 
+                                        progress_bar_options={"desc": progress_bar_style or "None"})
+                self.assertIsInstance(results_list, list)
+                self.assertEqual(self.test_desired_output, results_list)
+                
+                # Check outputs
+                for expected_output in expected_outputs:
+                    self.assertIn(expected_output, output.getvalue())
+                if not expected_outputs:
+                    self.assertEqual(output.getvalue(), '')
 
 
 class KeepAliveTest(unittest.TestCase):

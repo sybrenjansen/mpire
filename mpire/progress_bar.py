@@ -3,8 +3,9 @@ import traceback
 from datetime import datetime, timedelta
 from threading import Event, Thread
 from typing import Any, Dict, Optional, Type
+import warnings
 
-from tqdm import tqdm as tqdm_type
+from tqdm import TqdmExperimentalWarning, tqdm as tqdm_type
 
 from mpire.comms import WorkerComms, POISON_PILL
 from mpire.exception import remove_highlighting
@@ -106,22 +107,21 @@ class ProgressBarHandler:
         Keeps track of the progress made by the workers and updates the progress bar accordingly
         """
         # Obtain the progress bar tqdm class
-        tqdm, in_notebook = get_tqdm(self.progress_bar_style)
+        tqdm = get_tqdm(self.progress_bar_style)
 
         # Connect to the tqdm manager
         tqdm_manager = TqdmManager()
         tqdm_lock, tqdm_position_register = tqdm_manager.get_lock_and_position_register()
         tqdm.set_lock(tqdm_lock)
-        main_progress_bar = tqdm_position_register.register_progress_bar_position(self.progress_bar_options["position"])
+        tqdm.set_main_progress_bar(
+            tqdm_position_register.register_progress_bar_position(self.progress_bar_options["position"])
+        )
 
-        # In case we're running tqdm in a notebook we need to apply a dirty hack to get progress bars working.
-        # Solution adapted from https://github.com/tqdm/tqdm/issues/485#issuecomment-473338308
-        if in_notebook and not main_progress_bar:
-            print(' ', end='', flush=True)
-
-        # Create progress bar and register the start time
-        tqdm.monitor_interval = False
-        progress_bar = tqdm(**self.progress_bar_options)
+        # Create progress bar and register the start time. Ignore the experimental warning for rich progress bars
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", TqdmExperimentalWarning)
+            tqdm.monitor_interval = False
+            progress_bar = tqdm(**self.progress_bar_options)
         self.start_t = datetime.fromtimestamp(progress_bar.start_t)
 
         # Notify that the main process can continue working. We set it after the progress bar has been created, instead
@@ -152,25 +152,14 @@ class ProgressBarHandler:
                     elif self.worker_comms.kill_signal_received():
                         self._send_dashboard_update(progress_bar, failed=True, traceback_str='Kill signal received')
 
-                # Final update of the progress bar. When we're not in a notebook and this is the main progress bar, we
-                # add as many newlines as the highest progress bar position, such that new output is added after the
-                # progress bars.
-                progress_bar.refresh()
-                if in_notebook:
-                    progress_bar.close()
-                else:
-                    progress_bar.disable = True
-                    if main_progress_bar:
-                        progress_bar.fp.write('\n' * (tqdm_position_register.get_highest_progress_bar_position() + 1))
+                # Final update of the progress bar
+                progress_bar.final_refresh(tqdm_position_register.get_highest_progress_bar_position())
                 break
 
             # Check if the total has been updated. It could be that we didn't know the total number of tasks at the
-            # beginning, but we do now. In a notebook we also need to update the max value of the progress bar widget.
+            # beginning, but we do now.
             if self.total_updated.is_set():
-                progress_bar.total = self.total
-                if in_notebook:
-                    progress_bar.container.children[1].max = self.total
-                progress_bar.refresh()
+                progress_bar.update_total(self.total)
                 self._send_dashboard_update(progress_bar)
                 self.total_updated.clear()
 
@@ -180,12 +169,7 @@ class ProgressBarHandler:
 
             # Update progress bar
             progress_bar.update(tasks_completed - progress_bar.n)
-
-            # Force a refresh when we're at 100%
             if progress_bar.n == progress_bar.total:
-                if in_notebook:
-                    progress_bar.close()
-                progress_bar.refresh()
                 self.worker_comms.signal_progress_bar_complete()
                 self.worker_comms.wait_until_progress_bar_is_complete()
                 self._send_dashboard_update(progress_bar)
