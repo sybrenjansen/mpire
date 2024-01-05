@@ -2,12 +2,10 @@ import itertools
 import math
 import multiprocessing as mp
 import warnings
-from io import StringIO
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sized, Tuple, Type, Union
 
-from dataclasses import dataclass, field
-from unittest.mock import patch
-from tqdm import tqdm, TqdmKeyError
+from tqdm import TqdmKeyError
 
 from mpire.context import DEFAULT_START_METHOD
 from mpire.tqdm_utils import get_tqdm
@@ -295,6 +293,11 @@ def check_progress_bar_options(progress_bar_options: Optional[Dict[str, Any]], p
                           "precedence", RuntimeWarning, stacklevel=2)
         else:
             progress_bar_options["position"] = progress_bar_position
+            
+    # We currently do not support the position parameter for rich progress bars. Although this can be implemented by
+    # using a single rich progress bar for all workers and using `add_task`, but this is not trivial to implement.
+    if progress_bar_style == "rich" and "position" in progress_bar_options:
+        raise NotImplementedError("The 'position' parameter is currently not supported for rich progress bars")
 
     # Set some defaults and overwrite others
     progress_bar_options["total"] = n_tasks
@@ -305,14 +308,13 @@ def check_progress_bar_options(progress_bar_options: Optional[Dict[str, Any]], p
     progress_bar_options.setdefault("maxinterval", 0.5)
 
     # Check if the tqdm progress bar style is valid
-    get_tqdm(progress_bar_style)
+    tqdm = get_tqdm(progress_bar_style)
 
-    # Check that all progress bar options are properly formatted. We need to that here, because when an error occurs
+    # Check that all progress bar options are properly formatted. We need to do that here, because when an error occurs
     # within the progress bar handler it will deadlock (it's not technically impossible to do it there, but might as
     # well do it here)
     try:
-        with patch(progress_bar_options.get('file', 'sys.stderr'), new=StringIO()):
-            tqdm(**progress_bar_options)
+        tqdm.check_options(progress_bar_options)
     except (TqdmKeyError, TypeError) as e:
         raise e from ValueError("There's an error in progress_bar_options. Either one of the parameters doesn't exist "
                                 "or it's not properly formatted. See tqdm.tqdm() for details.")

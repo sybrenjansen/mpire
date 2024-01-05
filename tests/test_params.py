@@ -249,15 +249,19 @@ class CheckProgressBarOptions(unittest.TestCase):
                 with self.subTest(progress_bar_position=progress_bar_position), self.assertRaises(ValueError):
                     check_progress_bar_options(None, progress_bar_position, None, None)
 
+            # progress_bar_position is not supported for rich progress bars
+            with self.assertRaises(NotImplementedError):
+                check_progress_bar_options(None, 1, None, 'rich')
+
     def test_progress_bar_style(self):
         """
         Check progress_bar_style parameter. Should raise when wrong parameter values are used.
         """
-        for progress_bar_style in [None, 'std', 'notebook']:
+        for progress_bar_style in [None, 'std', 'rich', 'notebook']:
             with self.subTest(progress_bar_style=progress_bar_style):
                 check_progress_bar_options(None, None, None, progress_bar_style)
 
-        for progress_bar_style in [-1, 'rich', {}]:
+        for progress_bar_style in [-1, 'poor', {}]:
             with self.subTest(progress_bar_style=progress_bar_style), self.assertRaises(ValueError):
                 check_progress_bar_options(None, None, None, progress_bar_style)
 
