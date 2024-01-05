@@ -9,7 +9,12 @@ from typing import Optional, Tuple, Type, Union
 
 from tqdm import TqdmExperimentalWarning, tqdm as tqdm_std
 from tqdm.notebook import tqdm as tqdm_notebook
-from tqdm.rich import tqdm as tqdm_rich
+try:
+    from tqdm.rich import tqdm as tqdm_rich
+    RICH_AVAILABLE = True
+except ImportError:
+    tqdm_rich = None
+    RICH_AVAILABLE = False
 
 from mpire.signal import DisableKeyboardInterruptSignal
 
@@ -93,35 +98,42 @@ class TqdmMpireStd(TqdmMpire, tqdm_std):
             self.fp.write('\n' * (highest_progress_bar_position + 1))
 
 
-class TqdmMpireRich(TqdmMpire, tqdm_rich):
-    """ A tqdm class that shows a rich progress bar. """
+if RICH_AVAILABLE:
+    class TqdmMpireRich(TqdmMpire, tqdm_rich):
+        """ A tqdm class that shows a rich progress bar. """
 
-    @classmethod
-    def check_options(cls, options: dict) -> None:
-        """
-        Check whether the options passed to the tqdm class are valid. This function should raise an exception when the
-        options are invalid.
+        @classmethod
+        def check_options(cls, options: dict) -> None:
+            """
+            Check whether the options passed to the tqdm class are valid. This function should raise an exception when the
+            options are invalid.
 
-        For rich progress bars we disable the progress bar, because we don't want to show the progress bar in the
-        terminal. For some reason, redirecting stdout/stderr makes the rich progress bar not work properly afterwards.
+            For rich progress bars we disable the progress bar, because we don't want to show the progress bar in the
+            terminal. For some reason, redirecting stdout/stderr makes the rich progress bar not work properly afterwards.
 
-        :param options: Options passed to the tqdm class
-        """
-        options = options.copy()
-        if "options" not in options:
-            options["options"] = {"disable": True}
-        else:
-            options["options"]["disable"] = True
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", TqdmExperimentalWarning)
-            cls(**options)
+            :param options: Options passed to the tqdm class
+            """
+            options = options.copy()
+            if "options" not in options:
+                options["options"] = {"disable": True}
+            else:
+                options["options"]["disable"] = True
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", TqdmExperimentalWarning)
+                cls(**options)
 
-    def display(self, *args, **kwargs) -> None:
-        """
-        Display the progress bar and force a refresh of the widget. The refresh is needed to show the final update.
-        """
-        super().display(*args, **kwargs)
-        self._prog.refresh()
+        def display(self, *args, **kwargs) -> None:
+            """
+            Display the progress bar and force a refresh of the widget. The refresh is needed to show the final update.
+            """
+            super().display(*args, **kwargs)
+            self._prog.refresh()
+
+else:
+    class TqdmMpireRich(TqdmMpire):
+        
+        def __init__(self, *args, **kwargs) -> None:
+            raise ImportError("rich is not installed. Please install rich to use rich progress bars.")
 
 
 class TqdmMpireNotebook(TqdmMpire, tqdm_notebook):

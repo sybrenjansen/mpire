@@ -34,7 +34,7 @@ The available styles are:
 
 - ``None``: use the default style (= ``'std'`` , see below)
 - ``'std'``: use the standard ``tqdm`` progress bar
-- ``'rich'``: use the rich progress bar
+- ``'rich'``: use the rich progress bar (requires the ``rich`` package to be installed, see :ref:`richdep`)
 - ``'notebook'``: use the Jupyter notebook widget
 - ``'dashboard'``: use only the progress bar on the dashboard
 
