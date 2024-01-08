@@ -2,10 +2,10 @@ import getpass
 import inspect
 import socket
 from functools import partial
-from typing import Callable, Dict, List, Sequence, Union
+from typing import Callable, Dict, List, Sequence, Tuple, Union
 
 
-def get_two_available_ports(port_range: Sequence) -> tuple[int, int]:
+def get_two_available_ports(port_range: Sequence) -> Tuple[int, int]:
     """
     Get two available ports, one from the start and one from the end of the range
 
@@ -40,7 +40,7 @@ def get_two_available_ports(port_range: Sequence) -> tuple[int, int]:
             break
     
     if len(available_ports) != 2:
-        raise OSError(f"Dashboard Manager Server: there are not enough ports available: {port_range=}")
+        raise OSError(f"Dashboard Manager Server: there are not enough ports available: {port_range}")
     
     return tuple(sorted(available_ports))
      
