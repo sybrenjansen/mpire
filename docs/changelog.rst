@@ -6,11 +6,12 @@ Unreleased
 
 * Added support for the ``rich`` progress bar style (`#96`_)
 * Added the option to only show progress on the dashboard. (`#107`_)
-* Progress bars are now supported on Windows.
+* Progress bars are now supported on Windows when using threading as start method.
 * Insights now also work when using the ``forkserver`` and ``spawn`` start methods. (`#104`_)
 * When using insights on Windows the arguments of the top 5 longest tasks are now available as well.
 * Fixed deprecated ``escape`` import from ``flask`` by importing directly from ``markupsafe``. (`#106`_)
 * Fixed :meth:`mpire.dashboard.start_dashboard` freeze when there are no two ports available. (`#112`_)
+* Added :meth:`mpire.dashboard.shutdown_dashboard` to shutdown the dashboard.
 * Added ``py.typed`` file to prompt ``mypy`` for type checking. (`#108`_)
 
 .. _#96: https://github.com/sybrenjansen/mpire/issues/96

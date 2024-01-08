@@ -197,7 +197,7 @@ def _run(started: Event, manager_host: str, manager_port_nr: int, dashboard_port
     global _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _server
     _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _ = get_manager_client_dicts()
 
-    # Try different ports, until a free one is found
+    # Start server
     _server = make_server('0.0.0.0', dashboard_port_nr, app)
     started.set()
     logger.info(f"Server started on 0.0.0.0:{dashboard_port_nr}")
