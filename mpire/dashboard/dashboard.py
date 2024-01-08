@@ -4,11 +4,11 @@ import logging
 import socket
 from datetime import datetime
 from multiprocessing import Event, Process
-from multiprocessing.managers import SyncManager
 from pkg_resources import resource_string
 from typing import Dict, Optional, Sequence, Union
 
-from flask import escape, Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request
+from markupsafe import escape
 from mpire.dashboard.utils import get_two_available_ports
 from werkzeug.serving import make_server
 
