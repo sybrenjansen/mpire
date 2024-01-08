@@ -41,40 +41,36 @@ def get_dashboard_tqdm_lock() -> Lock:
     return DASHBOARD_TQDM_LOCK
 
 
-def start_manager_server(port_range: Sequence = range(8080, 8100)) -> SyncManager:
+def start_manager_server(manager_port_nr: int) -> SyncManager:
     """
     Start a SyncManager
 
-    :param port_range: Port range to try. Reverses the list and will then pick the first one available
+    :param manager_port_nr: Port number to use for the manager
     :return: SyncManager
     """
-    for port_nr in reversed(port_range):
-        try:
-            # If a port is already occupied the SyncManager process will spit out EOFError and OSError messages. The
-            # former can be catched, but the latter will still show up. So we first check if a port is available
-            # manually
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.bind(('', port_nr))
-            s.close()
+    # Create manager
+    sm = SyncManager(address=("127.0.0.1", manager_port_nr), authkey=b'mpire_dashboard')
+    sm.register('get_dashboard_tqdm_dict', get_dashboard_tqdm_dict)
+    sm.register('get_dashboard_tqdm_details_dict', get_dashboard_tqdm_details_dict)
+    sm.register('get_dashboard_tqdm_lock', get_dashboard_tqdm_lock)
+    sm.start(ignore_keyboard_interrupt)
 
-            # Create manager
-            sm = SyncManager(address=("127.0.0.1", port_nr), authkey=b'mpire_dashboard')
-            sm.register('get_dashboard_tqdm_dict', get_dashboard_tqdm_dict)
-            sm.register('get_dashboard_tqdm_details_dict', get_dashboard_tqdm_details_dict)
-            sm.register('get_dashboard_tqdm_lock', get_dashboard_tqdm_lock)
-            sm.start(ignore_keyboard_interrupt)
+    # Set host and port number so other processes know where to connect to
+    DASHBOARD_MANAGER_HOST.value = b"127.0.0.1"
+    DASHBOARD_MANAGER_PORT.value = manager_port_nr
 
-            # Set host and port number so other processes know where to connect to
-            DASHBOARD_MANAGER_HOST.value = b"127.0.0.1"
-            DASHBOARD_MANAGER_PORT.value = port_nr
+    return sm
 
-            return sm
 
-        except OSError:
-            # Port is occupied, ignore it and try another
-            pass
-
-    raise OSError(f"Dashboard Manager Server: All ports are in use: {port_range}")
+def shutdown_manager_server(manager: SyncManager) -> None:
+    """
+    Shutdown a SyncManager
+    
+    :param manager: SyncManager to shutdown
+    """
+    manager.shutdown()
+    DASHBOARD_MANAGER_HOST.value = b""
+    DASHBOARD_MANAGER_PORT.value = 0
 
 
 def get_manager_client_dicts() -> Tuple[BaseProxy, BaseProxy, BaseProxy]:

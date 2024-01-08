@@ -1,20 +1,20 @@
 import atexit
-import errno
 import getpass
 import logging
 import socket
 from datetime import datetime
-from multiprocessing import Event, Process, Value
+from multiprocessing import Event, Process
 from pkg_resources import resource_string
 from typing import Dict, Optional, Sequence, Union
 
 from flask import Flask, jsonify, render_template, request
 from markupsafe import escape
+from mpire.dashboard.utils import get_two_available_ports
 from werkzeug.serving import make_server
 
 from mpire.signal import DisableKeyboardInterruptSignal, ignore_keyboard_interrupt
 from mpire.dashboard.manager import (DASHBOARD_MANAGER_HOST, DASHBOARD_MANAGER_PORT,
-                                     get_manager_client_dicts, start_manager_server)
+                                     get_manager_client_dicts, shutdown_manager_server, start_manager_server)
 
 logger = logging.getLogger(__name__)
 logger_werkzeug = logging.getLogger('werkzeug')
@@ -108,34 +108,46 @@ def start_dashboard(port_range: Sequence = range(8080, 8100)) -> Dict[str, Union
     Starts a new MPIRE dashboard
 
     :param port_range: Port range to try.
-    :return: A dictionary containing the dashboard port number and manager host and port_nr being used
+    :return: A dictionary containing the dashboard port number and manager host and port number being used
     """
     global _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
 
     if not DASHBOARD_STARTED_EVENT.is_set():
+        
+        dashboard_port_nr, manager_port_nr = get_two_available_ports(port_range)
 
         # Prevent signal from propagating to child process
         with DisableKeyboardInterruptSignal():
 
             # Set up manager server
-            _DASHBOARD_MANAGER = start_manager_server(port_range)
+            _DASHBOARD_MANAGER = start_manager_server(manager_port_nr)
 
             # Start flask server
             logging.getLogger('werkzeug').setLevel(logging.WARN)
-            dashboard_port_nr = Value('i', 0, lock=False)
             Process(target=_run, args=(DASHBOARD_STARTED_EVENT, DASHBOARD_MANAGER_HOST.value,
-                                       DASHBOARD_MANAGER_PORT.value, dashboard_port_nr, port_range),
+                                       DASHBOARD_MANAGER_PORT.value, dashboard_port_nr),
                     daemon=True, name='dashboard-process').start()
             DASHBOARD_STARTED_EVENT.wait()
 
             # Return connect information
-            return {'dashboard_port_nr': dashboard_port_nr.value,
+            return {'dashboard_port_nr': dashboard_port_nr,
                     'manager_host': DASHBOARD_MANAGER_HOST.value.decode() or socket.gethostname(),
                     'manager_port_nr': DASHBOARD_MANAGER_PORT.value}
 
     else:
         raise RuntimeError("You already have a running dashboard")
 
+
+def shutdown_dashboard() -> None:
+    """ Shuts down the dashboard """
+    if DASHBOARD_STARTED_EVENT.is_set():
+        global _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
+        shutdown_manager_server(_DASHBOARD_MANAGER)
+        _DASHBOARD_MANAGER = None
+        _DASHBOARD_TQDM_DICT = None
+        _DASHBOARD_TQDM_DETAILS_DICT = None
+        DASHBOARD_STARTED_EVENT.clear()
+        
 
 def connect_to_dashboard(manager_port_nr: int, manager_host: Optional[Union[bytes, str]] = None) -> None:
     """
@@ -166,16 +178,14 @@ def connect_to_dashboard(manager_port_nr: int, manager_host: Optional[Union[byte
     DASHBOARD_STARTED_EVENT.set()
 
 
-def _run(started: Event, manager_host: str, manager_port_nr: int, dashboard_port_nr: Value,
-         port_range: Sequence) -> None:
+def _run(started: Event, manager_host: str, manager_port_nr: int, dashboard_port_nr: int) -> None:
     """
     Starts a dashboard server
 
     :param started: Event that signals the dashboard server has started
     :param manager_host: Dashboard manager host
     :param manager_port_nr: Dashboard manager port number
-    :param dashboard_port_nr: Value object for storing the dashboad port number that is used
-    :param port_range: Port range to try.
+    :param dashboard_port_nr: Dashboard port number
     """
     ignore_keyboard_interrupt()  # For Windows compatibility
 
@@ -187,21 +197,11 @@ def _run(started: Event, manager_host: str, manager_port_nr: int, dashboard_port
     global _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _server
     _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _ = get_manager_client_dicts()
 
-    # Try different ports, until a free one is found
-    for port in port_range:
-        try:
-            _server = make_server('0.0.0.0', port, app)
-            dashboard_port_nr.value = port
-            started.set()
-            logger.info("Server started on 0.0.0.0:%d", port)
-            _server.serve_forever()
-            break
-        except OSError as exc:
-            if exc.errno != errno.EADDRINUSE:
-                raise exc
-
-    if not _server:
-        raise OSError(f"Dashboard server: All ports are in use: {port_range}")
+    # Start server
+    _server = make_server('0.0.0.0', dashboard_port_nr, app)
+    started.set()
+    logger.info(f"Server started on 0.0.0.0:{dashboard_port_nr}")
+    _server.serve_forever()
 
 
 @atexit.register

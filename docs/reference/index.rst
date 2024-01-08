@@ -35,6 +35,8 @@ Dashboard
 
 .. autofunction:: mpire.dashboard.connect_to_dashboard
 
+.. autofunction:: mpire.dashboard.shutdown_dashboard
+
 
 Other
 -----
