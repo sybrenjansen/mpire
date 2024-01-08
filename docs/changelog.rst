@@ -1,8 +1,10 @@
 Changelog
 =========
 
-Unreleased
-----------
+2.9.0
+-----
+
+*(2024-01-08)*
 
 * Added support for the ``rich`` progress bar style (`#96`_)
 * Added the option to only show progress on the dashboard. (`#107`_)
@@ -24,6 +26,8 @@ Unreleased
 
 2.8.1
 -----
+
+*(2023-11-08)*
 
 * Excluded the ``tests`` folder from MPIRE distributions (`#89`_)
 * Added a workaround for semaphore leakage on macOS and fixed a bug when working in a fork context while the system
