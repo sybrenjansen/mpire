@@ -47,7 +47,7 @@ until it finds an unused one. In the rare case that no ports are available up to
 The returned dictionary contains the port number that is ultimately chosen. It also contains information on how to
 connect to this dashboard remotely.
 
-Another way of starting a dashboard is by using the bash script:
+Another way of starting a dashboard is by using the bash script (this doesn't work on Windows!):
 
 .. code-block:: bash
 

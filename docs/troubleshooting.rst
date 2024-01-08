@@ -153,6 +153,7 @@ Windows support has some caveats:
 
 * When using ``dill`` and an exception occurs, or when the exception occurs in an exit function, it can print additional
   ``OSError`` messages in the terminal, but they can be safely ignored.
+* The ``mpire-dashboard`` script does not work on Windows.
 
 
 .. _troubleshooting_macos:
