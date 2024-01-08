@@ -1,5 +1,5 @@
 try:
-    from mpire.dashboard.dashboard import connect_to_dashboard, start_dashboard
+    from mpire.dashboard.dashboard import connect_to_dashboard, shutdown_dashboard, start_dashboard
 except (ImportError, ModuleNotFoundError):
     def connect_to_dashboard(*_, **__):
         raise NotImplementedError("Install the dashboard dependencies to enable the dashboard")

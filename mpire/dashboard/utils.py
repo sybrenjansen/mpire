@@ -1,10 +1,49 @@
 import getpass
 import inspect
-from functools import partial
-
 import socket
-from typing import Callable, Dict, List, Union
+from functools import partial
+from typing import Callable, Dict, List, Sequence, Union
 
+
+def get_two_available_ports(port_range: Sequence) -> tuple[int, int]:
+    """
+    Get two available ports, one from the start and one from the end of the range
+
+    :param port_range: Port range to try. Reverses the list and will then pick the first one available
+    :raises OSError: If there are not enough ports available
+    :return: Two available ports
+    """
+    def _port_available(port_nr: int) -> bool:
+        """
+        Checks if a port is available
+
+        :param port_nr: Port number to check
+        :return: True if available, False otherwise
+        """
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind(('', port_nr))
+            s.close()
+            return True
+        except OSError:
+            return False
+    
+    available_ports = set()
+    for port_nr in port_range:
+        if _port_available(port_nr):
+            available_ports.add(port_nr)
+            break
+    
+    for port_nr in reversed(port_range):
+        if _port_available(port_nr):
+            available_ports.add(port_nr)
+            break
+    
+    if len(available_ports) != 2:
+        raise OSError(f"Dashboard Manager Server: there are not enough ports available: {port_range=}")
+    
+    return tuple(sorted(available_ports))
+     
 
 def get_function_details(func: Callable) -> Dict[str, Union[str, int]]:
     """
