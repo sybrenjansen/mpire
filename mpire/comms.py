@@ -96,7 +96,7 @@ class WorkerComms:
         self.exception_lock = self.ctx.Lock()
         self._exception_thrown = self.ctx.Event()
         self._exception_job_id: mp.Value = None  # type: ignore
-        self._kill_signal_received = self.ctx.Event()
+        self._kill_signal_received = self.ctx.Value(ctypes.c_bool, False, lock=True)
 
         # Array where the number of completed tasks is stored for the progress bar. We don't use the vanilla lock from
         # multiprocessing.Array, but create a lock per worker such that workers can write concurrently.
@@ -150,7 +150,7 @@ class WorkerComms:
         # Exception related
         self._exception_thrown.clear()
         self._exception_job_id = self.ctx.Value('i', 0, lock=True)
-        self._kill_signal_received.clear()
+        self._kill_signal_received.value = False
 
         # Progress bar related
         self._tasks_completed_array = [self.ctx.Value('L', 0, lock=True) for _ in range(self.n_jobs)]
@@ -496,13 +496,13 @@ class WorkerComms:
         """
         Set the kill signal received event
         """
-        self._kill_signal_received.set()
+        self._kill_signal_received.value = True
 
     def kill_signal_received(self) -> bool:
         """
         :return: Whether a kill signal was received in one of the workers
         """
-        return self._kill_signal_received.is_set()
+        return self._kill_signal_received.value
 
     ################
     # Terminating & restarting

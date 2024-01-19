@@ -70,9 +70,9 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertIsInstance(comms.exception_lock, lock_type)
                 self.assertIsInstance(comms._exception_thrown, event_type)
                 self.assertIsNone(comms._exception_job_id)
-                self.assertIsInstance(comms._kill_signal_received, event_type)
+                self.assertIsInstance(comms._kill_signal_received, value_type)
                 self.assertFalse(comms._exception_thrown.is_set())
-                self.assertFalse(comms._kill_signal_received.is_set())
+                self.assertFalse(comms._kill_signal_received.value)
                 self.assertIsInstance(comms._tasks_completed_array, list)
                 self.assertEqual(len(comms._tasks_completed_array), 0)
                 self.assertIsNone(comms._progress_bar_last_updated)
@@ -106,7 +106,7 @@ class WorkerCommsTest(unittest.TestCase):
                 comms._workers_time_task_started[i].value = i + 1
             comms._exception_thrown.set()
             comms._exception_job_id = 89
-            comms._kill_signal_received.set()
+            comms._kill_signal_received.value = True
             for i in range(n_jobs):
                 comms._tasks_completed_array[i].value = i + 1
             comms._progress_bar_last_updated = 3
@@ -170,7 +170,7 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertFalse(comms._exception_thrown.is_set())
         self.assertIsInstance(comms._exception_job_id, value_type)
         self.assertEqual(comms._exception_job_id.value, 0)
-        self.assertFalse(comms._kill_signal_received.is_set())
+        self.assertFalse(comms._kill_signal_received.value)
         self.assertEqual(len(comms._tasks_completed_array), n_jobs)
         for v in comms._tasks_completed_array:
             self.assertIsInstance(v, value_type)
@@ -255,7 +255,7 @@ class WorkerCommsTest(unittest.TestCase):
         # Set kill signal received
         comms.signal_kill_signal_received()
         self.assertEqual(comms.get_tasks_completed_progress_bar(), POISON_PILL)
-        comms._kill_signal_received.clear()
+        comms._kill_signal_received.value = False
 
     def test_progress_bar_shutdown(self):
         """
@@ -495,7 +495,7 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertFalse(comms.kill_signal_received())
         comms.signal_kill_signal_received()
         self.assertTrue(comms.kill_signal_received())
-        comms._kill_signal_received.clear()
+        comms._kill_signal_received.value = False
         self.assertFalse(comms.kill_signal_received())
 
     def test_worker_poison_pill(self):
