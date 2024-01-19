@@ -1,4 +1,5 @@
 import collections
+import ctypes
 import gc
 import multiprocessing as mp
 import platform
@@ -60,7 +61,7 @@ class WorkerComms:
         self._initialized = False
 
         # Whether or not to inform the child processes to keep order in mind (for the map functions)
-        self._keep_order = self.ctx.Event()
+        self._keep_order = self.ctx.Value(ctypes.c_bool, False, lock=True)
 
         # Queue to pass on tasks to child processes. We keep track of which worker completed the last task and which
         # worker is working on what task
@@ -264,19 +265,19 @@ class WorkerComms:
         """
         Set that we need to keep order in mind
         """
-        return self._keep_order.set()
+        self._keep_order.value = True
 
     def clear_keep_order(self) -> None:
         """
         Forget that we need to keep order in mind
         """
-        return self._keep_order.clear()
+        self._keep_order.value = False
 
     def keep_order(self) -> bool:
         """
         :return: Whether we need to keep order in mind
         """
-        return self._keep_order.is_set()
+        return self._keep_order.value
 
     ################
     # Tasks & results
