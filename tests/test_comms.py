@@ -110,7 +110,7 @@ class WorkerCommsTest(unittest.TestCase):
             for i in range(n_jobs):
                 comms._tasks_completed_array[i].value = i + 1
             comms._progress_bar_last_updated = 3
-            comms._progress_bar_shutdown.set()
+            comms._progress_bar_shutdown.value = True
             comms._progress_bar_complete.set()
             comms.reset()
 
@@ -175,8 +175,8 @@ class WorkerCommsTest(unittest.TestCase):
         for v in comms._tasks_completed_array:
             self.assertIsInstance(v, value_type)
         self.assertEqual(comms._progress_bar_last_updated, datetime(1970, 1, 1, 0, 0, 0, 0))
-        self.assertIsInstance(comms._progress_bar_shutdown, event_type)
-        self.assertFalse(comms._progress_bar_shutdown.is_set())
+        self.assertIsInstance(comms._progress_bar_shutdown, value_type)
+        self.assertFalse(comms._progress_bar_shutdown.value)
         self.assertIsInstance(comms._progress_bar_complete, event_type)
         self.assertFalse(comms._progress_bar_complete.is_set())
         self.assertTrue(comms.is_initialized())
@@ -245,7 +245,7 @@ class WorkerCommsTest(unittest.TestCase):
         # Signal shutdown
         comms.signal_progress_bar_shutdown()
         self.assertEqual(comms.get_tasks_completed_progress_bar(), POISON_PILL)
-        comms._progress_bar_shutdown.clear()
+        comms._progress_bar_shutdown.value = False
 
         # Set exception
         comms.signal_exception_thrown(MAIN_PROCESS)
@@ -264,9 +264,9 @@ class WorkerCommsTest(unittest.TestCase):
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False)
         comms.init_comms()
 
-        self.assertFalse(comms._progress_bar_shutdown.is_set())
+        self.assertFalse(comms._progress_bar_shutdown.value)
         comms.signal_progress_bar_shutdown()
-        self.assertTrue(comms._progress_bar_shutdown.is_set())
+        self.assertTrue(comms._progress_bar_shutdown.value)
 
     def test_progress_bar_complete(self):
         """

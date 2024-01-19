@@ -102,7 +102,7 @@ class WorkerComms:
         # multiprocessing.Array, but create a lock per worker such that workers can write concurrently.
         self._tasks_completed_array: List[mp.Value] = []
         self._progress_bar_last_updated: datetime = None  # type: ignore
-        self._progress_bar_shutdown: mp.Event = None  # type: ignore
+        self._progress_bar_shutdown: Optional[mp.Value] = None
         self._progress_bar_complete: mp.Event = None  # type: ignore
 
     ################
@@ -155,7 +155,7 @@ class WorkerComms:
         # Progress bar related
         self._tasks_completed_array = [self.ctx.Value('L', 0, lock=True) for _ in range(self.n_jobs)]
         self._progress_bar_last_updated = datetime.now()
-        self._progress_bar_shutdown = self.ctx.Event()
+        self._progress_bar_shutdown = self.ctx.Value(ctypes.c_bool, False, lock=True)
         self._progress_bar_complete = self.ctx.Event()
 
         self.reset_progress()
@@ -215,7 +215,7 @@ class WorkerComms:
 
         # Sum the tasks completed and return
         while (not self.exception_thrown() and not self.kill_signal_received() and
-               not self._progress_bar_shutdown.is_set()):
+               not self._progress_bar_shutdown.value):
             n_tasks_completed = 0
             for worker_id in range(self.n_jobs):
                 n_tasks_completed += self._tasks_completed_array[worker_id].value
@@ -228,14 +228,14 @@ class WorkerComms:
         """
         Signals the progress bar handling process to shut down
         """
-        self._progress_bar_shutdown.set()
+        self._progress_bar_shutdown.value = True
 
     def clear_progress_bar_shutdown(self) -> None:
         """
         Clears the progress bar shutdown signal
         """
         if self._progress_bar_shutdown is not None:
-            self._progress_bar_shutdown.clear()
+            self._progress_bar_shutdown.value = False
 
     def signal_progress_bar_complete(self) -> None:
         """
@@ -641,7 +641,7 @@ class WorkerComms:
         except (queue.Empty, OSError):
             if got_results:
                 dont_wait_event.set()
-        if platform.system() == "Darwin":
+        if platform.system() == "Darwin" and False:
             # Force collection of semaphore objects.
             # TODO: This is a workaround for semaphore leakage on macOS.
             gc.collect()
