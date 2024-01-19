@@ -64,8 +64,7 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertIsInstance(comms._worker_restart_array, list)
                 self.assertEqual(len(comms._worker_restart_array), 0)
                 self.assertIsInstance(comms._worker_restart_condition, condition_type)
-                self.assertIsInstance(comms._workers_dead, list)
-                self.assertEqual(len(comms._workers_dead), 0)
+                self.assertIsNone(comms._workers_dead)
                 self.assertIsInstance(comms._workers_time_task_started, list)
                 self.assertEqual(len(comms._workers_time_task_started), 0)
                 self.assertIsInstance(comms.exception_lock, lock_type)
@@ -102,7 +101,7 @@ class WorkerCommsTest(unittest.TestCase):
                 comms._results_received[i].value = i + 1
             for i in range(n_jobs):
                 comms._worker_restart_array[i].value = i % 2 == 0
-            [worker_dead.clear() for worker_dead in comms._workers_dead]
+            comms._workers_dead[:] = [False] * n_jobs
             for i in range(n_jobs * 3):
                 comms._workers_time_task_started[i].value = i + 1
             comms._exception_thrown.set()
@@ -133,6 +132,7 @@ class WorkerCommsTest(unittest.TestCase):
         :param comms: WorkerComms object
         :param n_jobs: Number of jobs
         """
+        array_type = type(comms.ctx.Array('i', n_jobs, lock=True))
         event_type = type(comms.ctx.Event())
         joinable_queue_type = type(comms.ctx.JoinableQueue())
         rlock_type = type(comms.ctx.RLock())
@@ -162,10 +162,8 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertEqual(len(comms._worker_restart_array), n_jobs)
         for v in comms._worker_restart_array:
             self.assertIsInstance(v, value_type)
-        self.assertEqual(len(comms._workers_dead), n_jobs)
-        for worker_dead in comms._workers_dead:
-            self.assertIsInstance(worker_dead, event_type)
-            self.assertTrue(worker_dead.is_set())
+        self.assertIsInstance(comms._workers_dead, array_type)
+        self.assertEqual(comms._workers_dead[:], [True] * n_jobs)
         for v in comms._workers_time_task_started:
             self.assertIsInstance(v, value_type)
         self.assertEqual(len(comms._workers_time_task_started), n_jobs * 3)

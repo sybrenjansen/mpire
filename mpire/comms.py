@@ -84,7 +84,7 @@ class WorkerComms:
         self._worker_restart_condition = self.ctx.Condition(self.ctx.Lock())
 
         # List of Event objects to indicate whether workers are alive
-        self._workers_dead: List[mp.Event] = []
+        self._workers_dead: mp.Array = None  # type: ignore
 
         # Array where the child processes indicate when they started a task, worker_init, and worker_exit used for
         # checking timeouts. The array size is n_jobs * 3, where worker_id * 3 + i is used for indexing. i=0 is used for
@@ -143,8 +143,8 @@ class WorkerComms:
 
         # Worker status
         self._worker_restart_array = [self.ctx.Value('b', False, lock=True) for _ in range(self.n_jobs)]
-        self._workers_dead = [self.ctx.Event() for _ in range(self.n_jobs)]
-        [worker_dead.set() for worker_dead in self._workers_dead]
+        self._workers_dead = self.ctx.Array(ctypes.c_bool, self.n_jobs, lock=True)
+        self._workers_dead[:] = [True] * self.n_jobs
         self._workers_time_task_started = [self.ctx.Value('d', 0.0, lock=True) for _ in range(self.n_jobs * 3)]
 
         # Exception related
@@ -581,7 +581,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_dead[worker_id].clear()
+        self._workers_dead[worker_id] = False
 
     def signal_worker_dead(self, worker_id: int) -> None:
         """
@@ -589,7 +589,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_dead[worker_id].set()
+        self._workers_dead[worker_id] = True
 
     def is_worker_alive(self, worker_id: int) -> bool:
         """
@@ -598,7 +598,7 @@ class WorkerComms:
         :param worker_id: Worker ID
         :return: Whether the worker is alive
         """
-        return not self._workers_dead[worker_id].is_set()
+        return not self._workers_dead[worker_id]
 
     def join_results_queues(self, keep_alive: bool = False) -> None:
         """
