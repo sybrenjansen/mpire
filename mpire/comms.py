@@ -70,7 +70,7 @@ class WorkerComms:
         self._worker_running_task_locks: List[mp.RLock] = []
         self._worker_running_task: List[mp.Value] = []
         self._last_completed_task_worker_id = collections.deque()
-        self._worker_working_on_job: List[mp.Value] = []
+        self._worker_working_on_job: Optional[mp.Array] = None
 
         # Queue where the child processes can pass on results, and counters to keep track of how many results have been
         # added and received per worker. results_added is a simple list of integers which is only accessed by the worker
@@ -134,7 +134,7 @@ class WorkerComms:
         self._task_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
         self._worker_running_task_locks = [self.ctx.RLock() for _ in range(self.n_jobs)]
         self._worker_running_task = [self.ctx.Value('b', False, lock=False) for _ in range(self.n_jobs)]
-        self._worker_working_on_job = [self.ctx.Value('i', 0, lock=True) for _ in range(self.n_jobs)]
+        self._worker_working_on_job = self.ctx.Array('i', self.n_jobs, lock=True)
 
         # Results related
         self._results_queue = self.ctx.JoinableQueue()
@@ -389,7 +389,7 @@ class WorkerComms:
         :param worker_id: Worker ID
         :param job_id: Job ID
         """
-        self._worker_working_on_job[worker_id].value = job_id
+        self._worker_working_on_job[worker_id] = job_id
 
     def get_worker_working_on_job(self, worker_id: int) -> int:
         """
@@ -398,7 +398,7 @@ class WorkerComms:
         :param worker_id: Worker ID
         :return: Job ID
         """
-        return self._worker_working_on_job[worker_id].value
+        return self._worker_working_on_job[worker_id]
 
     def add_results(self, worker_id: Optional[int], results: List[Tuple[Optional[int], bool, Any]]) -> None:
         """
