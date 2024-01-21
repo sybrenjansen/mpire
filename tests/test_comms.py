@@ -60,8 +60,7 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertEqual(len(comms._results_added), 0)
                 self.assertIsInstance(comms._results_received, list)
                 self.assertEqual(len(comms._results_received), 0)
-                self.assertIsInstance(comms._worker_restart_array, list)
-                self.assertEqual(len(comms._worker_restart_array), 0)
+                self.assertIsNone(comms._worker_restart_array)
                 self.assertIsInstance(comms._worker_restart_condition, condition_type)
                 self.assertIsNone(comms._workers_dead)
                 self.assertIsInstance(comms._workers_time_task_started, list)
@@ -99,7 +98,7 @@ class WorkerCommsTest(unittest.TestCase):
             for i in range(n_jobs):
                 comms._results_received[i].value = i + 1
             for i in range(n_jobs):
-                comms._worker_restart_array[i].value = i % 2 == 0
+                comms._worker_restart_array[i] = i % 2 == 0
             comms._workers_dead[:] = [False] * n_jobs
             for i in range(n_jobs * 3):
                 comms._workers_time_task_started[i].value = i + 1
@@ -157,9 +156,8 @@ class WorkerCommsTest(unittest.TestCase):
         for v in comms._results_received:
             self.assertIsInstance(v, value_type)
         self.assertEqual(len(comms._results_received), n_jobs)
+        self.assertIsInstance(comms._worker_restart_array, array_type)
         self.assertEqual(len(comms._worker_restart_array), n_jobs)
-        for v in comms._worker_restart_array:
-            self.assertIsInstance(v, value_type)
         self.assertIsInstance(comms._workers_dead, array_type)
         self.assertEqual(comms._workers_dead[:], [True] * n_jobs)
         for v in comms._workers_time_task_started:
@@ -184,7 +182,7 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertEqual([v.value for v in comms._worker_running_task], [False for _ in range(n_jobs)])
         self.assertEqual(comms._worker_working_on_job[:], [0 for _ in range(n_jobs)])
         self.assertEqual([v.value for v in comms._results_received], [0 for _ in range(n_jobs)])
-        self.assertEqual([v.value for v in comms._worker_restart_array], [False for _ in range(n_jobs)])
+        self.assertEqual(comms._worker_restart_array[:], [False] * n_jobs)
         self.assertEqual([v.value for v in comms._workers_time_task_started], [0.0 for _ in range(n_jobs * 3)])
         self.assertEqual([v.value for v in comms._tasks_completed_array], [0 for _ in range(n_jobs)])
 

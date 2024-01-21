@@ -80,7 +80,7 @@ class WorkerComms:
         self._results_received: List[mp.Value] = []
 
         # Array where the child processes can request a restart
-        self._worker_restart_array: List[mp.Value] = []
+        self._worker_restart_array: Optional[mp.Array] = None
         self._worker_restart_condition = self.ctx.Condition(self.ctx.Lock())
 
         # List of Event objects to indicate whether workers are alive
@@ -142,7 +142,7 @@ class WorkerComms:
         self._results_received = [self.ctx.Value('L', 0, lock=True) for _ in range(self.n_jobs)]
 
         # Worker status
-        self._worker_restart_array = [self.ctx.Value('b', False, lock=True) for _ in range(self.n_jobs)]
+        self._worker_restart_array = self.ctx.Array(ctypes.c_bool, self.n_jobs, lock=True)
         self._workers_dead = self.ctx.Array(ctypes.c_bool, self.n_jobs, lock=True)
         self._workers_dead[:] = [True] * self.n_jobs
         self._workers_time_task_started = [self.ctx.Value('d', 0.0, lock=True) for _ in range(self.n_jobs * 3)]
@@ -535,7 +535,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._worker_restart_array[worker_id].value = True
+        self._worker_restart_array[worker_id] = True
         with self._worker_restart_condition:
             self._worker_restart_condition.notify()
 
@@ -555,7 +555,7 @@ class WorkerComms:
         :return: List of worker IDs
         """
         def _get_worker_restarts():
-            return [worker_id for worker_id, restart in enumerate(self._worker_restart_array) if restart.value]
+            return [worker_id for worker_id, restart in enumerate(self._worker_restart_array) if restart]
 
         with self._worker_restart_condition:
 
@@ -573,7 +573,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._worker_restart_array[worker_id].value = False
+        self._worker_restart_array[worker_id] = False
 
     def signal_worker_alive(self, worker_id: int) -> None:
         """
