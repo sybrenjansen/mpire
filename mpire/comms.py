@@ -77,7 +77,7 @@ class WorkerComms:
         # itself
         self._results_queue: Optional[mp.JoinableQueue] = None
         self._results_added: List[int] = []
-        self._results_received: List[mp.Value] = []
+        self._results_received: Optional[mp.Array] = None
 
         # Array where the child processes can request a restart
         self._worker_restart_array: Optional[mp.Array] = None
@@ -139,7 +139,7 @@ class WorkerComms:
         # Results related
         self._results_queue = self.ctx.JoinableQueue()
         self._results_added = [0 for _ in range(self.n_jobs)]
-        self._results_received = [self.ctx.Value('L', 0, lock=True) for _ in range(self.n_jobs)]
+        self._results_received = self.ctx.Array('L', self.n_jobs, lock=True)
 
         # Worker status
         self._worker_restart_array = self.ctx.Array(ctypes.c_bool, self.n_jobs, lock=True)
@@ -424,7 +424,7 @@ class WorkerComms:
                 worker_id, results = self._results_queue.get(block=block, timeout=timeout)
                 self._results_queue.task_done()
                 if worker_id is not None:
-                    self._results_received[worker_id].value += 1
+                    self._results_received[worker_id] += 1
                     self._last_completed_task_worker_id.append(worker_id)
                 return results
         except EOFError:
@@ -437,7 +437,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._results_received[worker_id].value = 0
+        self._results_received[worker_id] = 0
 
     def wait_for_all_results_received(self, worker_id: int) -> None:
         """
@@ -445,7 +445,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        while self._results_received[worker_id].value != self._results_added[worker_id]:
+        while self._results_received[worker_id] != self._results_added[worker_id]:
             time.sleep(0.01)
 
     def add_new_map_params(self, map_params: WorkerMapParams) -> None:
