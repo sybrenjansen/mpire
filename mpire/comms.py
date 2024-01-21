@@ -66,7 +66,7 @@ class WorkerComms:
         # Queue to pass on tasks to child processes. We keep track of which worker completed the last task and which
         # worker is working on what task
         self._task_queues: List[mp.JoinableQueue] = []
-        self._task_idx: int = None  # type: ignore
+        self._task_idx: Optional[int] = None
         self._worker_running_task_locks: List[mp.RLock] = []
         self._worker_running_task: List[mp.Value] = []
         self._last_completed_task_worker_id = collections.deque()
@@ -75,7 +75,7 @@ class WorkerComms:
         # Queue where the child processes can pass on results, and counters to keep track of how many results have been
         # added and received per worker. results_added is a simple list of integers which is only accessed by the worker
         # itself
-        self._results_queue: mp.JoinableQueue = None  # type: ignore
+        self._results_queue: Optional[mp.JoinableQueue] = None
         self._results_added: List[int] = []
         self._results_received: List[mp.Value] = []
 
@@ -84,7 +84,7 @@ class WorkerComms:
         self._worker_restart_condition = self.ctx.Condition(self.ctx.Lock())
 
         # List of Event objects to indicate whether workers are alive
-        self._workers_dead: mp.Array = None  # type: ignore
+        self._workers_dead: Optional[mp.Array] = None
 
         # Array where the child processes indicate when they started a task, worker_init, and worker_exit used for
         # checking timeouts. The array size is n_jobs * 3, where worker_id * 3 + i is used for indexing. i=0 is used for
@@ -95,15 +95,15 @@ class WorkerComms:
         # exception can be thrown
         self.exception_lock = self.ctx.Lock()
         self._exception_thrown = self.ctx.Event()
-        self._exception_job_id: mp.Value = None  # type: ignore
+        self._exception_job_id: Optional[mp.Value] = None
         self._kill_signal_received = self.ctx.Value(ctypes.c_bool, False, lock=True)
 
         # Array where the number of completed tasks is stored for the progress bar. We don't use the vanilla lock from
         # multiprocessing.Array, but create a lock per worker such that workers can write concurrently.
         self._tasks_completed_array: List[mp.Value] = []
-        self._progress_bar_last_updated: datetime = None  # type: ignore
+        self._progress_bar_last_updated: Optional[datetime] = None
         self._progress_bar_shutdown: Optional[mp.Value] = None
-        self._progress_bar_complete: mp.Event = None  # type: ignore
+        self._progress_bar_complete: Optional[mp.Event] = None
 
     ################
     # Initialization
