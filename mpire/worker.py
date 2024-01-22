@@ -713,4 +713,4 @@ def worker_factory(start_method: str, use_dill: bool) -> Type[Union[AbstractWork
         elif start_method == 'spawn':
             return SpawnWorker
         else:
-            raise ValueError("Unknown start method: '{}'".format(start_method))
+            raise ValueError(f"Unknown start method: '{start_method}'")

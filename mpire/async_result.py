@@ -9,7 +9,7 @@ from mpire.comms import EXIT_FUNC, INIT_FUNC
 job_counter = itertools.count()
 
 
-class AsyncResult(object):
+class AsyncResult:
 
     """ Adapted from ``multiprocessing.pool.ApplyResult``. """
 
