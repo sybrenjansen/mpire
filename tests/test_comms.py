@@ -176,8 +176,8 @@ class WorkerCommsTest(unittest.TestCase):
 
         # Basic sanity checks for the values
         self.assertEqual(comms._task_idx, 0)
-        self.assertEqual([v.value for v in comms._worker_running_task], [False for _ in range(n_jobs)])
-        self.assertEqual(comms._worker_working_on_job[:], [0 for _ in range(n_jobs)])
+        self.assertEqual([v.value for v in comms._worker_running_task], [False] * n_jobs)
+        self.assertEqual(comms._worker_working_on_job[:], [0] * n_jobs)
         self.assertEqual(comms._results_received[:], [0] * n_jobs)
         self.assertEqual(comms._worker_restart_array[:], [False] * n_jobs)
         self.assertEqual(comms._workers_dead[:], [True] * n_jobs)
