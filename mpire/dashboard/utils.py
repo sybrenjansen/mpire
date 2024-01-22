@@ -3,6 +3,7 @@ import inspect
 import socket
 from functools import partial
 from typing import Callable, Dict, List, Sequence, Tuple, Union
+import types
 
 
 def get_two_available_ports(port_range: Sequence) -> Tuple[int, int]:
@@ -13,6 +14,7 @@ def get_two_available_ports(port_range: Sequence) -> Tuple[int, int]:
     :raises OSError: If there are not enough ports available
     :return: Two available ports
     """
+
     def _port_available(port_nr: int) -> bool:
         """
         Checks if a port is available
@@ -27,23 +29,23 @@ def get_two_available_ports(port_range: Sequence) -> Tuple[int, int]:
             return True
         except OSError:
             return False
-    
+
     available_ports = set()
     for port_nr in port_range:
         if _port_available(port_nr):
             available_ports.add(port_nr)
             break
-    
+
     for port_nr in reversed(port_range):
         if _port_available(port_nr):
             available_ports.add(port_nr)
             break
-    
+
     if len(available_ports) != 2:
         raise OSError(f"Dashboard Manager Server: there are not enough ports available: {port_range}")
-    
+
     return tuple(sorted(available_ports))
-     
+
 
 def get_function_details(func: Callable) -> Dict[str, Union[str, int]]:
     """
@@ -84,9 +86,12 @@ def get_function_details(func: Callable) -> Dict[str, Union[str, int]]:
     else:
         invoked_line_no = 'N/A'
 
-    # If we're dealing with a partial, obtain the function within
     if isinstance(func, partial):
+        # If we're dealing with a partial, obtain the function within
         func = func.func
+    elif hasattr(func, '__call__') and not isinstance(func, (type, types.FunctionType, types.MethodType)):
+        # If we're dealing with a callable class instance, use its __call__ method
+        func = func.__call__
 
     # We use a try/except block as some constructs don't allow this. E.g., in the case the function is a MagicMock
     # (i.e., in unit tests) these inspections will fail
@@ -100,7 +105,7 @@ def get_function_details(func: Callable) -> Dict[str, Union[str, int]]:
         function_name = 'n/a'
 
     # Populate details
-    func_details = {'user': '{}@{}'.format(getpass.getuser(), socket.gethostname()),
+    func_details = {'user': f'{getpass.getuser()}@{socket.gethostname()}',
                     'function_filename': function_filename,
                     'function_line_no': function_line_no,
                     'function_name': function_name,
