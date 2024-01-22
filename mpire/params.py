@@ -299,6 +299,10 @@ def check_progress_bar_options(progress_bar_options: Optional[Dict[str, Any]], p
     if progress_bar_style == "rich" and "position" in progress_bar_options:
         raise NotImplementedError("The 'position' parameter is currently not supported for rich progress bars")
 
+    # Make a copy of the progress bar options, so that if the original dict is reused, redoing this check doesn't
+    # raise warnings due to the fields we're adding below.
+    progress_bar_options = progress_bar_options.copy()
+
     # Set some defaults and overwrite others
     progress_bar_options["total"] = n_tasks
     progress_bar_options["leave"] = True
