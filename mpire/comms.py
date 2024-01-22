@@ -87,9 +87,9 @@ class WorkerComms:
         self._workers_dead: Optional[mp.Array] = None
 
         # Array where the child processes indicate when they started a task, worker_init, and worker_exit used for
-        # checking timeouts. The array size is n_jobs * 3, where worker_id * 3 + i is used for indexing. i=0 is used for
-        # the worker_init, i=1 for the main task, and i=2 for the worker_exit function.
-        self._workers_time_task_started: List[mp.Value] = []
+        # checking timeouts. The array size is n_jobs, and each entry is of size 3, where [worker_id][i] is used for 
+        # indexing. i=0 is used for the worker_init, i=1 for the main task, and i=2 for the worker_exit function.
+        self._workers_time_task_started: List[mp.Array] = []
 
         # Lock object such that child processes can only throw one at a time. The Event object ensures only one
         # exception can be thrown
@@ -145,7 +145,7 @@ class WorkerComms:
         self._worker_restart_array = self.ctx.Array(ctypes.c_bool, self.n_jobs, lock=True)
         self._workers_dead = self.ctx.Array(ctypes.c_bool, self.n_jobs, lock=True)
         self._workers_dead[:] = [True] * self.n_jobs
-        self._workers_time_task_started = [self.ctx.Value('d', 0.0, lock=True) for _ in range(self.n_jobs * 3)]
+        self._workers_time_task_started = [self.ctx.Array('d', 3, lock=True) for _ in range(self.n_jobs)]
 
         # Exception related
         self._exception_thrown.clear()
@@ -726,7 +726,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 0].value = datetime.now().timestamp()
+        self._workers_time_task_started[worker_id][0] = datetime.now().timestamp()
 
     def signal_worker_task_started(self, worker_id: int) -> None:
         """
@@ -734,7 +734,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 1].value = datetime.now().timestamp()
+        self._workers_time_task_started[worker_id][1] = datetime.now().timestamp()
 
     def signal_worker_exit_started(self, worker_id: int) -> None:
         """
@@ -742,7 +742,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 2].value = datetime.now().timestamp()
+        self._workers_time_task_started[worker_id][2] = datetime.now().timestamp()
 
     def signal_worker_init_completed(self, worker_id: int) -> None:
         """
@@ -750,7 +750,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 0].value = 0
+        self._workers_time_task_started[worker_id][0] = 0
 
     def signal_worker_task_completed(self, worker_id: int) -> None:
         """
@@ -758,7 +758,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 1].value = 0
+        self._workers_time_task_started[worker_id][1] = 0
 
     def signal_worker_exit_completed(self, worker_id: int) -> None:
         """
@@ -766,7 +766,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 2].value = 0
+        self._workers_time_task_started[worker_id][2] = 0
 
     def has_worker_init_timed_out(self, worker_id: int, timeout: float) -> bool:
         """
@@ -776,7 +776,7 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        started_time = self._workers_time_task_started[worker_id * 3 + 0].value
+        started_time = self._workers_time_task_started[worker_id][0]
         return self._has_worker_timed_out(started_time, timeout)
 
     def has_worker_task_timed_out(self, worker_id: int, timeout: float) -> bool:
@@ -787,7 +787,7 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        started_time = self._workers_time_task_started[worker_id * 3 + 1].value
+        started_time = self._workers_time_task_started[worker_id][1]
         return self._has_worker_timed_out(started_time, timeout)
 
     def has_worker_exit_timed_out(self, worker_id: int, timeout: float) -> bool:
@@ -798,7 +798,7 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        started_time = self._workers_time_task_started[worker_id * 3 + 2].value
+        started_time = self._workers_time_task_started[worker_id][2]
         return self._has_worker_timed_out(started_time, timeout)
 
     @staticmethod
