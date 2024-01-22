@@ -70,8 +70,7 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertIsInstance(comms._kill_signal_received, value_type)
                 self.assertFalse(comms._exception_thrown.is_set())
                 self.assertFalse(comms._kill_signal_received.value)
-                self.assertIsInstance(comms._tasks_completed_array, list)
-                self.assertEqual(len(comms._tasks_completed_array), 0)
+                self.assertIsNone(comms._tasks_completed_array)
                 self.assertIsNone(comms._progress_bar_last_updated)
                 self.assertIsNone(comms._progress_bar_shutdown)
                 self.assertIsNone(comms._progress_bar_complete)
@@ -106,7 +105,7 @@ class WorkerCommsTest(unittest.TestCase):
             comms._exception_job_id = 89
             comms._kill_signal_received.value = True
             for i in range(n_jobs):
-                comms._tasks_completed_array[i].value = i + 1
+                comms._tasks_completed_array[i] = i + 1
             comms._progress_bar_last_updated = 3
             comms._progress_bar_shutdown.value = True
             comms._progress_bar_complete.set()
@@ -166,9 +165,8 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertIsInstance(comms._exception_job_id, value_type)
         self.assertEqual(comms._exception_job_id.value, 0)
         self.assertFalse(comms._kill_signal_received.value)
+        self.assertIsInstance(comms._tasks_completed_array, array_type)
         self.assertEqual(len(comms._tasks_completed_array), n_jobs)
-        for v in comms._tasks_completed_array:
-            self.assertIsInstance(v, value_type)
         self.assertEqual(comms._progress_bar_last_updated, datetime(1970, 1, 1, 0, 0, 0, 0))
         self.assertIsInstance(comms._progress_bar_shutdown, value_type)
         self.assertFalse(comms._progress_bar_shutdown.value)
@@ -185,7 +183,7 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertEqual(comms._workers_dead[:], [True] * n_jobs)
         for i in range(n_jobs):
             self.assertEqual(comms._workers_time_task_started[i][:], [0.0, 0.0, 0.0])
-        self.assertEqual([v.value for v in comms._tasks_completed_array], [0 for _ in range(n_jobs)])
+        self.assertEqual(comms._tasks_completed_array[:], [0] * n_jobs)
 
     def test_progress_bar(self):
         """
@@ -195,7 +193,7 @@ class WorkerCommsTest(unittest.TestCase):
         comms.init_comms()
 
         # Nothing available yet
-        self.assertEqual(sum(v.value for v in comms._tasks_completed_array), 0)
+        self.assertEqual(sum(comms._tasks_completed_array), 0)
 
         MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0),
                                          datetime(1970, 1, 1, 0, 0, 0, 0),
@@ -211,7 +209,7 @@ class WorkerCommsTest(unittest.TestCase):
                 last_updated, n_tasks_completed = comms.task_completed_progress_bar(0, last_updated, n_tasks_completed,
                                                                                     force_update=False)
                 self.assertEqual(n_tasks_completed, n)
-        self.assertEqual(sum(v.value for v in comms._tasks_completed_array), 0)
+        self.assertEqual(sum(comms._tasks_completed_array), 0)
 
         # Not enough time has passed, but we'll force the update. Number of tasks done should still be 3
         with patch('mpire.comms.datetime', new=MockDatetimeNow):

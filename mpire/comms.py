@@ -98,9 +98,8 @@ class WorkerComms:
         self._exception_job_id: Optional[mp.Value] = None
         self._kill_signal_received = self.ctx.Value(ctypes.c_bool, False, lock=True)
 
-        # Array where the number of completed tasks is stored for the progress bar. We don't use the vanilla lock from
-        # multiprocessing.Array, but create a lock per worker such that workers can write concurrently.
-        self._tasks_completed_array: List[mp.Value] = []
+        # Array where the number of completed tasks is stored for the progress bar
+        self._tasks_completed_array: Optional[mp.Array] = None
         self._progress_bar_last_updated: Optional[datetime] = None
         self._progress_bar_shutdown: Optional[mp.Value] = None
         self._progress_bar_complete: Optional[mp.Event] = None
@@ -153,7 +152,7 @@ class WorkerComms:
         self._kill_signal_received.value = False
 
         # Progress bar related
-        self._tasks_completed_array = [self.ctx.Value('L', 0, lock=True) for _ in range(self.n_jobs)]
+        self._tasks_completed_array = self.ctx.Array('L', self.n_jobs, lock=True)
         self._progress_bar_last_updated = datetime.now()
         self._progress_bar_shutdown = self.ctx.Value(ctypes.c_bool, False, lock=True)
         self._progress_bar_complete = self.ctx.Event()
@@ -167,8 +166,7 @@ class WorkerComms:
         """
         self._task_idx = 0
         self._last_completed_task_worker_id.clear()
-        for task_completed in self._tasks_completed_array:
-            task_completed.value = 0
+        self._tasks_completed_array[:] = [0] * self.n_jobs
         self.clear_progress_bar_shutdown()
         self.clear_progress_bar_complete()
 
@@ -195,7 +193,7 @@ class WorkerComms:
         # Check if we need to update
         now = datetime.now()
         if force_update or (now - progress_bar_last_updated).total_seconds() > self.progress_bar_update_interval:
-            self._tasks_completed_array[worker_id].value += progress_bar_n_tasks_completed
+            self._tasks_completed_array[worker_id] += progress_bar_n_tasks_completed
             progress_bar_last_updated = now
             progress_bar_n_tasks_completed = 0
 
@@ -216,9 +214,7 @@ class WorkerComms:
         # Sum the tasks completed and return
         while (not self.exception_thrown() and not self.kill_signal_received() and
                not self._progress_bar_shutdown.value):
-            n_tasks_completed = 0
-            for worker_id in range(self.n_jobs):
-                n_tasks_completed += self._tasks_completed_array[worker_id].value
+            n_tasks_completed = sum(self._tasks_completed_array)
             self._progress_bar_last_updated = datetime.now()
             return n_tasks_completed
 
