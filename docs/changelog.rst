@@ -1,6 +1,17 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+* Use function details from the `__call__` method on the dashboard in case the
+  callable being executed is a class instance (`#117`_)
+* Use (global) average rate for the estimate on the dashboard when smoothing=0
+  (`#117`_)
+
+.. _#117: https://github.com/sybrenjansen/mpire/pull/117
+
+
 2.9.0
 -----
 
