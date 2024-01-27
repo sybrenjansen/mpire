@@ -12,7 +12,7 @@ from tqdm import tqdm
 from mpire import WorkerPool
 from mpire.context import DEFAULT_START_METHOD, FORK_AVAILABLE, RUNNING_WINDOWS
 from mpire.insights import WorkerInsights
-from mpire.utils import PicklableSyncManager
+from mpire.utils import NonPickledSyncManager
 from tests.utils import MockDatetimeNow
 
 
@@ -64,7 +64,7 @@ class WorkerInsightsTest(unittest.TestCase):
                 insights.reset_insights(enable_insights=True)
                 self.assertTrue(insights.insights_enabled)
                 self.assertIsInstance(insights.insights_manager_lock, mp.synchronize.Lock)
-                self.assertIsInstance(insights.insights_manager, PicklableSyncManager)
+                self.assertIsInstance(insights.insights_manager, NonPickledSyncManager)
                 self.assertIsInstance(insights.worker_start_up_time, ctypes.Array)
                 self.assertIsInstance(insights.worker_init_time, ctypes.Array)
                 self.assertIsInstance(insights.worker_n_completed_tasks, ctypes.Array)

@@ -245,40 +245,29 @@ class TimeIt:
                               (duration, self.format_args_func() if self.format_args_func is not None else None))
 
     
-class PicklableSyncManager:
-    """ SyncManager wrapper that can be pickled """
+class NonPickledSyncManager:
+    """ SyncManager wrapper that won't be pickled """
     
-    def __init__(self, authkey: bytes) -> None:
-        self.authkey = authkey
-        self.manager = SyncManager(authkey=authkey)
+    def __init__(self) -> None:
+        self.manager = SyncManager()
         
     def __getattr__(self, item):
         return getattr(self.manager, item)
 
     def __getstate__(self) -> dict:
         """
-        Returns the state excluding the manager object, as this is not picklable. The address of the manager is added
-        to the state instead, which can be used to reconnect to the manager.
+        Returns the state excluding the manager object, as this is not picklable and not needed.
         
         :return: State dict
         """
         state = self.__dict__.copy()
-        state["manager_address"] = self.manager.address
-        del state["manager"]
+        state["manager"] = None
         return state
 
     def __setstate__(self, state: dict) -> None:
         """
-        Set the state and reconnect to the manager using the stored address.
+        Set the state.
         
         :param state: State dict
         """
-        address = state.pop("manager_address")
         self.__dict__ = state
-        
-        # This line is needed because otherwise we can get "multiprocessing.context.AuthenticationError: digest sent 
-        # was rejected" errors. See https://bugs.python.org/issue7503 for more information
-        multiprocessing.current_process().authkey = self.authkey
-        
-        self.manager = SyncManager(address=address, authkey=self.authkey)
-        self.manager.connect()

@@ -6,7 +6,7 @@ from datetime import datetime
 from functools import partial
 from typing import Dict, Optional, List, Tuple
 
-from mpire.utils import PicklableSyncManager, format_seconds
+from mpire.utils import NonPickledSyncManager, format_seconds
 
 
 class WorkerInsights:
@@ -64,7 +64,10 @@ class WorkerInsights:
         :param enable_insights: Whether to enable worker insights
         """
         if enable_insights:
-            self.insights_manager = PicklableSyncManager(authkey=os.urandom(24))
+            # We need to use a special wrapper which sets the manager to None when pickled. For some reason Python 
+            # won't use the __getstate__/__setstate__ of this class when passing the object to a worker, so we move
+            # the logic to the wrapper instead.
+            self.insights_manager = NonPickledSyncManager()
             self.insights_manager.start()
             self.insights_manager_lock = self.ctx.Lock()
             self.worker_start_up_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
