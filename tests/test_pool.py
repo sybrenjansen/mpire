@@ -16,7 +16,6 @@ from tqdm import tqdm
 from mpire import cpu_count, WorkerPool
 from mpire.async_result import AsyncResult
 from mpire.context import FORK_AVAILABLE, RUNNING_WINDOWS
-from mpire.tqdm_utils import TqdmLock
 
 # Skip start methods that use fork if it's not available
 if not FORK_AVAILABLE:
@@ -1000,7 +999,6 @@ class ProgressBarTest(unittest.TestCase):
     def tearDown(self):
         # The TQDM lock is temporarily changed when using a progress bar in MPIRE, here we check if it is restored
         # correctly afterwards.
-        self.assertNotIsInstance(tqdm.get_lock(), TqdmLock)
         self.assertEqual(tqdm.get_lock(), self.original_tqdm_lock)
 
     def test_valid_progress_bars_regular_input(self):
@@ -1302,7 +1300,6 @@ class ExceptionTest(unittest.TestCase):
     def tearDown(self):
         # The TQDM lock is temporarily changed when using a progress bar in MPIRE, here we check if it is restored
         # correctly afterwards.
-        self.assertNotIsInstance(tqdm.get_lock(), TqdmLock)
         self.assertEqual(tqdm.get_lock(), self.original_tqdm_lock)
 
     def test_exceptions(self):

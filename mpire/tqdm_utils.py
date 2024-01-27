@@ -19,7 +19,7 @@ except ImportError:
 from mpire.signal import DisableKeyboardInterruptSignal
 
 PROGRESS_BAR_DEFAULT_STYLE = 'std'
-TqdmConnectionDetails = Tuple[Union[str, bytes, None], bytes, bool]
+TqdmConnectionDetails = Tuple[Lock, "TqdmPositionRegister"]
 
 logger = logging.getLogger(__name__)
 
@@ -256,46 +256,13 @@ class TqdmPositionRegister:
             self.highest_position = None
 
 
-class TqdmLock:
-
-    """
-    Small wrapper around a multiprocessing.Lock proxy object returned by a Manager. These proxies only expose public
-    functions, so we wrap such a proxy and expose the private/public functions needed for a lock to work.
-    """
-
-    def __init__(self, lock_proxy: Lock) -> None:
-        self.lock_proxy = lock_proxy
-
-    def acquire(self, *args, **kwargs) -> None:
-        self.lock_proxy.acquire(*args, **kwargs)
-
-    def release(self) -> None:
-        self.lock_proxy.release()
-
-    def __enter__(self) -> None:
-        self.lock_proxy.acquire()
-
-    def __exit__(self, *_) -> None:
-        self.lock_proxy.release()
-
-
 class TqdmManager:
-
-    LOCK = Lock()
-    POSITION_REGISTER = TqdmPositionRegister()
+    
+    """Tqdm manager wrapper for syncing multiple progress bars, independent of process start method used."""
 
     MANAGER = None
-    MANAGER_HOST: Union[str, bytes, None] = None
-    MANAGER_AUTHKEY = b""
-    MANAGER_STARTED = False
-
-    def __init__(self) -> None:
-        """
-        Tqdm manager wrapper for syncing multiple progress bars, independent of process start method used.
-        """
-        # Connect to existing manager, if it exists
-        if self.MANAGER_STARTED:
-            self.connect_to_manager()
+    LOCK = None
+    POSITION_REGISTER = None
 
     @classmethod
     def start_manager(cls) -> bool:
@@ -304,8 +271,8 @@ class TqdmManager:
 
         :return: Whether the manager was started
         """
-        # Don't do anything when there's already a connected tqdm manager
-        if cls.MANAGER_STARTED:
+        # Don't do anything when there's already a tqdm manager that has started
+        if cls.LOCK is not None:
             return False
 
         logger.debug("Starting TQDM manager")
@@ -313,25 +280,12 @@ class TqdmManager:
         # Create manager
         with DisableKeyboardInterruptSignal():
             cls.MANAGER = SyncManager(authkey=os.urandom(24))
-            cls.MANAGER.register('get_tqdm_lock', cls._get_tqdm_lock)
-            cls.MANAGER.register('get_tqdm_position_register', cls._get_tqdm_position_register)
+            cls.MANAGER.register('TqdmPositionRegister', TqdmPositionRegister)
             cls.MANAGER.start()
-
-        # Set host and authkey so other processes know where to connect to
-        cls.MANAGER_HOST = cls.MANAGER.address
-        cls.MANAGER_AUTHKEY = bytes(cls.MANAGER._authkey)
-        cls.MANAGER_STARTED = True
+            cls.LOCK = cls.MANAGER.Lock()
+            cls.POSITION_REGISTER = cls.MANAGER.TqdmPositionRegister()
 
         return True
-
-    def connect_to_manager(self) -> None:
-        """
-        Connect to the tqdm manager
-        """
-        self.MANAGER = SyncManager(address=self.MANAGER_HOST, authkey=self.MANAGER_AUTHKEY)
-        self.MANAGER.register('get_tqdm_lock')
-        self.MANAGER.register('get_tqdm_position_register')
-        self.MANAGER.connect()
 
     @classmethod
     def stop_manager(cls) -> None:
@@ -340,35 +294,17 @@ class TqdmManager:
         """
         cls.MANAGER.shutdown()
         cls.MANAGER = None
-        cls.MANAGER_HOST = None
-        cls.MANAGER_AUTHKEY = b""
-        cls.MANAGER_STARTED = False
+        cls.LOCK = None
+        cls.POSITION_REGISTER = None
 
-    @staticmethod
-    def _get_tqdm_lock() -> Lock:
+    @classmethod
+    def get_lock_and_position_register(cls) -> Tuple[Lock, TqdmPositionRegister]:
         """
-        This function needs to be static, because a manager doesn't pass arguments to registered functions
+        Obtain synchronized lock and positions register
 
-        :return: Lock object for tqdm
+        :return: Synchronized lock and tqdm position register
         """
-        return TqdmManager.LOCK
-
-    @staticmethod
-    def _get_tqdm_position_register() -> TqdmPositionRegister:
-        """
-        This function needs to be static, because a manager doesn't pass arguments to registered functions
-
-        :return: tqdm position register
-        """
-        return TqdmManager.POSITION_REGISTER
-
-    def get_lock_and_position_register(self) -> Tuple[TqdmLock, TqdmPositionRegister]:
-        """
-        Obtain synchronized tqdm lock and positions register
-
-        :return: Synchronized tqdm lock and tqdm position register
-        """
-        return TqdmLock(self.MANAGER.get_tqdm_lock()), self.MANAGER.get_tqdm_position_register()
+        return cls.LOCK, cls.POSITION_REGISTER
 
     @classmethod
     def get_connection_details(cls) -> TqdmConnectionDetails:
@@ -376,19 +312,15 @@ class TqdmManager:
         Obtains the connection details of the tqdm manager. These details are needed to be passed on to child process
         when the start method is either forkserver or spawn.
 
-        :return: TQDM manager host, authkey, and whether a manager is started/connected
+        :return: TQDM lock and position register
         """
-        return cls.MANAGER_HOST, cls.MANAGER_AUTHKEY, cls.MANAGER_STARTED
+        return cls.LOCK, cls.POSITION_REGISTER
 
     @classmethod
     def set_connection_details(cls, tqdm_connection_details: TqdmConnectionDetails) -> None:
         """
-        Sets the tqdm connection details and connects to an existing tqdm manager if needed.
+        Sets the tqdm connection details.
 
-        :param tqdm_connection_details: TQDM manager host, and whether a manager is started/connected
+        :param tqdm_connection_details: TQDM lock and position register
         """
-        tqdm_manager_host, tqdm_manager_authkey, tqdm_manager_started = tqdm_connection_details
-        if not cls.MANAGER_STARTED:
-            cls.MANAGER_HOST = tqdm_manager_host
-            cls.MANAGER_AUTHKEY = tqdm_manager_authkey
-            cls.MANAGER_STARTED = tqdm_manager_started
+        cls.LOCK, cls.POSITION_REGISTER = tqdm_connection_details

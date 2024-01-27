@@ -132,7 +132,7 @@ class WorkerComms:
         # Task related
         self._task_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
         self._worker_running_task_locks = [self.ctx.RLock() for _ in range(self.n_jobs)]
-        self._worker_running_task = [self.ctx.Value('b', False, lock=False) for _ in range(self.n_jobs)]
+        self._worker_running_task = [self.ctx.Value(ctypes.c_bool, False, lock=False) for _ in range(self.n_jobs)]
         self._worker_working_on_job = self.ctx.Array('i', self.n_jobs, lock=True)
 
         # Results related

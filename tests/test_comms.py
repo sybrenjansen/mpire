@@ -1,3 +1,4 @@
+import ctypes
 import multiprocessing as mp
 import queue
 import threading
@@ -134,7 +135,7 @@ class WorkerCommsTest(unittest.TestCase):
         joinable_queue_type = type(comms.ctx.JoinableQueue())
         rlock_type = type(comms.ctx.RLock())
         value_type = type(comms.ctx.Value('i', 0, lock=True))
-        value_without_lock_type = type(comms.ctx.Value('b', 0, lock=False))
+        value_without_lock_type = type(comms.ctx.Value(ctypes.c_bool, 0, lock=False))
 
         self.assertEqual(len(comms._task_queues), n_jobs)
         for q in comms._task_queues:
