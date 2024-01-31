@@ -49,7 +49,8 @@ Features
 - Optionally utilizes dill_ as serialization backend through multiprocess_, enabling parallelizing more exotic objects,
   lambdas, and functions in iPython and Jupyter notebooks.
 
-MPIRE is tested on Linux and Windows. For Windows and macOS users, there are a few minor known caveats, which are documented in the Troubleshooting_ chapter.
+MPIRE is tested on Linux, macOS, and Windows. For Windows and macOS users, there are a few minor known caveats, which 
+are documented in the Troubleshooting_ chapter.
 
 .. _benchmarks: https://towardsdatascience.com/mpire-for-python-multiprocessing-is-really-easy-d2ae7999a3e9
 .. _multiprocess: https://github.com/uqfoundation/multiprocess

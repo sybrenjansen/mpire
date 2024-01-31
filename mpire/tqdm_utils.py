@@ -298,15 +298,6 @@ class TqdmManager:
         cls.POSITION_REGISTER = None
 
     @classmethod
-    def get_lock_and_position_register(cls) -> Tuple[Lock, TqdmPositionRegister]:
-        """
-        Obtain synchronized lock and positions register
-
-        :return: Synchronized lock and tqdm position register
-        """
-        return cls.LOCK, cls.POSITION_REGISTER
-
-    @classmethod
     def get_connection_details(cls) -> TqdmConnectionDetails:
         """
         Obtains the connection details of the tqdm manager. These details are needed to be passed on to child process

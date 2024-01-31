@@ -1,10 +1,10 @@
 import atexit
 import getpass
+import importlib.resources
 import logging
 import socket
 from datetime import datetime
 from multiprocessing import Event, Process
-from pkg_resources import resource_string
 from typing import Dict, Optional, Sequence, Union
 
 from flask import Flask, jsonify, render_template, request
@@ -21,7 +21,8 @@ logger_werkzeug = logging.getLogger('werkzeug')
 logger_werkzeug.setLevel(logging.ERROR)
 app = Flask(__name__)
 _server = None
-_progress_bar_html = resource_string(__name__, 'templates/progress_bar.html').decode('utf-8')
+with importlib.resources.files('mpire.dashboard').joinpath('templates/progress_bar.html').open('r') as fp:
+    _progress_bar_html = fp.read()
 
 _DASHBOARD_MANAGER = None
 _DASHBOARD_TQDM_DICT = None

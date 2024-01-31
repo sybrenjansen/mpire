@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sized, Tuple, 
 
 from tqdm import TqdmKeyError
 
-from mpire.context import DEFAULT_START_METHOD
+from mpire.context import DEFAULT_START_METHOD, RUNNING_MACOS
 from mpire.tqdm_utils import get_tqdm
 
 # Typedefs
@@ -65,6 +65,10 @@ class WorkerPoolParams:
         # Check CPU IDs
         converted_cpu_ids = []
         if cpu_ids:
+            if RUNNING_MACOS:
+                warnings.warn("Setting CPU affinity is not supported on MacOS. Ignoring cpu_ids parameter", 
+                              RuntimeWarning)
+            
             # Check number of arguments
             if len(cpu_ids) != 1 and len(cpu_ids) != self.n_jobs:
                 raise ValueError("Number of CPU IDs (%d) does not match number of jobs (%d)" %

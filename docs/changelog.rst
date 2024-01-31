@@ -1,6 +1,19 @@
 Changelog
 =========
 
+Unreleased
+==========
+
+* Added support for macOS (`#27`_, `#79`_, `#91`_)
+
+  - Fixes memory leaks on macOS
+  - Reduced the amount of semaphores used
+  - Issues a warning when ``cpu_ids`` is used on macOS
+
+.. _#27: https://github.com/sybrenjansen/mpire/issues/27
+.. _#79: https://github.com/sybrenjansen/mpire/issues/79
+.. _#91: https://github.com/sybrenjansen/mpire/issues/91
+
 2.9.0
 -----
 

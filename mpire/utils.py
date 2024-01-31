@@ -1,7 +1,6 @@
 import heapq
 import itertools
 import math
-import multiprocessing
 import os
 from datetime import datetime, timedelta
 from multiprocessing import Array, cpu_count
@@ -15,7 +14,7 @@ except ImportError:
     np = None
     NUMPY_INSTALLED = False
 
-from mpire.context import RUNNING_WINDOWS
+from mpire.context import RUNNING_MACOS, RUNNING_WINDOWS
 
 # Needed for setting CPU affinity
 if RUNNING_WINDOWS:
@@ -56,6 +55,9 @@ def set_cpu_affinity(pid: int, mask: List[int]) -> None:
         # Get handle and set affinity
         handle = win32api.OpenProcess(win32con.PROCESS_ALL_ACCESS, True, pid)
         win32process.SetProcessAffinityMask(handle, windows_mask)
+    elif RUNNING_MACOS:
+        # On MacOS we can't set CPU affinity
+        pass
     else:
         os.sched_setaffinity(pid, mask)
 

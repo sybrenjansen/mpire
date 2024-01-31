@@ -111,7 +111,7 @@ class ProgressBarHandler:
 
         # Connect to the tqdm manager
         tqdm_manager = TqdmManager()
-        tqdm_lock, tqdm_position_register = tqdm_manager.get_lock_and_position_register()
+        tqdm_lock, tqdm_position_register = tqdm_manager.get_connection_details()
         tqdm.set_lock(tqdm_lock)
         tqdm.set_main_progress_bar(
             tqdm_position_register.register_progress_bar_position(self.progress_bar_options["position"])

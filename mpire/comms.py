@@ -637,10 +637,6 @@ class WorkerComms:
         except (queue.Empty, OSError):
             if got_results:
                 dont_wait_event.set()
-        if platform.system() == "Darwin" and False:
-            # Force collection of semaphore objects.
-            # TODO: This is a workaround for semaphore leakage on macOS.
-            gc.collect()
 
     def drain_queues(self) -> None:
         """
