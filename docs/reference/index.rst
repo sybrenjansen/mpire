@@ -37,6 +37,10 @@ Dashboard
 
 .. autofunction:: mpire.dashboard.shutdown_dashboard
 
+.. autofunction:: mpire.dashboard.get_stacklevel
+
+.. autofunction:: mpire.dashboard.set_stacklevel
+
 
 Other
 -----

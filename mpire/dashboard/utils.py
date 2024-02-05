@@ -5,6 +5,8 @@ from functools import partial
 from typing import Callable, Dict, List, Sequence, Tuple, Union
 import types
 
+DASHBOARD_FUNCTION_STACKLEVEL = 1
+
 
 def get_two_available_ports(port_range: Sequence) -> Tuple[int, int]:
     """
@@ -14,7 +16,6 @@ def get_two_available_ports(port_range: Sequence) -> Tuple[int, int]:
     :raises OSError: If there are not enough ports available
     :return: Two available ports
     """
-
     def _port_available(port_nr: int) -> bool:
         """
         Checks if a port is available
@@ -47,6 +48,25 @@ def get_two_available_ports(port_range: Sequence) -> Tuple[int, int]:
     return tuple(sorted(available_ports))
 
 
+def get_stacklevel() -> int:
+    """
+    Gets the stack level to use when obtaining function details (used for the dashboard)
+
+    :return: Stack level
+    """
+    return DASHBOARD_FUNCTION_STACKLEVEL
+
+
+def set_stacklevel(stacklevel: int) -> None:
+    """
+    Sets the stack level to use when obtaining function details (used for the dashboard)
+
+    :param stacklevel: Stack level
+    """
+    global DASHBOARD_FUNCTION_STACKLEVEL
+    DASHBOARD_FUNCTION_STACKLEVEL = stacklevel
+     
+
 def get_function_details(func: Callable) -> Dict[str, Union[str, int]]:
     """
     Obtain function details, including:
@@ -64,13 +84,17 @@ def get_function_details(func: Callable) -> Dict[str, Union[str, int]]:
         the next argument
     :return: Function details dictionary
     """
-    # Get the frame in which the pool.map(...) was called. We obtain the current stack and skip all those which
-    # involve the current mpire module and stop right after that
+    # Get the frame in which the pool.map(...) was called. We obtain the current stack and skip all frames which
+    # involve the current mpire module. If the desired stack level is higher than 1, we continue until we've reached 
+    # the desired stack level. We then obtain the code context of that frame.
     invoked_frame = None
+    stacklevel = 0
     for frame_info in inspect.stack():
-        if frame_info.frame.f_globals['__name__'].split('.')[0] != 'mpire':
+        if frame_info.frame.f_globals['__name__'].split('.')[0] != 'mpire' or stacklevel > 0:
             invoked_frame = frame_info
-            break
+            stacklevel += 1
+            if stacklevel == DASHBOARD_FUNCTION_STACKLEVEL:
+                break
 
     # Obtain proper code context. Usually the last line of the invoked code is returned, but we want the complete
     # code snippet that called this function. That's why we increase the context size and need to find the start and
