@@ -1,26 +1,26 @@
-import atexit
 import getpass
 import importlib.resources
 import logging
 import socket
 from datetime import datetime
 from multiprocessing import Event, Process
-from typing import Dict, Optional, Sequence, Union
+from multiprocessing.managers import BaseProxy
+from typing import Dict, Optional, Sequence, Tuple, Union
 
 from flask import Flask, jsonify, render_template, request
 from markupsafe import escape
-from mpire.dashboard.utils import get_two_available_ports
 from werkzeug.serving import make_server
 
 from mpire.signal import DisableKeyboardInterruptSignal, ignore_keyboard_interrupt
-from mpire.dashboard.manager import (DASHBOARD_MANAGER_HOST, DASHBOARD_MANAGER_PORT,
+from mpire.dashboard.manager import (DASHBOARD_MANAGER_CONNECTION_DETAILS,
                                      get_manager_client_dicts, shutdown_manager_server, start_manager_server)
+from mpire.dashboard.utils import get_two_available_ports
 
 logger = logging.getLogger(__name__)
 logger_werkzeug = logging.getLogger('werkzeug')
 logger_werkzeug.setLevel(logging.ERROR)
 app = Flask(__name__)
-_server = None
+_server_process = None
 with importlib.resources.files('mpire.dashboard').joinpath('templates/progress_bar.html').open('r') as fp:
     _progress_bar_html = fp.read()
 
@@ -38,8 +38,8 @@ def index() -> str:
     :return: HTML
     """
     return render_template('index.html', username=getpass.getuser(), hostname=socket.gethostname(),
-                           manager_host=DASHBOARD_MANAGER_HOST.value.decode() or 'localhost',
-                           manager_port_nr=DASHBOARD_MANAGER_PORT.value)
+                           manager_host=DASHBOARD_MANAGER_CONNECTION_DETAILS.host or 'localhost',
+                           manager_port_nr=DASHBOARD_MANAGER_CONNECTION_DETAILS.port)
 
 
 @app.route('/_progress_bar_update')
@@ -111,7 +111,7 @@ def start_dashboard(port_range: Sequence = range(8080, 8100)) -> Dict[str, Union
     :param port_range: Port range to try.
     :return: A dictionary containing the dashboard port number and manager host and port number being used
     """
-    global _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
+    global _server_process, _DASHBOARD_MANAGER
 
     if not DASHBOARD_STARTED_EVENT.is_set():
         
@@ -125,15 +125,16 @@ def start_dashboard(port_range: Sequence = range(8080, 8100)) -> Dict[str, Union
 
             # Start flask server
             logging.getLogger('werkzeug').setLevel(logging.WARN)
-            Process(target=_run, args=(DASHBOARD_STARTED_EVENT, DASHBOARD_MANAGER_HOST.value,
-                                       DASHBOARD_MANAGER_PORT.value, dashboard_port_nr),
-                    daemon=True, name='dashboard-process').start()
+            _server_process = Process(target=_run, args=(DASHBOARD_STARTED_EVENT, dashboard_port_nr, 
+                                                         get_manager_client_dicts()),
+                                      daemon=True, name='dashboard-process')
+            _server_process.start()
             DASHBOARD_STARTED_EVENT.wait()
 
             # Return connect information
             return {'dashboard_port_nr': dashboard_port_nr,
-                    'manager_host': DASHBOARD_MANAGER_HOST.value.decode() or socket.gethostname(),
-                    'manager_port_nr': DASHBOARD_MANAGER_PORT.value}
+                    'manager_host': DASHBOARD_MANAGER_CONNECTION_DETAILS.host or socket.gethostname(),
+                    'manager_port_nr': DASHBOARD_MANAGER_CONNECTION_DETAILS.port}
 
     else:
         raise RuntimeError("You already have a running dashboard")
@@ -142,7 +143,10 @@ def start_dashboard(port_range: Sequence = range(8080, 8100)) -> Dict[str, Union
 def shutdown_dashboard() -> None:
     """ Shuts down the dashboard """
     if DASHBOARD_STARTED_EVENT.is_set():
-        global _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
+        global _server_process, _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
+        if _server_process is not None:
+            _server_process.terminate()
+            _server_process.join()
         shutdown_manager_server(_DASHBOARD_MANAGER)
         _DASHBOARD_MANAGER = None
         _DASHBOARD_TQDM_DICT = None
@@ -157,17 +161,15 @@ def connect_to_dashboard(manager_port_nr: int, manager_host: Optional[Union[byte
     :param manager_port_nr: Port to use when connecting to a manager
     :param manager_host: Host to use when connecting to a manager. If ``None`` it will use localhost
     """
-    global _DASHBOARD_MANAGER, _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
+    global _DASHBOARD_MANAGER, DASHBOARD_MANAGER_CONNECTION_DETAILS
 
     if DASHBOARD_STARTED_EVENT.is_set():
         raise RuntimeError("You're already connected to a running dashboard")
 
     # Set connection variables so we can connect to the right manager
     manager_host = manager_host or "127.0.0.1"
-    if isinstance(manager_host, str):
-        manager_host = manager_host.encode()
-    DASHBOARD_MANAGER_HOST.value = manager_host
-    DASHBOARD_MANAGER_PORT.value = manager_port_nr
+    DASHBOARD_MANAGER_CONNECTION_DETAILS.host = manager_host
+    DASHBOARD_MANAGER_CONNECTION_DETAILS.port = manager_port_nr
 
     # Try to connect
     try:
@@ -179,7 +181,7 @@ def connect_to_dashboard(manager_port_nr: int, manager_host: Optional[Union[byte
     DASHBOARD_STARTED_EVENT.set()
 
 
-def _run(started: Event, manager_host: str, manager_port_nr: int, dashboard_port_nr: int) -> None:
+def _run(started: Event, dashboard_port_nr: int, manager_client_dicts: Tuple[BaseProxy, BaseProxy, BaseProxy]) -> None:
     """
     Starts a dashboard server
 
@@ -189,30 +191,12 @@ def _run(started: Event, manager_host: str, manager_port_nr: int, dashboard_port
     :param dashboard_port_nr: Dashboard port number
     """
     ignore_keyboard_interrupt()  # For Windows compatibility
-
-    # Set dashboard connection details. This is needed when spawn is the default start method
-    DASHBOARD_MANAGER_HOST.value = manager_host
-    DASHBOARD_MANAGER_PORT.value = manager_port_nr
-
-    # Connect to manager from this process
-    global _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _server
-    _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _ = get_manager_client_dicts()
+    
+    global _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT
+    _DASHBOARD_TQDM_DICT, _DASHBOARD_TQDM_DETAILS_DICT, _ = manager_client_dicts
 
     # Start server
-    _server = make_server('0.0.0.0', dashboard_port_nr, app)
+    server = make_server('0.0.0.0', dashboard_port_nr, app)
     started.set()
     logger.info(f"Server started on 0.0.0.0:{dashboard_port_nr}")
-    _server.serve_forever()
-
-
-@atexit.register
-def stop() -> None:
-    """
-    Called when the program exits, will shutdown the server
-    """
-    global _server
-    if _server:
-        try:
-            _server.shutdown()
-        except Exception:
-            pass
+    server.serve_forever()

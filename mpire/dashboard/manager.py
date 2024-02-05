@@ -1,90 +1,133 @@
-import socket
-from ctypes import c_char
-from multiprocessing import Array, Lock, Value
-from multiprocessing.managers import BaseProxy, SyncManager
-from typing import Dict, Sequence, Tuple
+from dataclasses import dataclass
+from multiprocessing import Lock
+from multiprocessing.managers import BaseManager, BaseProxy
+from typing import Dict, Optional, Tuple
 
 from mpire.signal import ignore_keyboard_interrupt
 
+
+@dataclass
+class DashboardManagerConnectionDetails:
+    host: Optional[str] = None
+    port: Optional[int] = None
+    
+    def clear(self) -> None:
+        self.host = None
+        self.port = None
+    
+
 # Dict for tqdm progress bar updates
-DASHBOARD_TQDM_DICT = {}
+DASHBOARD_TQDM_DICT = None
 
 # Dict for tqdm progress bar details (function called etc.)
-DASHBOARD_TQDM_DETAILS_DICT = {}
+DASHBOARD_TQDM_DETAILS_DICT = None
 
 # Lock for registering new progress bars
-DASHBOARD_TQDM_LOCK = Lock()
+DASHBOARD_TQDM_LOCK = None
 
-# Array which tells which host and a value which tells which port to use for connecting to a manager
-DASHBOARD_MANAGER_HOST = Array(c_char, 10000, lock=True)
-DASHBOARD_MANAGER_PORT = Value('i', lock=True)
+# Connection details for connecting to a manager
+DASHBOARD_MANAGER_CONNECTION_DETAILS = DashboardManagerConnectionDetails()
+
+
+class DashboardManager(BaseManager):
+    pass
 
 
 def get_dashboard_tqdm_dict() -> Dict:
     """
-    :return: Dashboard tqdm dict which should be used in a SyncManager context
+    :return: Dashboard tqdm dict which should be used in a DashboardManager context
     """
+    global DASHBOARD_TQDM_DICT
+    if DASHBOARD_TQDM_DICT is None:
+        DASHBOARD_TQDM_DICT = {}
     return DASHBOARD_TQDM_DICT
 
 
 def get_dashboard_tqdm_details_dict() -> Dict:
     """
-    :return: Dashboard tqdm details dict which should be used in a SyncManager context
+    :return: Dashboard tqdm details dict which should be used in a DashboardManager context
     """
+    global DASHBOARD_TQDM_DETAILS_DICT
+    if DASHBOARD_TQDM_DETAILS_DICT is None:
+        DASHBOARD_TQDM_DETAILS_DICT = {}
     return DASHBOARD_TQDM_DETAILS_DICT
 
 
 def get_dashboard_tqdm_lock() -> Lock:
     """
-    :return: Dashboard tqdm lock which should be used in a SyncManager context
+    :return: Dashboard tqdm lock which should be used in a DashboardManager context
     """
+    global DASHBOARD_TQDM_LOCK
+    if DASHBOARD_TQDM_LOCK is None:
+        DASHBOARD_TQDM_LOCK = Lock()
     return DASHBOARD_TQDM_LOCK
 
 
-def start_manager_server(manager_port_nr: int) -> SyncManager:
+def start_manager_server(manager_port_nr: int) -> DashboardManager:
     """
     Start a SyncManager
 
     :param manager_port_nr: Port number to use for the manager
-    :return: SyncManager
+    :return: SyncManager and hostname
     """
+    global DASHBOARD_TQDM_DICT, DASHBOARD_TQDM_DETAILS_DICT, DASHBOARD_TQDM_LOCK, \
+        DASHBOARD_MANAGER_HOST, DASHBOARD_MANAGER_PORT
+    
+    DashboardManager.register('get_dashboard_tqdm_dict', get_dashboard_tqdm_dict)
+    DashboardManager.register('get_dashboard_tqdm_details_dict', get_dashboard_tqdm_details_dict)
+    DashboardManager.register('get_dashboard_tqdm_lock', get_dashboard_tqdm_lock)
+    
     # Create manager
-    sm = SyncManager(address=("127.0.0.1", manager_port_nr), authkey=b'mpire_dashboard')
-    sm.register('get_dashboard_tqdm_dict', get_dashboard_tqdm_dict)
-    sm.register('get_dashboard_tqdm_details_dict', get_dashboard_tqdm_details_dict)
-    sm.register('get_dashboard_tqdm_lock', get_dashboard_tqdm_lock)
-    sm.start(ignore_keyboard_interrupt)
+    dm = DashboardManager(address=("127.0.0.1", manager_port_nr), authkey=b'mpire_dashboard')
+    dm.start(ignore_keyboard_interrupt)
+    DASHBOARD_TQDM_DICT = dm.get_dashboard_tqdm_dict()
+    DASHBOARD_TQDM_DETAILS_DICT = dm.get_dashboard_tqdm_details_dict()
+    DASHBOARD_TQDM_LOCK = dm.get_dashboard_tqdm_lock()
 
     # Set host and port number so other processes know where to connect to
-    DASHBOARD_MANAGER_HOST.value = b"127.0.0.1"
-    DASHBOARD_MANAGER_PORT.value = manager_port_nr
+    DASHBOARD_MANAGER_CONNECTION_DETAILS.host = "127.0.0.1"
+    DASHBOARD_MANAGER_CONNECTION_DETAILS.port = manager_port_nr
 
-    return sm
+    return dm
 
 
-def shutdown_manager_server(manager: SyncManager) -> None:
+def shutdown_manager_server(manager: DashboardManager) -> None:
     """
-    Shutdown a SyncManager
+    Shutdown a DashboardManager
     
-    :param manager: SyncManager to shutdown
+    :param manager: DashboardManager to shutdown
     """
+    global DASHBOARD_TQDM_DICT, DASHBOARD_TQDM_DETAILS_DICT, DASHBOARD_TQDM_LOCK
     manager.shutdown()
-    DASHBOARD_MANAGER_HOST.value = b""
-    DASHBOARD_MANAGER_PORT.value = 0
+    DASHBOARD_TQDM_DICT = None
+    DASHBOARD_TQDM_DETAILS_DICT = None
+    DASHBOARD_TQDM_LOCK = None
+    DASHBOARD_MANAGER_CONNECTION_DETAILS.clear()
 
 
 def get_manager_client_dicts() -> Tuple[BaseProxy, BaseProxy, BaseProxy]:
     """
-    Connect to a SyncManager and obtain the synchronized tqdm dashboard dicts
+    Connect to a DashboardManager and obtain the synchronized tqdm dashboard dicts
 
-    :return: Synchronized tqdm dict, tqdm details dict, tqdm lock
+    :return: DashboardManager tqdm dict, tqdm details dict, tqdm lock
     """
+    global DASHBOARD_TQDM_DICT, DASHBOARD_TQDM_DETAILS_DICT, DASHBOARD_TQDM_LOCK
+    
+    # If we're already connected to a manager, return the dicts directly
+    if DASHBOARD_TQDM_DICT is not None:
+        return DASHBOARD_TQDM_DICT, DASHBOARD_TQDM_DETAILS_DICT, DASHBOARD_TQDM_LOCK
+    
     # Connect to a server
-    sm = SyncManager(address=(DASHBOARD_MANAGER_HOST.value.decode(), DASHBOARD_MANAGER_PORT.value),
-                     authkey=b'mpire_dashboard')
-    sm.register('get_dashboard_tqdm_dict', get_dashboard_tqdm_dict)
-    sm.register('get_dashboard_tqdm_details_dict', get_dashboard_tqdm_details_dict)
-    sm.register('get_dashboard_tqdm_lock', get_dashboard_tqdm_lock)
-    sm.connect()
+    DashboardManager.register('get_dashboard_tqdm_dict', get_dashboard_tqdm_dict)
+    DashboardManager.register('get_dashboard_tqdm_details_dict', get_dashboard_tqdm_details_dict)
+    DashboardManager.register('get_dashboard_tqdm_lock', get_dashboard_tqdm_lock)
+    dm = DashboardManager(
+        address=(DASHBOARD_MANAGER_CONNECTION_DETAILS.host, DASHBOARD_MANAGER_CONNECTION_DETAILS.port), 
+        authkey=b'mpire_dashboard'
+    )
+    dm.connect()
 
-    return sm.get_dashboard_tqdm_dict(), sm.get_dashboard_tqdm_details_dict(), sm.get_dashboard_tqdm_lock()
+    DASHBOARD_TQDM_DICT = dm.get_dashboard_tqdm_dict()
+    DASHBOARD_TQDM_DETAILS_DICT = dm.get_dashboard_tqdm_details_dict()
+    DASHBOARD_TQDM_LOCK = dm.get_dashboard_tqdm_lock()
+    return DASHBOARD_TQDM_DICT, DASHBOARD_TQDM_DETAILS_DICT, DASHBOARD_TQDM_LOCK
