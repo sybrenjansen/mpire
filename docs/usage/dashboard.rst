@@ -147,8 +147,8 @@ Stack level
 By default, the dashboard will show information about the function that is called and where it is called from. However,
 in some cases where you have wrapped the function in another function, you might be less interested in the wrapper
 function and more interested in the function that is calling this wrapper. In such cases you can use 
-:meth:`mpire.dashboard.set_stacklevel` to set the stack level. This is the number of levels in the stack to go back to
-find the function that is calling the wrapper function. For example:
+:meth:`mpire.dashboard.set_stacklevel` to set the stack level. This is the number of levels in the stack to go back in
+order to find the frame that contains the function that is invoking MPIRE. For example:
 
 .. code-block:: python
 

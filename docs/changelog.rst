@@ -5,7 +5,9 @@ Unreleased
 ----------
 
 * Added :meth:`mpire.dashboard.set_stacklevel` to set the stack level in the dashboard. This influences what line to 
-  display in the 'Invoked on line' section.
+  display in the 'Invoked on line' section. (`#118`_)
+
+.. _#118: https://github.com/sybrenjansen/mpire/pull/118
 
 2.9.0
 -----
