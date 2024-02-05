@@ -185,13 +185,15 @@ class CheckProgressBarOptions(unittest.TestCase):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
 
+            defaults = {"position": 0, "dynamic_ncols": True, "mininterval": 0.1, "maxinterval": 0.5}
+            overrides = {"total": None, "leave": True}
+
             # Should work fine. We're ignoring warnings
             for progress_bar_options in [{}, {"position": 0}, {"desc": "hello", "total": 100},
                                          {"unit": "seconds", "mininterval": 0.1}]:
                 with self.subTest(progress_bar_options=progress_bar_options):
                     returned_progress_bar_options = check_progress_bar_options(progress_bar_options, None, None, None)
-                    self.assertEqual({k: None if k == "total" else returned_progress_bar_options[k]
-                                      for k in progress_bar_options.keys()}, progress_bar_options)
+                    self.assertEqual(returned_progress_bar_options, {**defaults, **progress_bar_options, **overrides})
 
             # progress_bar_options should be a dictionary
             for progress_bar_options in ['hello', {8}, 3.14]:
