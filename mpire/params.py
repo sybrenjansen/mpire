@@ -293,19 +293,26 @@ def check_progress_bar_options(progress_bar_options: Optional[Dict[str, Any]], p
                           "precedence", RuntimeWarning, stacklevel=2)
         else:
             progress_bar_options["position"] = progress_bar_position
-            
+
     # We currently do not support the position parameter for rich progress bars. Although this can be implemented by
     # using a single rich progress bar for all workers and using `add_task`, but this is not trivial to implement.
     if progress_bar_style == "rich" and "position" in progress_bar_options:
         raise NotImplementedError("The 'position' parameter is currently not supported for rich progress bars")
 
     # Set some defaults and overwrite others
-    progress_bar_options["total"] = n_tasks
-    progress_bar_options["leave"] = True
-    progress_bar_options.setdefault("position", 0)
-    progress_bar_options.setdefault("dynamic_ncols", True)
-    progress_bar_options.setdefault("mininterval", 0.1)
-    progress_bar_options.setdefault("maxinterval", 0.5)
+    # NB We make a copy of the progress bar options, so that if the original dict is reused, redoing this check doesn't
+    # raise warnings due to the "total" and "leave" being added.
+    progress_bar_options = {
+        # defaults
+        "position": 0,
+        "dynamic_ncols": True,
+        "mininterval": 0.1,
+        "maxinterval": 0.5,
+        **progress_bar_options,
+        # overrides
+        "total": n_tasks,
+        "leave": True
+    }
 
     # Check if the tqdm progress bar style is valid
     tqdm = get_tqdm(progress_bar_style)
