@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # mpire documentation build configuration file, created by
 # sphinx-quickstart on Tue Jun  27 15:35:20 2017.

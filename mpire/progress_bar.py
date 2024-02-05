@@ -226,7 +226,8 @@ class ProgressBarHandler:
         n = details["n"]
         total = details["total"]
         now = datetime.now()
-        remaining_time = (total - n) / details["rate"] if total and details["rate"] else None
+        rate = details["rate"] if details["rate"] else n / details["elapsed"] if details["elapsed"] else None
+        remaining_time = (total - n) / rate if total and rate else None
 
         return {"id": self.progress_bar_id,
                 "success": not failed,

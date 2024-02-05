@@ -82,7 +82,7 @@ def progress_bar_new() -> str:
     # Obtain progress bar details. Only show the user@host part if it doesn't equal the user@host of this process
     # (in case someone connected to this dashboard from another machine or user)
     progress_bar_details = _DASHBOARD_TQDM_DETAILS_DICT.get(pb_id)
-    if progress_bar_details['user'] == '{}@{}'.format(getpass.getuser(), socket.gethostname()):
+    if progress_bar_details['user'] == f'{getpass.getuser()}@{socket.gethostname()}':
         progress_bar_details['user'] = ''
     else:
         progress_bar_details['user'] = '{}:'.format(progress_bar_details['user'])

@@ -139,3 +139,43 @@ In case you have enabled :ref:`worker insights` these insights will be shown rea
 Click on the ``Insights (click to expand/collapse)`` to either expand or collapse the insight details.
 
 The dashboard will refresh automatically every 0.5 seconds.
+
+
+Stack level
+-----------
+
+By default, the dashboard will show information about the function that is called and where it is called from. However,
+in some cases where you have wrapped the function in another function, you might be less interested in the wrapper
+function and more interested in the function that is calling this wrapper. In such cases you can use 
+:meth:`mpire.dashboard.set_stacklevel` to set the stack level. This is the number of levels in the stack to go back in
+order to find the frame that contains the function that is invoking MPIRE. For example:
+
+.. code-block:: python
+
+    from mpire import WorkerPool
+    from mpire.dashboard import set_stacklevel, start_dashboard
+
+    class WorkerPoolWrapper:
+        def __init__(self, n_jobs, progress_bar=True):
+            self.n_jobs = n_jobs
+            self.progress_bar = progress_bar
+
+        def __call__(self, func, data):
+            with WorkerPool(self.n_jobs) as pool:
+                return pool.map(func, data, progress_bar=self.progress_bar)
+
+    def square(x):
+        return x * x
+
+    if __name__ == '__main__':
+        start_dashboard()
+        executor = WorkerPoolWrapper(4, progress_bar=True)
+        set_stacklevel(1)  # default
+        results = executor(square, range(10000))
+        set_stacklevel(2)
+        results = executor(square, range(10000))
+
+When you run this code you will see that the dashboard will show two progress bars. In both cases, the dashboard will
+show the ``square`` function as the function that is called. However, in the first case, it will show 
+``return pool.map(func, data, progress_bar=self.progress_bar)`` as the line where it is called from. In the second case,
+it will show the ``results = executor(square, range(10000))`` line.

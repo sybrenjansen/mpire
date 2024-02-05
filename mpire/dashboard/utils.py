@@ -3,6 +3,9 @@ import inspect
 import socket
 from functools import partial
 from typing import Callable, Dict, List, Sequence, Tuple, Union
+import types
+
+DASHBOARD_FUNCTION_STACKLEVEL = 1
 
 
 def get_two_available_ports(port_range: Sequence) -> Tuple[int, int]:
@@ -27,22 +30,41 @@ def get_two_available_ports(port_range: Sequence) -> Tuple[int, int]:
             return True
         except OSError:
             return False
-    
+
     available_ports = set()
     for port_nr in port_range:
         if _port_available(port_nr):
             available_ports.add(port_nr)
             break
-    
+
     for port_nr in reversed(port_range):
         if _port_available(port_nr):
             available_ports.add(port_nr)
             break
-    
+
     if len(available_ports) != 2:
         raise OSError(f"Dashboard Manager Server: there are not enough ports available: {port_range}")
-    
+
     return tuple(sorted(available_ports))
+
+
+def get_stacklevel() -> int:
+    """
+    Gets the stack level to use when obtaining function details (used for the dashboard)
+
+    :return: Stack level
+    """
+    return DASHBOARD_FUNCTION_STACKLEVEL
+
+
+def set_stacklevel(stacklevel: int) -> None:
+    """
+    Sets the stack level to use when obtaining function details (used for the dashboard)
+
+    :param stacklevel: Stack level
+    """
+    global DASHBOARD_FUNCTION_STACKLEVEL
+    DASHBOARD_FUNCTION_STACKLEVEL = stacklevel
      
 
 def get_function_details(func: Callable) -> Dict[str, Union[str, int]]:
@@ -62,13 +84,17 @@ def get_function_details(func: Callable) -> Dict[str, Union[str, int]]:
         the next argument
     :return: Function details dictionary
     """
-    # Get the frame in which the pool.map(...) was called. We obtain the current stack and skip all those which
-    # involve the current mpire module and stop right after that
+    # Get the frame in which the pool.map(...) was called. We obtain the current stack and skip all frames which
+    # involve the current mpire module. If the desired stack level is higher than 1, we continue until we've reached 
+    # the desired stack level. We then obtain the code context of that frame.
     invoked_frame = None
+    stacklevel = 0
     for frame_info in inspect.stack():
-        if frame_info.frame.f_globals['__name__'].split('.')[0] != 'mpire':
+        if frame_info.frame.f_globals['__name__'].split('.')[0] != 'mpire' or stacklevel > 0:
             invoked_frame = frame_info
-            break
+            stacklevel += 1
+            if stacklevel == DASHBOARD_FUNCTION_STACKLEVEL:
+                break
 
     # Obtain proper code context. Usually the last line of the invoked code is returned, but we want the complete
     # code snippet that called this function. That's why we increase the context size and need to find the start and
@@ -84,9 +110,12 @@ def get_function_details(func: Callable) -> Dict[str, Union[str, int]]:
     else:
         invoked_line_no = 'N/A'
 
-    # If we're dealing with a partial, obtain the function within
     if isinstance(func, partial):
+        # If we're dealing with a partial, obtain the function within
         func = func.func
+    elif hasattr(func, '__call__') and not isinstance(func, (type, types.FunctionType, types.MethodType)):
+        # If we're dealing with a callable class instance, use its __call__ method
+        func = func.__call__
 
     # We use a try/except block as some constructs don't allow this. E.g., in the case the function is a MagicMock
     # (i.e., in unit tests) these inspections will fail
@@ -100,7 +129,7 @@ def get_function_details(func: Callable) -> Dict[str, Union[str, int]]:
         function_name = 'n/a'
 
     # Populate details
-    func_details = {'user': '{}@{}'.format(getpass.getuser(), socket.gethostname()),
+    func_details = {'user': f'{getpass.getuser()}@{socket.gethostname()}',
                     'function_filename': function_filename,
                     'function_line_no': function_line_no,
                     'function_name': function_name,
