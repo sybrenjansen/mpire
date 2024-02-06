@@ -1,6 +1,6 @@
 from typing import Optional, Tuple
 
-from mpire.dashboard.manager import DashboardManagerConnectionDetails
+from mpire.dashboard.connection_classes import DashboardManagerConnectionDetails, DashboardStartedEvent
 
 # If a user has not installed the dashboard dependencies than the imports below will fail
 try:
@@ -9,7 +9,7 @@ try:
     from mpire.dashboard.manager import DASHBOARD_MANAGER_CONNECTION_DETAILS
 except (ImportError, ModuleNotFoundError):
     DASHBOARD_MANAGER_CONNECTION_DETAILS = DashboardManagerConnectionDetails()
-    DASHBOARD_STARTED_EVENT = None
+    DASHBOARD_STARTED_EVENT = DashboardStartedEvent()
 
     def connect_to_dashboard(*_):
         pass
@@ -25,7 +25,7 @@ def get_dashboard_connection_details() -> DashboardConnectionDetails:
     :return: Dashboard manager host, port_nr and whether a dashboard is started/connected
     """
     return (DASHBOARD_MANAGER_CONNECTION_DETAILS.host, DASHBOARD_MANAGER_CONNECTION_DETAILS.port, 
-            DASHBOARD_STARTED_EVENT.is_set() if DASHBOARD_STARTED_EVENT is not None else False)
+            DASHBOARD_STARTED_EVENT.is_set())
 
 
 def set_dashboard_connection(dashboard_connection_details: DashboardConnectionDetails,

@@ -1,19 +1,9 @@
-from dataclasses import dataclass
 from multiprocessing import Lock
-from multiprocessing.managers import BaseManager, BaseProxy
+from multiprocessing.managers import BaseProxy
 from typing import Dict, Optional, Tuple
 
+from mpire.dashboard.connection_classes import DashboardManager, DashboardManagerConnectionDetails
 from mpire.signal import ignore_keyboard_interrupt
-
-
-@dataclass
-class DashboardManagerConnectionDetails:
-    host: Optional[str] = None
-    port: Optional[int] = None
-    
-    def clear(self) -> None:
-        self.host = None
-        self.port = None
     
 
 # Dict for tqdm progress bar updates
@@ -27,10 +17,6 @@ DASHBOARD_TQDM_LOCK = None
 
 # Connection details for connecting to a manager
 DASHBOARD_MANAGER_CONNECTION_DETAILS = DashboardManagerConnectionDetails()
-
-
-class DashboardManager(BaseManager):
-    pass
 
 
 def get_dashboard_tqdm_dict() -> Dict:
@@ -91,14 +77,15 @@ def start_manager_server(manager_port_nr: int) -> DashboardManager:
     return dm
 
 
-def shutdown_manager_server(manager: DashboardManager) -> None:
+def shutdown_manager_server(manager: Optional[DashboardManager]) -> None:
     """
     Shutdown a DashboardManager
     
     :param manager: DashboardManager to shutdown
     """
     global DASHBOARD_TQDM_DICT, DASHBOARD_TQDM_DETAILS_DICT, DASHBOARD_TQDM_LOCK
-    manager.shutdown()
+    if manager is not None:
+        manager.shutdown()
     DASHBOARD_TQDM_DICT = None
     DASHBOARD_TQDM_DETAILS_DICT = None
     DASHBOARD_TQDM_LOCK = None

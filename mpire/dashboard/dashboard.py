@@ -19,6 +19,7 @@ from flask import Flask, jsonify, render_template, request
 from markupsafe import escape
 from werkzeug.serving import make_server
 
+from mpire.dashboard.connection_classes import DashboardStartedEvent
 from mpire.dashboard.manager import (DASHBOARD_MANAGER_CONNECTION_DETAILS,
                                      get_manager_client_dicts, shutdown_manager_server, start_manager_server)
 from mpire.dashboard.utils import get_two_available_ports
@@ -34,7 +35,7 @@ with open(importlib_resources_files('mpire.dashboard') / 'templates' / 'progress
 _DASHBOARD_MANAGER = None
 _DASHBOARD_TQDM_DICT = None
 _DASHBOARD_TQDM_DETAILS_DICT = None
-DASHBOARD_STARTED_EVENT = Event()
+DASHBOARD_STARTED_EVENT = DashboardStartedEvent()
 
 
 @app.route('/')
@@ -119,8 +120,10 @@ def start_dashboard(port_range: Sequence = range(8080, 8100)) -> Dict[str, Union
     :return: A dictionary containing the dashboard port number and manager host and port number being used
     """
     global _server_process, _DASHBOARD_MANAGER
-
+        
     if not DASHBOARD_STARTED_EVENT.is_set():
+
+        DASHBOARD_STARTED_EVENT.init()
         
         dashboard_port_nr, manager_port_nr = get_two_available_ports(port_range)
 
@@ -157,7 +160,7 @@ def shutdown_dashboard() -> None:
         _DASHBOARD_MANAGER = None
         _DASHBOARD_TQDM_DICT = None
         _DASHBOARD_TQDM_DETAILS_DICT = None
-        DASHBOARD_STARTED_EVENT.clear()
+        DASHBOARD_STARTED_EVENT.reset()
         
 
 def connect_to_dashboard(manager_port_nr: int, manager_host: Optional[Union[bytes, str]] = None) -> None:
