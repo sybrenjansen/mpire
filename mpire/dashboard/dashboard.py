@@ -1,10 +1,15 @@
 import atexit
 import getpass
-import importlib.resources
+try:
+    from importlib.resources import files as importlib_resources_files
+except ImportError:
+    # Python < 3.9 compatibility
+    from importlib_resources import files as importlib_resources_files
 import logging
 import os
 import signal
 import socket
+import sys
 from datetime import datetime
 from multiprocessing import Event, Process
 from multiprocessing.managers import BaseProxy
@@ -23,8 +28,8 @@ logger_werkzeug = logging.getLogger('werkzeug')
 logger_werkzeug.setLevel(logging.ERROR)
 app = Flask(__name__)
 _server_process = None
-with importlib.resources.path('mpire.dashboard', 'templates') as templates_path:
-    _progress_bar_html = (templates_path / "progress_bar.html").read_text()
+with open(importlib_resources_files('mpire.dashboard') / 'templates' / 'progress_bar.html', 'r') as fp:
+    _progress_bar_html = fp.read()
 
 _DASHBOARD_MANAGER = None
 _DASHBOARD_TQDM_DICT = None
