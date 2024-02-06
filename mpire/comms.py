@@ -658,17 +658,21 @@ class WorkerComms:
         if RUNNING_WINDOWS:
             self._drain_and_join_queue(q, join)
         else:
-            process = self.ctx.Process(target=self._drain_and_join_queue, args=(q, join))
-            process.start()
-            process.join(timeout=5)
-            if process.is_alive():
-                process.terminate()
-                process.join()
+            try:
+                process = self.ctx.Process(target=self._drain_and_join_queue, args=(q, join))
+                process.start()
+                process.join(timeout=5)
+                if process.is_alive():
+                    process.terminate()
+                    process.join()
 
-            if join:
-                # The above was done in a separate process where the queue had a different feeder thread
-                q.close()
-                q.join_thread()
+                if join:
+                    # The above was done in a separate process where the queue had a different feeder thread
+                    q.close()
+                    q.join_thread()
+            except OSError:
+                # Queue could be just closed when starting the drain_and_join_queue process
+                pass
 
     @staticmethod
     def _drain_and_join_queue(q: mp.JoinableQueue, join: bool = True) -> None:

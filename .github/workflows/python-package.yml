@@ -32,7 +32,7 @@ jobs:
         pip install .[dill]
         pip install .[testing]
     - name: Set ulimit for macOS
-      if: runner.os == 'macos-latest'
+      if: matrix.os == 'macos-latest'
       run: |
         ulimit -a
         ulimit -n 1024
