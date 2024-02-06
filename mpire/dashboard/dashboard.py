@@ -23,8 +23,8 @@ logger_werkzeug = logging.getLogger('werkzeug')
 logger_werkzeug.setLevel(logging.ERROR)
 app = Flask(__name__)
 _server_process = None
-with importlib.resources.files('mpire.dashboard').joinpath('templates/progress_bar.html').open('r') as fp:
-    _progress_bar_html = fp.read()
+with importlib.resources.path('mpire.dashboard', 'templates') as templates_path:
+    _progress_bar_html = (templates_path / "progress_bar.html").read_text()
 
 _DASHBOARD_MANAGER = None
 _DASHBOARD_TQDM_DICT = None
