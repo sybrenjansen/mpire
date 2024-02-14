@@ -269,15 +269,19 @@ class AbstractWorker:
         """
         Windows doesn't fully support signals as Unix-based systems do. Therefore, we have to work around it. This
         function is started in a thread. We wait for a kill signal (Event object) and interrupt the main thread if we
-        got it (derived from https://stackoverflow.com/a/40281422). This will raise a KeyboardInterrupt, which is then
-        caught by the signal handler, which in turn checks if we need to raise a StopWorker or InterruptWorker.
+        got it (derived from https://stackoverflow.com/a/40281422) and only when a function is running. This will raise
+        a KeyboardInterrupt, which is then caught by the signal handler, which in turn checks if we need to raise a 
+        StopWorker or InterruptWorker. When no function is running, the exception thrown event will be set and the 
+        worker will exit gracefully itself.
 
         Note: functions that release the GIL won't be interupted by this procedure (e.g., time.sleep). If graceful
         shutdown takes too long the process will be terminated by the main process.
         """
         while self.worker_comms.is_worker_alive(self.worker_id):
             if self.worker_comms.wait_for_exception_thrown(timeout=0.1):
-                _thread.interrupt_main()
+                with self.worker_comms.get_worker_running_task_lock(self.worker_id):
+                    if self.worker_comms.get_worker_running_task(self.worker_id):
+                        _thread.interrupt_main()
                 return
 
     def _set_additional_args(self) -> None:

@@ -272,7 +272,11 @@ class WorkerPool:
 
                 # Join worker. This can take a while as the worker could still be holding on to data it needs to send
                 # over the results queue
-                self._workers[worker_id].join()
+                try:
+                    self._workers[worker_id].join()
+                except OSError:
+                    # This can happen if the worker has already died (e.g., killed by the OS)
+                    pass
 
                 # Start new worker
                 self._worker_comms.reset_worker_restart(worker_id)
