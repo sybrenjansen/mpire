@@ -177,7 +177,7 @@ class WorkerComms:
         # Results related
         self._results_queue = self.ctx.JoinableQueue()
         self._results_added = [0 for _ in range(self.n_jobs)]
-        self._results_received = self.ctx.Array('L', self.n_jobs, lock=True)
+        self._results_received = self.ctx.Array('L', self.n_jobs, lock=self.ctx.RLock())
 
         # Worker status
         self._worker_restart_array = self.ctx.Array(ctypes.c_bool, self.n_jobs, lock=True)
@@ -191,7 +191,7 @@ class WorkerComms:
         self._kill_signal_received.value = False
 
         # Progress bar related
-        self._tasks_completed_array = self.ctx.Array('L', self.n_jobs, lock=True)
+        self._tasks_completed_array = self.ctx.Array('L', self.n_jobs, lock=self.ctx.RLock())
         self._progress_bar_last_updated = time.time()
         self._progress_bar_shutdown = self.ctx.Value(ctypes.c_bool, False, lock=True)
         self._progress_bar_complete = self.ctx.Event()
@@ -232,7 +232,8 @@ class WorkerComms:
         # Check if we need to update
         now = time.time()
         if force_update or (now - progress_bar_last_updated) > self.progress_bar_update_interval:
-            self._tasks_completed_array[worker_id] += progress_bar_n_tasks_completed
+            with self._tasks_completed_array.get_lock():
+                self._tasks_completed_array[worker_id] += progress_bar_n_tasks_completed
             progress_bar_last_updated = now
             progress_bar_n_tasks_completed = 0
 
@@ -458,7 +459,8 @@ class WorkerComms:
                 worker_id, results = self._results_queue.get(block=block, timeout=timeout)
                 self._results_queue.task_done()
                 if worker_id is not None:
-                    self._results_received[worker_id] += 1
+                    with self._results_received.get_lock():
+                        self._results_received[worker_id] += 1
                     self._last_completed_task_worker_id.append(worker_id)
                 return results
         except EOFError:
