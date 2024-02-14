@@ -62,8 +62,7 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertIsNone(comms._worker_restart_array)
                 self.assertIsInstance(comms._worker_restart_condition, condition_type)
                 self.assertIsNone(comms._workers_dead)
-                self.assertIsInstance(comms._workers_time_task_started, list)
-                self.assertEqual(len(comms._workers_time_task_started), 0)
+                self.assertIsNone(comms._workers_time_task_started)
                 self.assertIsInstance(comms.exception_lock, lock_type)
                 self.assertIsInstance(comms._exception_thrown, event_type)
                 self.assertIsNone(comms._exception_job_id)
@@ -97,7 +96,7 @@ class WorkerCommsTest(unittest.TestCase):
             comms._workers_dead[:] = [False] * n_jobs
             for i in range(n_jobs):
                 for j in range(3):
-                    comms._workers_time_task_started[i][j] = i + j + 1
+                    comms._workers_time_task_started[i * 3 + j] = i + j + 1
             comms._exception_thrown.set()
             comms._exception_job_id = 89
             comms._kill_signal_received.value = True
@@ -153,9 +152,8 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertEqual(len(comms._worker_restart_array), n_jobs)
         self.assertIsInstance(comms._workers_dead, array_type)
         self.assertEqual(len(comms._workers_dead), n_jobs)
-        self.assertEqual(len(comms._workers_time_task_started), n_jobs)
-        for v in comms._workers_time_task_started:
-            self.assertIsInstance(v, array_type)
+        self.assertIsInstance(comms._workers_time_task_started, array_type)
+        self.assertEqual(len(comms._workers_time_task_started), n_jobs * 3)
         self.assertFalse(comms._exception_thrown.is_set())
         self.assertIsInstance(comms._exception_job_id, value_type)
         self.assertEqual(comms._exception_job_id.value, 0)
@@ -176,8 +174,7 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertEqual(comms._results_received[:], [0] * n_jobs)
         self.assertEqual(comms._worker_restart_array[:], [False] * n_jobs)
         self.assertEqual(comms._workers_dead[:], [True] * n_jobs)
-        for i in range(n_jobs):
-            self.assertEqual(comms._workers_time_task_started[i][:], [0.0, 0.0, 0.0])
+        self.assertEqual(comms._workers_time_task_started[:], [0.0] * n_jobs * 3)
         self.assertEqual(comms._tasks_completed_array[:], [0] * n_jobs)
 
     def test_progress_bar(self):
@@ -621,11 +618,15 @@ class WorkerCommsTest(unittest.TestCase):
         for worker_id in range(5):
             with self.subTest(worker_id=worker_id), \
                     patch('mpire.comms.time.time', side_effect=[1000.0, 2000.0, 3000.0]):
-                self.assertListEqual(comms._workers_time_task_started[worker_id][:], [0.0, 0.0, 0.0])
+                self.assertListEqual(
+                    comms._workers_time_task_started[worker_id * 3 : worker_id * 3 + 3], [0.0, 0.0, 0.0]
+                )
                 comms.signal_worker_init_started(worker_id)
                 comms.signal_worker_task_started(worker_id)
                 comms.signal_worker_exit_started(worker_id)
-                self.assertListEqual(comms._workers_time_task_started[worker_id][:], [1000.0, 2000.0, 3000.0])
+                self.assertListEqual(
+                    comms._workers_time_task_started[worker_id * 3 : worker_id * 3 + 3], [1000.0, 2000.0, 3000.0]
+                )
 
         # Check timeouts
         for worker_id in range(5):
@@ -651,11 +652,17 @@ class WorkerCommsTest(unittest.TestCase):
         for worker_id in range(5):
             with self.subTest(worker_id=worker_id):
                 comms.signal_worker_init_completed(worker_id)
-                self.assertListEqual(comms._workers_time_task_started[worker_id][:], [0.0, 2000.0, 3000.0])
+                self.assertListEqual(
+                    comms._workers_time_task_started[worker_id * 3 : worker_id * 3 + 3], [0.0, 2000.0, 3000.0]
+                )
                 comms.signal_worker_task_completed(worker_id)
-                self.assertListEqual(comms._workers_time_task_started[worker_id][:], [0.0, 0.0, 3000.0])
+                self.assertListEqual(
+                    comms._workers_time_task_started[worker_id * 3 : worker_id * 3 + 3], [0.0, 0.0, 3000.0]
+                )
                 comms.signal_worker_exit_completed(worker_id)
-                self.assertListEqual(comms._workers_time_task_started[worker_id][:], [0.0, 0.0, 0.0])
+                self.assertListEqual(
+                    comms._workers_time_task_started[worker_id * 3 : worker_id * 3 + 3], [0.0, 0.0, 0.0]
+                )
 
         # Check timeouts. Should be False because nothing started
         for worker_id in range(5):
