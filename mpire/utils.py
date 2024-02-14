@@ -2,9 +2,9 @@ import heapq
 import itertools
 import math
 import os
-from datetime import datetime, timedelta
-from multiprocessing import Array, cpu_count
+from multiprocessing import cpu_count
 from multiprocessing.managers import SyncManager
+from multiprocessing.sharedctypes import SynchronizedArray
 from typing import Callable, Collection, Generator, Iterable, List, Optional, Tuple, Union
 
 try:
@@ -219,7 +219,8 @@ class TimeIt:
     """ Simple class that provides a context manager for keeping track of task duration and adds the total number
      of seconds in a designated output array """
 
-    def __init__(self, cum_time_array: Optional[Array], array_idx: int, max_time_array: Optional[Array] = None,
+    def __init__(self, cum_time_array: Optional[SynchronizedArray], array_idx: int, 
+                 max_time_array: Optional[SynchronizedArray] = None, 
                  format_args_func: Optional[Callable] = None) -> None:
         """
         :param cum_time_array: Optional array to store cumulative time in

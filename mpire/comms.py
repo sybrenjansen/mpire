@@ -1,8 +1,6 @@
 import collections
 import ctypes
-import gc
 import multiprocessing as mp
-import platform
 import queue
 import threading
 import time
@@ -43,6 +41,47 @@ class WorkerComms:
     - Tasks & (exit) results comms
     - Exception handling comms
     - Terminating and restarting comms
+    
+    General overview of how the comms work:
+    - When ``map`` or ``imap`` is used, the workers need to return the ``idx`` of the task they just completed. This is
+        needed to return the results in order. This is communicated by using the ``_keep_order`` boolean value.
+    - The main process assigns tasks to the workers by using their respective task queue (``_task_queues``). When no
+        tasks have been completed yet, the main process assigns tasks in order. To determine which worker to assign the
+        next task to, the main process uses the ``_task_idx`` counter. When tasks have been completed, the main process
+        assigns the next task to the worker that completed the last task. This is communicated by using the
+        ``_last_completed_task_worker_id`` deque.
+    - Each worker keeps track of whether it is running a task by using the ``_worker_running_task`` boolean value. This
+        is used by the main process in case a worker needs to be interrupted (due to an exception somewhere else). 
+        When a worker is not busy with any task at the moment, the worker will exit itself because of the 
+        ``_exception_thrown`` event that is set in such cases. However, when it is running a task, we want to interrupt
+        it. The lock object ``_worker_running_task_locks`` is used to ensure that there are no race conditions when
+        accessing the ``_worker_running_task`` boolean value.
+    - Each worker also keeps track of which job it is working on by using the ``_worker_working_on_job`` array. This is
+        needed to assess whether a certain task times out, and we need to know which job to set to failed.
+    - The workers communicate their results to the main process by using the results queue (``_results_queue``). Each
+        worker keeps track of how many results it has added to the queue (``_results_added``), and the main process 
+        keeps track of how many results it has received from each worker (``_results_received``). This is used by the
+        workers to know when they can safely exit.
+    - Workers can request a restart when a maximum lifespan is configured and reached. This is done by setting the
+        ``_worker_restart_array`` boolean array. The main process listens to this array and restarts the worker when
+        needed. The ``_worker_restart_condition`` is used to signal the main process that a worker needs to be 
+        restarted.
+    - The ``_workers_dead`` array is used to keep track of which workers are alive and which are not. Sometimes, a
+        worker can be terminated by the OS (e.g., OOM), which we want to pick up on. The main process checks regularly
+        whether a worker is still alive according to the OS and according to the worker itself. If the OS says it's 
+        dead, but the value in ``_workers_dead`` is still False, we know something went wrong.
+    - The ``_workers_time_task_started`` array is used to keep track of when a worker started a task. This is used by
+        the main process to check whether a worker times out. 
+    - Exceptions are communicated by using the ``_exception_thrown`` event. Both the main process as the workers can set
+        this event. The main process will set this when, for example, a timeout has been reached when running a ``map``
+        task. The source of the exception is stored in the ``_exception_job_id`` value, which is used by the main 
+        process to obtain the exception and raise accordingly.
+    - The workers communicate every 0.1 seconds how many tasks they have completed. This is used by the main process to
+        update the progress bar. The workers communicate this by using the ``_tasks_completed_array`` array. The 
+        ``_progress_bar_last_updated`` datetime object is used to keep track of when the last update was sent. The
+        ``_progress_bar_shutdown`` boolean value is used to signal the progress bar handler thread to shut down. The
+        ``_progress_bar_complete`` event is used to signal the main process and workers that the progress bar is 
+        complete and that it's safe to exit.
     """
 
     # Amount of time in between each progress bar update
