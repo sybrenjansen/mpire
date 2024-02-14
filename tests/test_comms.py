@@ -450,12 +450,12 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertFalse(comms.exception_thrown())
         comms.signal_exception_thrown(0)
         self.assertTrue(comms.exception_thrown())
-        self.assertEqual(comms.exception_thrown_by(), 0)
+        self.assertEqual(comms.get_exception_thrown_job_id(), 0)
         comms._exception_thrown.clear()
         self.assertFalse(comms.exception_thrown())
         comms.signal_exception_thrown(13)
         self.assertTrue(comms.exception_thrown())
-        self.assertEqual(comms.exception_thrown_by(), 13)
+        self.assertEqual(comms.get_exception_thrown_job_id(), 13)
 
     def test_kill_signal_received(self):
         """

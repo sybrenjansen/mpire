@@ -522,7 +522,7 @@ class WorkerComms:
         """
         return self._exception_thrown.wait(timeout=timeout)
 
-    def exception_thrown_by(self) -> int:
+    def get_exception_thrown_job_id(self) -> int:
         """
         :return: Job ID which triggered the exception
         """

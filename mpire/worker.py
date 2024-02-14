@@ -248,7 +248,7 @@ class AbstractWorker:
         function is running. In such cases, a StopWorker exception is raised, which is caught by the ``_run_safely()``
         function, so we can quit gracefully.
         """            
-        exception_job_id = self.worker_comms.get_worker_working_on_job(self.worker_comms.exception_thrown_by())
+        exception_job_id = self.worker_comms.get_exception_thrown_job_id()
         if RUNNING_WINDOWS:
             with self.worker_comms.get_worker_running_task_lock(self.worker_id):
                 if self.worker_comms.get_worker_running_task(self.worker_id):

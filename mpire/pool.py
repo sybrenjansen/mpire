@@ -919,7 +919,7 @@ class WorkerPool:
         """
         # Obtain exception
         if self._worker_comms.exception_thrown():
-            exception = self._cache[self._worker_comms.exception_thrown_by()].get_exception()
+            exception = self._cache[self._worker_comms.get_exception_thrown_job_id()].get_exception()
             cause = exception.__cause__
         else:
             self._worker_comms.signal_exception_thrown(MAIN_PROCESS)
@@ -1077,23 +1077,6 @@ class WorkerPool:
 
         # We wait until workers are done terminating. However, we don't have all the patience in the world. When the
         # patience runs out we terminate them.
-        try_count = 10
-        while try_count > 0:
-            try:
-                self._workers[worker_id].join(timeout=0.1)
-            except AssertionError:
-                return
-            if not self._workers[worker_id].is_alive():
-                break
-
-            # For properly joining, it can help if we try to get some results here. Workers can still be busy putting
-            # items in queues under the hood
-            self._worker_comms.drain_results_queue_terminate_worker(dont_wait_event)
-            try_count -= 1
-            if not dont_wait_event.is_set():
-                dont_wait_event.wait()
-
-        # Join the worker process
         try_count = 10
         while try_count > 0:
             try:
