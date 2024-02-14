@@ -212,16 +212,14 @@ class WorkerInsightsTest(unittest.TestCase):
         insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5)
 
         # Shouldn't do anything when insights haven't been enabled
-        with self.subTest(insights_enabled=False), \
-                patch('mpire.insights.time.time', side_effect=[1.0, 2.0, 3.0, 7.0, 8.0]):
+        with self.subTest(insights_enabled=False), patch('time.time', side_effect=[1.0, 2.0, 3.0, 7.0, 8.0]):
             for worker_id in range(5):
                 insights.update_start_up_time(worker_id, 1.0)
             self.assertIsNone(insights.worker_start_up_time)
 
         insights.reset_insights(enable_insights=True)
 
-        with self.subTest(insights_enabled=True), \
-                patch('mpire.insights.time.time', side_effect=[1.0, 2.0, 3.0, 7.0, 8.0]):
+        with self.subTest(insights_enabled=True), patch('time.time', side_effect=[1.0, 2.0, 3.0, 7.0, 8.0]):
             for worker_id in range(5):
                 insights.update_start_up_time(worker_id, 1.0)
             self.assertListEqual(list(insights.worker_start_up_time), [0.0, 1.0, 2.0, 6.0, 7.0])
@@ -267,8 +265,7 @@ class WorkerInsightsTest(unittest.TestCase):
         max_task_duration_last_updated = 1.0
 
         # The first three worker IDs won't send an update because the two seconds hasn't passed yet.
-        with self.subTest(insights_enabled=True), \
-                patch('mpire.insights.time.time', side_effect=[0.0, 2.0, 3.0, 7.0, 8.0]):
+        with self.subTest(insights_enabled=True), patch('time.time', side_effect=[0.0, 2.0, 3.0, 7.0, 8.0]):
             last_updated_times = []
             for worker_id, max_task_duration_list in [
                 (0, [(0.1, '0'), (0.2, '1'), (0.3, '2'), (0.4, '3'), (0.5, '4')]),
@@ -300,7 +297,7 @@ class WorkerInsightsTest(unittest.TestCase):
         max_task_duration_last_updated = 0.0
         
         # Shouldn't do anything when insights haven't been enabled
-        with self.subTest(insights_enabled=False), patch('mpire.insights.time.time', side_effect=[1.0, 2.0]):
+        with self.subTest(insights_enabled=False), patch('time.time', side_effect=[1.0, 2.0]):
             for worker_id in range(2):
                 max_task_duration_last_updated = insights.update_task_insights(
                     worker_id, max_task_duration_last_updated, [(0.1, '1'), (0.2, '2')], force_update=True
@@ -312,7 +309,7 @@ class WorkerInsightsTest(unittest.TestCase):
         insights.reset_insights(enable_insights=True)
         max_task_duration_last_updated = 0.0
 
-        with self.subTest(insights_enabled=True), patch('mpire.insights.time.time', side_effect=[1, 2]):
+        with self.subTest(insights_enabled=True), patch('time.time', side_effect=[1, 2]):
             for worker_id, max_task_duration_list in [
                     (0, [(5.0, '5'), (6.0, '6'), (7.0, '7'), (8.0, '8'), (9.0, '9')]),
                     (1, [(0.0, '0'), (1.0, '1'), (2.0, '2'), (3.0, '3'), (4.0, '4')])

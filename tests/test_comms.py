@@ -73,7 +73,7 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertIsNone(comms._progress_bar_complete)
 
             with self.subTest('without initial values', ctx=ctx, n_jobs=n_jobs, order_tasks=order_tasks), \
-                    patch('mpire.comms.time.time', return_value=0.0):
+                    patch('time.time', return_value=0.0):
                 comms.init_comms()
                 self._check_comms_are_initialized(comms, n_jobs)
 
@@ -106,7 +106,7 @@ class WorkerCommsTest(unittest.TestCase):
             comms.reset()
 
             with self.subTest('with initial values', ctx=ctx, n_jobs=n_jobs, order_tasks=order_tasks), \
-                    patch('mpire.comms.time.time', return_value=0.0):
+                    patch('time.time', return_value=0.0):
                 comms.init_comms()
                 self._check_comms_are_initialized(comms, n_jobs)
 
@@ -185,7 +185,7 @@ class WorkerCommsTest(unittest.TestCase):
         # 3 task done, but not enough time has passed to send the update
         last_updated = 0.0
         n_tasks_completed = 0
-        with patch('mpire.comms.time.time', return_value=0.0):
+        with patch('time.time', return_value=0.0):
             for n in range(1, 4):
                 last_updated, n_tasks_completed = comms.task_completed_progress_bar(0, last_updated, n_tasks_completed,
                                                                                     force_update=False)
@@ -193,7 +193,7 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertEqual(sum(comms._tasks_completed_array), 0)
 
         # Not enough time has passed, but we'll force the update. Number of tasks done should still be 3
-        with patch('mpire.comms.time.time', return_value=0.0):
+        with patch('time.time', return_value=0.0):
             last_updated, n_tasks_completed = comms.task_completed_progress_bar(0, last_updated, n_tasks_completed,
                                                                                 force_update=True)
         self.assertEqual(comms.get_tasks_completed_progress_bar(), 3)
@@ -204,7 +204,7 @@ class WorkerCommsTest(unittest.TestCase):
         # second. In total we have 3 (from above) + 4 + 4 = 11 tasks done
         last_updated = 0.0
         n_tasks_completed = 4
-        with patch('mpire.comms.time.time', side_effect=[1.0, 1.0, 3.0, 4.0]):
+        with patch('time.time', side_effect=[1.0, 1.0, 3.0, 4.0]):
             for expected_last_updated in [1.0, 1.0, 3.0, 4.0]:
                 last_updated, n_tasks_completed = comms.task_completed_progress_bar(0, last_updated, n_tasks_completed,
                                                                                     force_update=False)
@@ -611,8 +611,7 @@ class WorkerCommsTest(unittest.TestCase):
 
         # Signal workers started
         for worker_id in range(5):
-            with self.subTest(worker_id=worker_id), \
-                    patch('mpire.comms.time.time', side_effect=[1000.0, 2000.0, 3000.0]):
+            with self.subTest(worker_id=worker_id), patch('time.time', side_effect=[1000.0, 2000.0, 3000.0]):
                 self.assertListEqual(
                     comms._workers_time_task_started[worker_id * 3 : worker_id * 3 + 3], [0.0, 0.0, 0.0]
                 )
@@ -627,20 +626,17 @@ class WorkerCommsTest(unittest.TestCase):
         for worker_id in range(5):
             # worker_init, times out at > 10
             for timeout, has_timed_out in [(8, True), (9, True), (10, True), (11, False)]:
-                with self.subTest(timeout=timeout, worker_id=worker_id), \
-                        patch('mpire.comms.time.time', return_value=1010.0):
+                with self.subTest(timeout=timeout, worker_id=worker_id), patch('time.time', return_value=1010.0):
                     self.assertEqual(comms.has_worker_init_timed_out(worker_id, timeout), has_timed_out)
 
             # task, times out at > 9
             for timeout, has_timed_out in [(8, True), (9, True), (10, False), (11, False)]:
-                with self.subTest(timeout=timeout, worker_id=worker_id), \
-                        patch('mpire.comms.time.time', return_value=2009.0):
+                with self.subTest(timeout=timeout, worker_id=worker_id), patch('time.time', return_value=2009.0):
                     self.assertEqual(comms.has_worker_task_timed_out(worker_id, timeout), has_timed_out)
 
             # worker_exit, times out at > 8
             for timeout, has_timed_out in [(8, True), (9, False), (10, False), (11, False)]:
-                with self.subTest(timeout=timeout, worker_id=worker_id), \
-                        patch('mpire.comms.time.time', return_value=3008.0):
+                with self.subTest(timeout=timeout, worker_id=worker_id), patch('time.time', return_value=3008.0):
                     self.assertEqual(comms.has_worker_exit_timed_out(worker_id, timeout), has_timed_out)
 
         # Reset
