@@ -53,8 +53,9 @@ class WorkerComms:
         is used by the main process in case a worker needs to be interrupted (due to an exception somewhere else). 
         When a worker is not busy with any task at the moment, the worker will exit itself because of the 
         ``_exception_thrown`` event that is set in such cases. However, when it is running a task, we want to interrupt
-        it. The lock object ``_worker_running_task_locks`` is used to ensure that there are no race conditions when
-        accessing the ``_worker_running_task`` boolean value.
+        it. The RLock object is used to ensure that there are no race conditions when accessing the 
+        ``_worker_running_task`` boolean value. E.g., when getting and setting the value without another process
+        doing something in between.
     - Each worker also keeps track of which job it is working on by using the ``_worker_working_on_job`` array. This is
         needed to assess whether a certain task times out, and we need to know which job to set to failed.
     - The workers communicate their results to the main process by using the results queue (``_results_queue``). Each
@@ -105,7 +106,6 @@ class WorkerComms:
         # worker is working on what task
         self._task_queues: List[mp.JoinableQueue] = []
         self._task_idx: Optional[int] = None
-        self._worker_running_task_locks: List[mp.RLock] = []
         self._worker_running_task: List[mp.Value] = []
         self._last_completed_task_worker_id = collections.deque()
         self._worker_working_on_job: Optional[mp.Array] = None
@@ -169,8 +169,9 @@ class WorkerComms:
         """
         # Task related
         self._task_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
-        self._worker_running_task_locks = [self.ctx.RLock() for _ in range(self.n_jobs)]
-        self._worker_running_task = [self.ctx.Value(ctypes.c_bool, False, lock=False) for _ in range(self.n_jobs)]
+        self._worker_running_task = [
+            self.ctx.Value(ctypes.c_bool, False, lock=self.ctx.RLock()) for _ in range(self.n_jobs)
+        ]
         self._worker_working_on_job = self.ctx.Array('i', self.n_jobs, lock=True)
 
         # Results related
@@ -395,21 +396,20 @@ class WorkerComms:
         :param worker_id: Worker ID
         :param running: Whether the worker is running a task
         """
-        with self._worker_running_task_locks[worker_id]:
-            self._worker_running_task[worker_id].value = running
+        self._worker_running_task[worker_id].value = running
 
-    def get_worker_running_task_lock(self, worker_id: int) -> mp.Lock:
+    def get_worker_running_task_lock(self, worker_id: int) -> mp.RLock:
         """
         Obtain the lock for the worker running task
 
         :param worker_id: Worker ID
-        :return: Lock
+        :return: RLock
         """
-        return self._worker_running_task_locks[worker_id]
+        return self._worker_running_task[worker_id].get_lock()
 
     def get_worker_running_task(self, worker_id: int) -> bool:
         """
-        Obtain whether the worker is running a task. Lock has to be obtained manually
+        Obtain whether the worker is running a task
 
         :param worker_id: Worker ID
         :return: Whether the worker is running a task

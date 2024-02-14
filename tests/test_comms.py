@@ -48,8 +48,6 @@ class WorkerCommsTest(unittest.TestCase):
                 self.assertIsInstance(comms._task_queues, list)
                 self.assertEqual(len(comms._task_queues), 0)
                 self.assertIsNone(comms._task_idx)
-                self.assertIsInstance(comms._worker_running_task_locks, list)
-                self.assertEqual(len(comms._worker_running_task_locks), 0)
                 self.assertIsInstance(comms._worker_running_task, list)
                 self.assertEqual(len(comms._worker_running_task), 0)
                 self.assertIsInstance(comms._last_completed_task_worker_id, deque)
@@ -128,19 +126,16 @@ class WorkerCommsTest(unittest.TestCase):
         joinable_queue_type = type(comms.ctx.JoinableQueue())
         rlock_type = type(comms.ctx.RLock())
         value_type = type(comms.ctx.Value('i', 0, lock=True))
-        value_without_lock_type = type(comms.ctx.Value(ctypes.c_bool, 0, lock=False))
 
         self.assertEqual(len(comms._task_queues), n_jobs)
         for q in comms._task_queues:
             self.assertIsInstance(q, joinable_queue_type)
         self.assertIsInstance(comms._last_completed_task_worker_id, deque)
         self.assertEqual(len(comms._last_completed_task_worker_id), 0)
-        self.assertEqual(len(comms._worker_running_task_locks), n_jobs)
-        for l in comms._worker_running_task_locks:
-            self.assertIsInstance(l, rlock_type)
         self.assertEqual(len(comms._worker_running_task), n_jobs)
         for v in comms._worker_running_task:
-            self.assertIsInstance(v, value_without_lock_type)
+            self.assertIsInstance(v, value_type)
+            self.assertIsInstance(v.get_lock(), rlock_type)
         self.assertIsInstance(comms._worker_working_on_job, array_type)
         self.assertEqual(len(comms._worker_working_on_job), n_jobs)
         self.assertIsInstance(comms._results_queue, joinable_queue_type)
