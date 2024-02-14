@@ -1,10 +1,10 @@
 import atexit
 import getpass
 try:
-    from importlib.resources import files as importlib_resources_files
+    from importlib.resources import files as resource
 except ImportError:
     # Python < 3.9 compatibility
-    from importlib_resources import files as importlib_resources_files
+    from importlib_resources import files as resource
 import logging
 import os
 import signal
@@ -29,7 +29,7 @@ logger_werkzeug = logging.getLogger('werkzeug')
 logger_werkzeug.setLevel(logging.ERROR)
 app = Flask(__name__)
 _server_process = None
-with open(importlib_resources_files('mpire.dashboard') / 'templates' / 'progress_bar.html', 'r') as fp:
+with open(resource('mpire.dashboard') / 'templates' / 'progress_bar.html', 'r') as fp:
     _progress_bar_html = fp.read()
 
 _DASHBOARD_MANAGER = None
