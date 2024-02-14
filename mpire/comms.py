@@ -4,7 +4,6 @@ import multiprocessing as mp
 import queue
 import threading
 import time
-from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from mpire.context import RUNNING_WINDOWS
@@ -139,7 +138,7 @@ class WorkerComms:
 
         # Array where the number of completed tasks is stored for the progress bar
         self._tasks_completed_array: Optional[mp.Array] = None
-        self._progress_bar_last_updated: Optional[datetime] = None
+        self._progress_bar_last_updated: Optional[float] = None
         self._progress_bar_shutdown: Optional[mp.Value] = None
         self._progress_bar_complete: Optional[mp.Event] = None
 
@@ -192,7 +191,7 @@ class WorkerComms:
 
         # Progress bar related
         self._tasks_completed_array = self.ctx.Array('L', self.n_jobs, lock=True)
-        self._progress_bar_last_updated = datetime.now()
+        self._progress_bar_last_updated = time.time()
         self._progress_bar_shutdown = self.ctx.Value(ctypes.c_bool, False, lock=True)
         self._progress_bar_complete = self.ctx.Event()
 
@@ -213,9 +212,9 @@ class WorkerComms:
     # Progress bar
     ################
 
-    def task_completed_progress_bar(self, worker_id: int, progress_bar_last_updated: datetime,
+    def task_completed_progress_bar(self, worker_id: int, progress_bar_last_updated: float,
                                     progress_bar_n_tasks_completed: Optional[int] = None,
-                                    force_update: bool = False) -> Tuple[datetime, int]:
+                                    force_update: bool = False) -> Tuple[float, int]:
         """
         Signal that we've completed a task every 0.1 seconds, for the progress bar
 
@@ -230,8 +229,8 @@ class WorkerComms:
             progress_bar_n_tasks_completed += 1
 
         # Check if we need to update
-        now = datetime.now()
-        if force_update or (now - progress_bar_last_updated).total_seconds() > self.progress_bar_update_interval:
+        now = time.time()
+        if force_update or (now - progress_bar_last_updated) > self.progress_bar_update_interval:
             self._tasks_completed_array[worker_id] += progress_bar_n_tasks_completed
             progress_bar_last_updated = now
             progress_bar_n_tasks_completed = 0
@@ -246,7 +245,7 @@ class WorkerComms:
         :return: The number of tasks done or a poison pill
         """
         # Check if we need to wait a bit for the next update
-        time_diff = (datetime.now() - self._progress_bar_last_updated).total_seconds()
+        time_diff = time.time() - self._progress_bar_last_updated
         if time_diff < self.progress_bar_update_interval:
             time.sleep(self.progress_bar_update_interval - time_diff)
 
@@ -254,7 +253,7 @@ class WorkerComms:
         while (not self.exception_thrown() and not self.kill_signal_received() and
                not self._progress_bar_shutdown.value):
             n_tasks_completed = sum(self._tasks_completed_array)
-            self._progress_bar_last_updated = datetime.now()
+            self._progress_bar_last_updated = time.time()
             return n_tasks_completed
 
         return POISON_PILL
@@ -761,7 +760,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id][0] = datetime.now().timestamp()
+        self._workers_time_task_started[worker_id][0] = time.time()
 
     def signal_worker_task_started(self, worker_id: int) -> None:
         """
@@ -769,7 +768,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id][1] = datetime.now().timestamp()
+        self._workers_time_task_started[worker_id][1] = time.time()
 
     def signal_worker_exit_started(self, worker_id: int) -> None:
         """
@@ -777,7 +776,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id][2] = datetime.now().timestamp()
+        self._workers_time_task_started[worker_id][2] = time.time()
 
     def signal_worker_init_completed(self, worker_id: int) -> None:
         """
@@ -845,4 +844,4 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        return False if started_time == 0.0 else (datetime.now().timestamp() - started_time) >= timeout
+        return False if started_time == 0.0 else (time.time() - started_time) >= timeout

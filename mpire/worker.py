@@ -5,9 +5,9 @@ except ImportError:
     import pickle
 import multiprocessing as mp
 import signal
+import time
 import traceback
 import _thread
-from datetime import datetime
 from functools import partial
 from threading import current_thread, main_thread, Thread
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
@@ -43,7 +43,7 @@ class AbstractWorker:
     def __init__(self, worker_id: int, pool_params: WorkerPoolParams, map_params: WorkerMapParams,
                  worker_comms: WorkerComms, worker_insights: WorkerInsights,
                  tqdm_connection_details: TqdmConnectionDetails,
-                 dashboard_connection_details: DashboardConnectionDetails, start_time: datetime) -> None:
+                 dashboard_connection_details: DashboardConnectionDetails, start_time: float) -> None:
         """
         :param worker_id: Worker ID
         :param pool_params: WorkerPool parameters
@@ -53,7 +53,7 @@ class AbstractWorker:
         :param tqdm_connection_details: Tqdm manager host, and whether the manager is started/connected
         :param dashboard_connection_details: Dashboard manager host, port_nr and whether a dashboard is
             started/connected
-        :param start_time: `datetime` object indicating at what time the Worker instance was created and started
+        :param start_time: Timestamp indicating at what time the Worker instance was created and started
         """
         super().__init__()
 
@@ -72,9 +72,9 @@ class AbstractWorker:
 
         # Local variables needed for each worker
         self.additional_args = None
-        self.progress_bar_last_updated = datetime.now()
+        self.progress_bar_last_updated = time.time()
         self.progress_bar_n_tasks_completed = 0
-        self.max_task_duration_last_updated = datetime.now()
+        self.max_task_duration_last_updated = self.progress_bar_last_updated
         self.max_task_duration_list = self.worker_insights.get_max_task_duration_list(self.worker_id)
         self.is_apply_func = False
         self.last_job_id = None

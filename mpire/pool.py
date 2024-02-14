@@ -4,7 +4,6 @@ import queue
 import signal
 import threading
 import time
-from datetime import datetime
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Sized, Union, Tuple
 
 try:
@@ -216,7 +215,7 @@ class WorkerPool:
             # Create worker
             self._workers[worker_id] = self.Worker(
                 worker_id, self.pool_params, self.map_params, self._worker_comms, self._worker_insights,
-                TqdmManager.get_connection_details(), get_dashboard_connection_details(), datetime.now()
+                TqdmManager.get_connection_details(), get_dashboard_connection_details(), time.time()
             )
             self._workers[worker_id].daemon = self.pool_params.daemon
             self._workers[worker_id].name = f"Worker-{worker_id}"

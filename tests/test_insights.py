@@ -2,7 +2,6 @@ import ctypes
 import multiprocessing as mp
 import unittest
 import warnings
-from datetime import datetime
 from multiprocessing import managers
 from time import sleep
 from unittest.mock import patch
@@ -13,7 +12,6 @@ from mpire import WorkerPool
 from mpire.context import DEFAULT_START_METHOD, FORK_AVAILABLE, RUNNING_WINDOWS
 from mpire.insights import WorkerInsights
 from mpire.utils import NonPickledSyncManager
-from tests.utils import MockDatetimeNow
 
 
 # Skip start methods that use fork if it's not available
@@ -57,10 +55,7 @@ class WorkerInsightsTest(unittest.TestCase):
                 self.assertIsNone(insights.max_task_args)
 
             # Containers should be properly initialized
-            MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 1, 2, 3, 4)]
-            MockDatetimeNow.CURRENT_IDX = 0
-            with self.subTest('without initial values', n_jobs=n_jobs, enable_insights=True), \
-                    patch('mpire.insights.datetime', new=MockDatetimeNow):
+            with self.subTest('without initial values', n_jobs=n_jobs, enable_insights=True):
                 insights.reset_insights(enable_insights=True)
                 self.assertTrue(insights.insights_enabled)
                 self.assertIsInstance(insights.insights_manager_lock, mp.synchronize.Lock)
@@ -95,9 +90,7 @@ class WorkerInsightsTest(unittest.TestCase):
             insights.max_task_args[0] = '8'
 
             # Containers should be properly initialized
-            MockDatetimeNow.CURRENT_IDX = 0
-            with self.subTest('with initial values', n_jobs=n_jobs, enable_insights=True), \
-                    patch('mpire.insights.datetime', new=MockDatetimeNow):
+            with self.subTest('with initial values', n_jobs=n_jobs, enable_insights=True):
                 insights.reset_insights(enable_insights=True)
                 # Basic sanity checks for the values
                 self.assertEqual(sum(insights.worker_start_up_time), 0)
@@ -216,28 +209,22 @@ class WorkerInsightsTest(unittest.TestCase):
         """
         Test that the start up time is correctly added to worker_start_up_time for the right index
         """
-        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0),
-                                         datetime(1970, 1, 1, 0, 0, 2, 0),
-                                         datetime(1970, 1, 1, 0, 0, 3, 0),
-                                         datetime(1970, 1, 1, 0, 0, 7, 0),
-                                         datetime(1970, 1, 1, 0, 0, 8, 0)]
-        MockDatetimeNow.CURRENT_IDX = 0
-
         insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5)
 
         # Shouldn't do anything when insights haven't been enabled
-        with self.subTest(insights_enabled=False), patch('mpire.insights.datetime', new=MockDatetimeNow):
+        with self.subTest(insights_enabled=False), \
+                patch('mpire.insights.time.time', side_effect=[1.0, 2.0, 3.0, 7.0, 8.0]):
             for worker_id in range(5):
-                insights.update_start_up_time(worker_id, datetime(1970, 1, 1, 0, 0, 0, 0))
+                insights.update_start_up_time(worker_id, 1.0)
             self.assertIsNone(insights.worker_start_up_time)
 
         insights.reset_insights(enable_insights=True)
-        MockDatetimeNow.CURRENT_IDX = 0
 
-        with self.subTest(insights_enabled=True), patch('mpire.insights.datetime', new=MockDatetimeNow):
+        with self.subTest(insights_enabled=True), \
+                patch('mpire.insights.time.time', side_effect=[1.0, 2.0, 3.0, 7.0, 8.0]):
             for worker_id in range(5):
-                insights.update_start_up_time(worker_id, datetime(1970, 1, 1, 0, 0, 0, 0))
-            self.assertListEqual(list(insights.worker_start_up_time), [0, 2, 3, 7, 8])
+                insights.update_start_up_time(worker_id, 1.0)
+            self.assertListEqual(list(insights.worker_start_up_time), [0.0, 1.0, 2.0, 6.0, 7.0])
 
     def test_update_n_completed_tasks(self):
         """
@@ -263,18 +250,12 @@ class WorkerInsightsTest(unittest.TestCase):
         """
         Test whether the update_task_insights is triggered correctly when ``force_update=False``.
         """
-        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0),
-                                         datetime(1970, 1, 1, 0, 0, 2, 0),
-                                         datetime(1970, 1, 1, 0, 0, 3, 0),
-                                         datetime(1970, 1, 1, 0, 0, 7, 0),
-                                         datetime(1970, 1, 1, 0, 0, 8, 0)]
-        MockDatetimeNow.CURRENT_IDX = 0
-
         insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5)
-        max_task_duration_last_updated = datetime(1970, 1, 1, 0, 0, 1, 0)
+        max_task_duration_last_updated = 1.0
 
         # Shouldn't do anything when insights haven't been enabled
-        with self.subTest(insights_enabled=False), patch('mpire.insights.datetime', new=MockDatetimeNow):
+        with self.subTest(insights_enabled=False), \
+                patch('mpire.insights.time.time', side_effect=[0.0, 2.0, 3.0, 7.0, 8.0]):
             for worker_id in range(5):
                 max_task_duration_list = insights.get_max_task_duration_list(worker_id)
                 insights.update_task_insights(worker_id, max_task_duration_last_updated, max_task_duration_list,
@@ -283,11 +264,11 @@ class WorkerInsightsTest(unittest.TestCase):
             self.assertIsNone(insights.max_task_args)
 
         insights.reset_insights(enable_insights=True)
-        max_task_duration_last_updated = datetime(1970, 1, 1, 0, 0, 1, 0)
-        MockDatetimeNow.CURRENT_IDX = 0
+        max_task_duration_last_updated = 1.0
 
         # The first three worker IDs won't send an update because the two seconds hasn't passed yet.
-        with self.subTest(insights_enabled=True), patch('mpire.insights.datetime', new=MockDatetimeNow):
+        with self.subTest(insights_enabled=True), \
+                patch('mpire.insights.time.time', side_effect=[0.0, 2.0, 3.0, 7.0, 8.0]):
             last_updated_times = []
             for worker_id, max_task_duration_list in [
                 (0, [(0.1, '0'), (0.2, '1'), (0.3, '2'), (0.4, '3'), (0.5, '4')]),
@@ -299,9 +280,7 @@ class WorkerInsightsTest(unittest.TestCase):
                 last_updated_times.append(insights.update_task_insights(
                     worker_id, max_task_duration_last_updated, max_task_duration_list, force_update=False
                 ))
-            self.assertListEqual(last_updated_times, [datetime(1970, 1, 1, 0, 0, 1), datetime(1970, 1, 1, 0, 0, 1),
-                                                      datetime(1970, 1, 1, 0, 0, 1), datetime(1970, 1, 1, 0, 0, 7),
-                                                      datetime(1970, 1, 1, 0, 0, 8)])
+            self.assertListEqual(last_updated_times, [1.0, 1.0, 1.0, 7.0, 8.0])
             self.assertListEqual(list(insights.max_task_duration), [0.0, 0.0, 0.0, 0.0, 0.0,
                                                                     0.0, 0.0, 0.0, 0.0, 0.0,
                                                                     0.0, 0.0, 0.0, 0.0, 0.0,
@@ -317,34 +296,31 @@ class WorkerInsightsTest(unittest.TestCase):
         """
         Test whether task insights are being updated correctly
         """
-        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 1, 0),
-                                         datetime(1970, 1, 1, 0, 0, 2, 0)]
-        MockDatetimeNow.CURRENT_IDX = 0
-
         insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=2)
-        max_task_duration_last_updated = datetime(1970, 1, 1, 0, 0, 0, 0)
-
+        max_task_duration_last_updated = 0.0
+        
         # Shouldn't do anything when insights haven't been enabled
-        with self.subTest(insights_enabled=False), patch('mpire.insights.datetime', new=MockDatetimeNow):
+        with self.subTest(insights_enabled=False), patch('mpire.insights.time.time', side_effect=[1.0, 2.0]):
             for worker_id in range(2):
                 max_task_duration_last_updated = insights.update_task_insights(
                     worker_id, max_task_duration_last_updated, [(0.1, '1'), (0.2, '2')], force_update=True
                 )
             self.assertIsNone(insights.max_task_duration)
             self.assertIsNone(insights.max_task_args)
-            self.assertEqual(max_task_duration_last_updated, datetime(1970, 1, 1, 0, 0, 0, 0))
+            self.assertEqual(max_task_duration_last_updated, 0.0)
 
         insights.reset_insights(enable_insights=True)
-        max_task_duration_last_updated = datetime(1970, 1, 1, 0, 0, 0, 0)
-        MockDatetimeNow.CURRENT_IDX = 0
+        max_task_duration_last_updated = 0.0
 
-        with self.subTest(insights_enabled=True), patch('mpire.insights.datetime', new=MockDatetimeNow):
-            for worker_id, max_task_duration_list in [(0, [(5, '5'), (6, '6'), (7, '7'), (8, '8'), (9, '9')]),
-                                                      (1, [(0, '0'), (1, '1'), (2, '2'), (3, '3'), (4, '4')])]:
+        with self.subTest(insights_enabled=True), patch('mpire.insights.time.time', side_effect=[1, 2]):
+            for worker_id, max_task_duration_list in [
+                    (0, [(5.0, '5'), (6.0, '6'), (7.0, '7'), (8.0, '8'), (9.0, '9')]),
+                    (1, [(0.0, '0'), (1.0, '1'), (2.0, '2'), (3.0, '3'), (4.0, '4')])
+            ]:
                 self.assertEqual(insights.update_task_insights(
                     worker_id, max_task_duration_last_updated, max_task_duration_list, force_update=True
-                ), datetime(1970, 1, 1, 0, 0, worker_id + 1, 0))
-            self.assertListEqual(list(insights.max_task_duration), [5, 6, 7, 8, 9, 0, 1, 2, 3, 4])
+                ), worker_id + 1)
+            self.assertListEqual(list(insights.max_task_duration), [5.0, 6.0, 7.0, 8.0, 9.0, 0.0, 1.0, 2.0, 3.0, 4.0])
             self.assertListEqual(list(insights.max_task_args), ['5', '6', '7', '8', '9', '0', '1', '2', '3', '4'])
 
     def test_get_insights(self):

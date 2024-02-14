@@ -2,6 +2,8 @@ import heapq
 import itertools
 import math
 import os
+import time
+from datetime import timedelta
 from multiprocessing import cpu_count
 from multiprocessing.managers import SyncManager
 from multiprocessing.sharedctypes import SynchronizedArray
@@ -234,13 +236,13 @@ class TimeIt:
         self.array_idx = array_idx
         self.max_time_array = max_time_array
         self.format_args_func = format_args_func
-        self.start_dt = None
+        self.start_time = None
 
     def __enter__(self) -> None:
-        self.start_dt = datetime.now()
+        self.start_time = time.time()
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        duration = (datetime.now() - self.start_dt).total_seconds()
+        duration = time.time() - self.start_time
         if self.cum_time_array is not None:
             self.cum_time_array[self.array_idx] += duration
         if self.max_time_array is not None and duration > self.max_time_array[0][0]:
