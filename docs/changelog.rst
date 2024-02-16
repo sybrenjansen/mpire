@@ -2,7 +2,13 @@ Changelog
 =========
 
 Unreleased
-----------
+==========
+
+* Added support for macOS (`#27`_, `#79`_, `#91`_)
+
+  - Fixes memory leaks on macOS
+  - Reduced the amount of semaphores used
+  - Issues a warning when ``cpu_ids`` is used on macOS
 
 * Added :meth:`mpire.dashboard.set_stacklevel` to set the stack level in the dashboard. This influences what line to 
   display in the 'Invoked on line' section. (`#118`_)
@@ -12,8 +18,12 @@ Unreleased
   (`#117`_)
 * Make it possible to reuse the same `progress_bar_options` without raising warnings (`#117`_)
 
+.. _#27: https://github.com/sybrenjansen/mpire/issues/27
+.. _#79: https://github.com/sybrenjansen/mpire/issues/79
+.. _#91: https://github.com/sybrenjansen/mpire/issues/91
 .. _#117: https://github.com/sybrenjansen/mpire/pull/117
 .. _#118: https://github.com/sybrenjansen/mpire/pull/118
+
 
 2.9.0
 -----

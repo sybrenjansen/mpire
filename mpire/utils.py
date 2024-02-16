@@ -1,11 +1,12 @@
 import heapq
 import itertools
 import math
-import multiprocessing
 import os
-from datetime import datetime, timedelta
-from multiprocessing import Array, cpu_count
+import time
+from datetime import timedelta
+from multiprocessing import cpu_count
 from multiprocessing.managers import SyncManager
+from multiprocessing.sharedctypes import SynchronizedArray
 from typing import Callable, Collection, Generator, Iterable, List, Optional, Tuple, Union
 
 try:
@@ -15,7 +16,7 @@ except ImportError:
     np = None
     NUMPY_INSTALLED = False
 
-from mpire.context import RUNNING_WINDOWS
+from mpire.context import RUNNING_MACOS, RUNNING_WINDOWS
 
 # Needed for setting CPU affinity
 if RUNNING_WINDOWS:
@@ -56,6 +57,9 @@ def set_cpu_affinity(pid: int, mask: List[int]) -> None:
         # Get handle and set affinity
         handle = win32api.OpenProcess(win32con.PROCESS_ALL_ACCESS, True, pid)
         win32process.SetProcessAffinityMask(handle, windows_mask)
+    elif RUNNING_MACOS:
+        # On MacOS we can't set CPU affinity
+        pass
     else:
         os.sched_setaffinity(pid, mask)
 
@@ -217,7 +221,8 @@ class TimeIt:
     """ Simple class that provides a context manager for keeping track of task duration and adds the total number
      of seconds in a designated output array """
 
-    def __init__(self, cum_time_array: Optional[Array], array_idx: int, max_time_array: Optional[Array] = None,
+    def __init__(self, cum_time_array: Optional[SynchronizedArray], array_idx: int, 
+                 max_time_array: Optional[SynchronizedArray] = None, 
                  format_args_func: Optional[Callable] = None) -> None:
         """
         :param cum_time_array: Optional array to store cumulative time in
@@ -231,13 +236,13 @@ class TimeIt:
         self.array_idx = array_idx
         self.max_time_array = max_time_array
         self.format_args_func = format_args_func
-        self.start_dt = None
+        self.start_time = None
 
     def __enter__(self) -> None:
-        self.start_dt = datetime.now()
+        self.start_time = time.time()
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        duration = (datetime.now() - self.start_dt).total_seconds()
+        duration = time.time() - self.start_time
         if self.cum_time_array is not None:
             self.cum_time_array[self.array_idx] += duration
         if self.max_time_array is not None and duration > self.max_time_array[0][0]:
@@ -245,40 +250,29 @@ class TimeIt:
                               (duration, self.format_args_func() if self.format_args_func is not None else None))
 
     
-class PicklableSyncManager:
-    """ SyncManager wrapper that can be pickled """
+class NonPickledSyncManager:
+    """ SyncManager wrapper that won't be pickled """
     
-    def __init__(self, authkey: bytes) -> None:
-        self.authkey = authkey
-        self.manager = SyncManager(authkey=authkey)
+    def __init__(self) -> None:
+        self.manager = SyncManager()
         
     def __getattr__(self, item):
         return getattr(self.manager, item)
 
     def __getstate__(self) -> dict:
         """
-        Returns the state excluding the manager object, as this is not picklable. The address of the manager is added
-        to the state instead, which can be used to reconnect to the manager.
+        Returns the state excluding the manager object, as this is not picklable and not needed.
         
         :return: State dict
         """
         state = self.__dict__.copy()
-        state["manager_address"] = self.manager.address
-        del state["manager"]
+        state["manager"] = None
         return state
 
     def __setstate__(self, state: dict) -> None:
         """
-        Set the state and reconnect to the manager using the stored address.
+        Set the state.
         
         :param state: State dict
         """
-        address = state.pop("manager_address")
         self.__dict__ = state
-        
-        # This line is needed because otherwise we can get "multiprocessing.context.AuthenticationError: digest sent 
-        # was rejected" errors. See https://bugs.python.org/issue7503 for more information
-        multiprocessing.current_process().authkey = self.authkey
-        
-        self.manager = SyncManager(address=address, authkey=self.authkey)
-        self.manager.connect()

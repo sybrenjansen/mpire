@@ -5,4 +5,7 @@ _build
 dist
 *.egg-info
 .eggs
+.pytest_cache
 
+# MacOS
+.DS_store

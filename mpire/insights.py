@@ -1,12 +1,11 @@
 import ctypes
 import math
 import multiprocessing.context
-import os
-from datetime import datetime
 from functools import partial
+import time
 from typing import Dict, Optional, List, Tuple
 
-from mpire.utils import PicklableSyncManager, format_seconds
+from mpire.utils import NonPickledSyncManager, format_seconds
 
 
 class WorkerInsights:
@@ -33,7 +32,7 @@ class WorkerInsights:
         self.insights_manager = None
         self.insights_manager_lock = None
 
-        # `datetime` object indicating at what time the Worker instance was created and started
+        # Timestamp indicating at what time the Worker instance was created and started
         self.worker_start_up_time = None
 
         # Array object which holds the total number of seconds the workers take to start up
@@ -64,7 +63,10 @@ class WorkerInsights:
         :param enable_insights: Whether to enable worker insights
         """
         if enable_insights:
-            self.insights_manager = PicklableSyncManager(authkey=os.urandom(24))
+            # We need to use a special wrapper which sets the manager to None when pickled. For some reason Python 
+            # won't use the __getstate__/__setstate__ of this class when passing the object to a worker, so we move
+            # the logic to the wrapper instead.
+            self.insights_manager = NonPickledSyncManager()
             self.insights_manager.start()
             self.insights_manager_lock = self.ctx.Lock()
             self.worker_start_up_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
@@ -103,15 +105,15 @@ class WorkerInsights:
                                  self.max_task_args[worker_id * 5:(worker_id + 1) * 5]))
                         if self.max_task_duration is not None else None)
 
-    def update_start_up_time(self, worker_id: int, start_time: datetime) -> None:
+    def update_start_up_time(self, worker_id: int, start_time: float) -> None:
         """
         Update start up time
 
         :param worker_id: Worker ID
-        :param start_time: datetime
+        :param start_time: Timestamp
         """
         if self.insights_enabled:
-            self.worker_start_up_time[worker_id] = (datetime.now() - start_time).total_seconds()
+            self.worker_start_up_time[worker_id] = time.time() - start_time
 
     def update_n_completed_tasks(self, worker_id: int) -> None:
         """
@@ -122,21 +124,21 @@ class WorkerInsights:
         if self.insights_enabled:
             self.worker_n_completed_tasks[worker_id] += 1
 
-    def update_task_insights(self, worker_id: int, max_task_duration_last_updated: datetime,
+    def update_task_insights(self, worker_id: int, max_task_duration_last_updated: float,
                              max_task_duration_list: Optional[List[Tuple[float, str]]],
-                             force_update: bool = False) -> datetime:
+                             force_update: bool = False) -> float:
         """
         Update synced containers with new top 5 max task duration + args. Updates every 2 seconds.
 
         :param worker_id: Worker ID
-        :param max_task_duration_last_updated: Last updated datetime
+        :param max_task_duration_last_updated: Last updated timestamp
         :param max_task_duration_list: Local worker insights container that holds (task duration, task args) tuples,
             sorted for heapq
         :param force_update: Whether to force the update
-        :return: Last updated datetime
+        :return: Last updated timestamp
         """
-        now = datetime.now()
-        if self.insights_enabled and (force_update or (now - max_task_duration_last_updated).total_seconds() > 2):
+        now = time.time()
+        if self.insights_enabled and (force_update or (now - max_task_duration_last_updated) > 2):
             task_durations, task_args = zip(*max_task_duration_list)
             self.max_task_duration[worker_id * 5 : (worker_id + 1) * 5] = task_durations
             with self.insights_manager_lock:

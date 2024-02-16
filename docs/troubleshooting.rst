@@ -149,8 +149,6 @@ define your function in a file that can be imported by the child process, or you
 Windows
 -------
 
-Windows support has some caveats:
-
 * When using ``dill`` and an exception occurs, or when the exception occurs in an exit function, it can print additional
   ``OSError`` messages in the terminal, but they can be safely ignored.
 * The ``mpire-dashboard`` script does not work on Windows.
@@ -161,8 +159,9 @@ Windows support has some caveats:
 macOS
 -----
 
-macOS is not yet officially supported. It seems to work mostly fine, with these caveats:
-
-* Use ``ulimit -n <number>`` to increase the limit of the number of open files.
-  This is required because mpire uses a lot of file-descriptor based synchronization primitives.
-  `<Number>` should be large enough to accomodate all of mpire's file descriptors, eg. `<number> = 65536`.
+* When encountering ``OSError: [Errno 24] Too many open files`` errors, use ``ulimit -n <number>`` to increase the 
+  limit of the number of open files. This is required because MPIRE uses file-descriptor based synchronization 
+  primitives and macOS has a very low default limit. For example, MPIRE uses about 190 file descriptors when using 10
+  workers. 
+* Pinning of processes to CPU cores is not supported on macOS. This is because macOS does not support the 
+  ``sched_setaffinity`` system call. A warning will be printed when trying to use this feature.

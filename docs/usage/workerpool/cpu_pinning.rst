@@ -31,4 +31,4 @@ CPU IDs have to be positive integers, not exceeding the number of CPUs available
 
 .. note::
 
-    Pinning processes to CPU IDs doesn't work when using threading.
+    Pinning processes to CPU IDs doesn't work when using threading or when you're on macOS.

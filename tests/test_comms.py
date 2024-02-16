@@ -1,17 +1,17 @@
+import ctypes
 import multiprocessing as mp
 import queue
 import threading
 import unittest
 import warnings
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime
 from itertools import product
 from unittest.mock import patch
 
 from mpire.comms import MAIN_PROCESS, NEW_MAP_PARAMS_PILL, NON_LETHAL_POISON_PILL, POISON_PILL, WorkerComms
 from mpire.context import DEFAULT_START_METHOD, FORK_AVAILABLE, MP_CONTEXTS
 from mpire.params import WorkerMapParams
-from tests.utils import MockDatetimeNow
 
 
 def _f1():
@@ -38,52 +38,42 @@ class WorkerCommsTest(unittest.TestCase):
                 condition_type = type(ctx.Condition(ctx.Lock()))
                 event_type = type(ctx.Event())
                 lock_type = type(ctx.Lock())
+                value_type = type(ctx.Value('i', 0, lock=True))
                 self.assertEqual(comms.ctx, ctx)
                 self.assertEqual(comms.n_jobs, n_jobs)
                 self.assertEqual(comms.order_tasks, order_tasks)
                 self.assertFalse(comms.is_initialized())
-                self.assertIsInstance(comms._keep_order, event_type)
-                self.assertFalse(comms._keep_order.is_set())
+                self.assertIsInstance(comms._keep_order, value_type)
+                self.assertFalse(comms._keep_order.value)
                 self.assertIsInstance(comms._task_queues, list)
                 self.assertEqual(len(comms._task_queues), 0)
                 self.assertIsNone(comms._task_idx)
-                self.assertIsInstance(comms._worker_running_task_locks, list)
-                self.assertEqual(len(comms._worker_running_task_locks), 0)
                 self.assertIsInstance(comms._worker_running_task, list)
                 self.assertEqual(len(comms._worker_running_task), 0)
                 self.assertIsInstance(comms._last_completed_task_worker_id, deque)
                 self.assertEqual(len(comms._last_completed_task_worker_id), 0)
-                self.assertIsInstance(comms._worker_working_on_job, list)
-                self.assertEqual(len(comms._worker_working_on_job), 0)
+                self.assertIsNone(comms._worker_working_on_job)
                 self.assertIsNone(comms._results_queue)
                 self.assertIsInstance(comms._results_added, list)
                 self.assertEqual(len(comms._results_added), 0)
-                self.assertIsInstance(comms._results_received, list)
-                self.assertEqual(len(comms._results_received), 0)
-                self.assertIsInstance(comms._worker_restart_array, list)
-                self.assertEqual(len(comms._worker_restart_array), 0)
+                self.assertIsNone(comms._results_received)
+                self.assertIsNone(comms._worker_restart_array)
                 self.assertIsInstance(comms._worker_restart_condition, condition_type)
-                self.assertIsInstance(comms._workers_dead, list)
-                self.assertEqual(len(comms._workers_dead), 0)
-                self.assertIsInstance(comms._workers_time_task_started, list)
-                self.assertEqual(len(comms._workers_time_task_started), 0)
+                self.assertIsNone(comms._workers_dead)
+                self.assertIsNone(comms._workers_time_task_started)
                 self.assertIsInstance(comms.exception_lock, lock_type)
                 self.assertIsInstance(comms._exception_thrown, event_type)
                 self.assertIsNone(comms._exception_job_id)
-                self.assertIsInstance(comms._kill_signal_received, event_type)
+                self.assertIsInstance(comms._kill_signal_received, value_type)
                 self.assertFalse(comms._exception_thrown.is_set())
-                self.assertFalse(comms._kill_signal_received.is_set())
-                self.assertIsInstance(comms._tasks_completed_array, list)
-                self.assertEqual(len(comms._tasks_completed_array), 0)
+                self.assertFalse(comms._kill_signal_received.value)
+                self.assertIsNone(comms._tasks_completed_array)
                 self.assertIsNone(comms._progress_bar_last_updated)
                 self.assertIsNone(comms._progress_bar_shutdown)
                 self.assertIsNone(comms._progress_bar_complete)
 
-            MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0)]
-            MockDatetimeNow.CURRENT_IDX = 0
-
             with self.subTest('without initial values', ctx=ctx, n_jobs=n_jobs, order_tasks=order_tasks), \
-                    patch('mpire.comms.datetime', new=MockDatetimeNow):
+                    patch('time.time', return_value=0.0):
                 comms.init_comms()
                 self._check_comms_are_initialized(comms, n_jobs)
 
@@ -95,29 +85,28 @@ class WorkerCommsTest(unittest.TestCase):
             for i in range(n_jobs):
                 comms._worker_running_task[i].value = i % 2 == 0
             for i in range(n_jobs):
-                comms._worker_working_on_job[i].value = i + 1
+                comms._worker_working_on_job[i] = i + 1
             comms._results_added = [i + 1 for i in range(n_jobs)]
             for i in range(n_jobs):
-                comms._results_received[i].value = i + 1
+                comms._results_received[i] = i + 1
             for i in range(n_jobs):
-                comms._worker_restart_array[i].value = i % 2 == 0
-            [worker_dead.clear() for worker_dead in comms._workers_dead]
-            for i in range(n_jobs * 3):
-                comms._workers_time_task_started[i].value = i + 1
+                comms._worker_restart_array[i] = i % 2 == 0
+            comms._workers_dead[:] = [False] * n_jobs
+            for i in range(n_jobs):
+                for j in range(3):
+                    comms._workers_time_task_started[i * 3 + j] = i + j + 1
             comms._exception_thrown.set()
             comms._exception_job_id = 89
-            comms._kill_signal_received.set()
+            comms._kill_signal_received.value = True
             for i in range(n_jobs):
-                comms._tasks_completed_array[i].value = i + 1
+                comms._tasks_completed_array[i] = i + 1
             comms._progress_bar_last_updated = 3
-            comms._progress_bar_shutdown.set()
+            comms._progress_bar_shutdown.value = True
             comms._progress_bar_complete.set()
             comms.reset()
 
-            MockDatetimeNow.CURRENT_IDX = 0
-
             with self.subTest('with initial values', ctx=ctx, n_jobs=n_jobs, order_tasks=order_tasks), \
-                    patch('mpire.comms.datetime', new=MockDatetimeNow):
+                    patch('time.time', return_value=0.0):
                 comms.init_comms()
                 self._check_comms_are_initialized(comms, n_jobs)
 
@@ -132,64 +121,56 @@ class WorkerCommsTest(unittest.TestCase):
         :param comms: WorkerComms object
         :param n_jobs: Number of jobs
         """
+        array_type = type(comms.ctx.Array('i', n_jobs, lock=True))
         event_type = type(comms.ctx.Event())
         joinable_queue_type = type(comms.ctx.JoinableQueue())
         rlock_type = type(comms.ctx.RLock())
         value_type = type(comms.ctx.Value('i', 0, lock=True))
-        value_without_lock_type = type(comms.ctx.Value('b', 0, lock=False))
 
         self.assertEqual(len(comms._task_queues), n_jobs)
         for q in comms._task_queues:
             self.assertIsInstance(q, joinable_queue_type)
         self.assertIsInstance(comms._last_completed_task_worker_id, deque)
         self.assertEqual(len(comms._last_completed_task_worker_id), 0)
-        self.assertEqual(len(comms._worker_running_task_locks), n_jobs)
-        for l in comms._worker_running_task_locks:
-            self.assertIsInstance(l, rlock_type)
         self.assertEqual(len(comms._worker_running_task), n_jobs)
         for v in comms._worker_running_task:
-            self.assertIsInstance(v, value_without_lock_type)
-        self.assertEqual(len(comms._worker_working_on_job), n_jobs)
-        for v in comms._worker_working_on_job:
             self.assertIsInstance(v, value_type)
+            self.assertIsInstance(v.get_lock(), rlock_type)
+        self.assertIsInstance(comms._worker_working_on_job, array_type)
+        self.assertEqual(len(comms._worker_working_on_job), n_jobs)
         self.assertIsInstance(comms._results_queue, joinable_queue_type)
         self.assertIsInstance(comms._results_added, list)
         self.assertEqual(len(comms._results_added), n_jobs)
-        for v in comms._results_received:
-            self.assertIsInstance(v, value_type)
+        self.assertIsInstance(comms._results_received, array_type)
         self.assertEqual(len(comms._results_received), n_jobs)
+        self.assertIsInstance(comms._worker_restart_array, array_type)
         self.assertEqual(len(comms._worker_restart_array), n_jobs)
-        for v in comms._worker_restart_array:
-            self.assertIsInstance(v, value_type)
+        self.assertIsInstance(comms._workers_dead, array_type)
         self.assertEqual(len(comms._workers_dead), n_jobs)
-        for worker_dead in comms._workers_dead:
-            self.assertIsInstance(worker_dead, event_type)
-            self.assertTrue(worker_dead.is_set())
-        for v in comms._workers_time_task_started:
-            self.assertIsInstance(v, value_type)
+        self.assertIsInstance(comms._workers_time_task_started, array_type)
         self.assertEqual(len(comms._workers_time_task_started), n_jobs * 3)
         self.assertFalse(comms._exception_thrown.is_set())
         self.assertIsInstance(comms._exception_job_id, value_type)
         self.assertEqual(comms._exception_job_id.value, 0)
-        self.assertFalse(comms._kill_signal_received.is_set())
+        self.assertFalse(comms._kill_signal_received.value)
+        self.assertIsInstance(comms._tasks_completed_array, array_type)
         self.assertEqual(len(comms._tasks_completed_array), n_jobs)
-        for v in comms._tasks_completed_array:
-            self.assertIsInstance(v, value_type)
-        self.assertEqual(comms._progress_bar_last_updated, datetime(1970, 1, 1, 0, 0, 0, 0))
-        self.assertIsInstance(comms._progress_bar_shutdown, event_type)
-        self.assertFalse(comms._progress_bar_shutdown.is_set())
+        self.assertEqual(comms._progress_bar_last_updated, 0.0)
+        self.assertIsInstance(comms._progress_bar_shutdown, value_type)
+        self.assertFalse(comms._progress_bar_shutdown.value)
         self.assertIsInstance(comms._progress_bar_complete, event_type)
         self.assertFalse(comms._progress_bar_complete.is_set())
         self.assertTrue(comms.is_initialized())
 
         # Basic sanity checks for the values
         self.assertEqual(comms._task_idx, 0)
-        self.assertEqual([v.value for v in comms._worker_running_task], [False for _ in range(n_jobs)])
-        self.assertEqual([v.value for v in comms._worker_working_on_job], [0 for _ in range(n_jobs)])
-        self.assertEqual([v.value for v in comms._results_received], [0 for _ in range(n_jobs)])
-        self.assertEqual([v.value for v in comms._worker_restart_array], [False for _ in range(n_jobs)])
-        self.assertEqual([v.value for v in comms._workers_time_task_started], [0.0 for _ in range(n_jobs * 3)])
-        self.assertEqual([v.value for v in comms._tasks_completed_array], [0 for _ in range(n_jobs)])
+        self.assertEqual([v.value for v in comms._worker_running_task], [False] * n_jobs)
+        self.assertEqual(comms._worker_working_on_job[:], [0] * n_jobs)
+        self.assertEqual(comms._results_received[:], [0] * n_jobs)
+        self.assertEqual(comms._worker_restart_array[:], [False] * n_jobs)
+        self.assertEqual(comms._workers_dead[:], [True] * n_jobs)
+        self.assertEqual(comms._workers_time_task_started[:], [0.0] * n_jobs * 3)
+        self.assertEqual(comms._tasks_completed_array[:], [0] * n_jobs)
 
     def test_progress_bar(self):
         """
@@ -199,54 +180,43 @@ class WorkerCommsTest(unittest.TestCase):
         comms.init_comms()
 
         # Nothing available yet
-        self.assertEqual(sum(v.value for v in comms._tasks_completed_array), 0)
-
-        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 0, 0, 0),
-                                         datetime(1970, 1, 1, 0, 0, 0, 0),
-                                         datetime(1970, 1, 1, 0, 0, 0, 0),
-                                         datetime(1970, 1, 1, 0, 0, 0, 0)]
-        MockDatetimeNow.CURRENT_IDX = 0
+        self.assertEqual(sum(comms._tasks_completed_array), 0)
 
         # 3 task done, but not enough time has passed to send the update
-        last_updated = datetime(1970, 1, 1, 0, 0, 0, 0)
+        last_updated = 0.0
         n_tasks_completed = 0
-        with patch('mpire.comms.datetime', new=MockDatetimeNow):
+        with patch('time.time', return_value=0.0):
             for n in range(1, 4):
                 last_updated, n_tasks_completed = comms.task_completed_progress_bar(0, last_updated, n_tasks_completed,
                                                                                     force_update=False)
                 self.assertEqual(n_tasks_completed, n)
-        self.assertEqual(sum(v.value for v in comms._tasks_completed_array), 0)
+        self.assertEqual(sum(comms._tasks_completed_array), 0)
 
         # Not enough time has passed, but we'll force the update. Number of tasks done should still be 3
-        with patch('mpire.comms.datetime', new=MockDatetimeNow):
+        with patch('time.time', return_value=0.0):
             last_updated, n_tasks_completed = comms.task_completed_progress_bar(0, last_updated, n_tasks_completed,
                                                                                 force_update=True)
         self.assertEqual(comms.get_tasks_completed_progress_bar(), 3)
-        self.assertEqual(last_updated, datetime(1970, 1, 1, 0, 0, 0, 0))
+        self.assertEqual(last_updated, 0.0)
         self.assertEqual(n_tasks_completed, 0)
 
         # 4 tasks already done and another 4 tasks done. Enough time should've passed for each update call, except the
         # second. In total we have 3 (from above) + 4 + 4 = 11 tasks done
-        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 1, 0, 1, 0, 0),
-                                         datetime(1970, 1, 1, 0, 1, 0, 0),
-                                         datetime(1970, 1, 1, 0, 3, 0, 0),
-                                         datetime(1970, 1, 1, 0, 4, 0, 0)]
-        MockDatetimeNow.CURRENT_IDX = 0
-        last_updated = datetime(1970, 1, 1, 0, 0, 0, 0)
+        last_updated = 0.0
         n_tasks_completed = 4
-        with patch('mpire.comms.datetime', new=MockDatetimeNow):
-            for _ in range(4):
+        with patch('time.time', side_effect=[1.0, 1.0, 3.0, 4.0]):
+            for expected_last_updated in [1.0, 1.0, 3.0, 4.0]:
                 last_updated, n_tasks_completed = comms.task_completed_progress_bar(0, last_updated, n_tasks_completed,
                                                                                     force_update=False)
-                self.assertEqual(last_updated, MockDatetimeNow.RETURN_VALUES[MockDatetimeNow.CURRENT_IDX - 1])
+                self.assertEqual(last_updated, expected_last_updated)
         self.assertEqual(comms.get_tasks_completed_progress_bar(), 11)
-        self.assertEqual(last_updated, datetime(1970, 1, 1, 0, 4, 0, 0))
+        self.assertEqual(last_updated, 4.0)
         self.assertEqual(n_tasks_completed, 0)
 
         # Signal shutdown
         comms.signal_progress_bar_shutdown()
         self.assertEqual(comms.get_tasks_completed_progress_bar(), POISON_PILL)
-        comms._progress_bar_shutdown.clear()
+        comms._progress_bar_shutdown.value = False
 
         # Set exception
         comms.signal_exception_thrown(MAIN_PROCESS)
@@ -256,7 +226,7 @@ class WorkerCommsTest(unittest.TestCase):
         # Set kill signal received
         comms.signal_kill_signal_received()
         self.assertEqual(comms.get_tasks_completed_progress_bar(), POISON_PILL)
-        comms._kill_signal_received.clear()
+        comms._kill_signal_received.value = False
 
     def test_progress_bar_shutdown(self):
         """
@@ -265,9 +235,9 @@ class WorkerCommsTest(unittest.TestCase):
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 2, False)
         comms.init_comms()
 
-        self.assertFalse(comms._progress_bar_shutdown.is_set())
+        self.assertFalse(comms._progress_bar_shutdown.value)
         comms.signal_progress_bar_shutdown()
-        self.assertTrue(comms._progress_bar_shutdown.is_set())
+        self.assertTrue(comms._progress_bar_shutdown.value)
 
     def test_progress_bar_complete(self):
         """
@@ -480,12 +450,12 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertFalse(comms.exception_thrown())
         comms.signal_exception_thrown(0)
         self.assertTrue(comms.exception_thrown())
-        self.assertEqual(comms.exception_thrown_by(), 0)
+        self.assertEqual(comms.get_exception_thrown_job_id(), 0)
         comms._exception_thrown.clear()
         self.assertFalse(comms.exception_thrown())
         comms.signal_exception_thrown(13)
         self.assertTrue(comms.exception_thrown())
-        self.assertEqual(comms.exception_thrown_by(), 13)
+        self.assertEqual(comms.get_exception_thrown_job_id(), 13)
 
     def test_kill_signal_received(self):
         """
@@ -496,7 +466,7 @@ class WorkerCommsTest(unittest.TestCase):
         self.assertFalse(comms.kill_signal_received())
         comms.signal_kill_signal_received()
         self.assertTrue(comms.kill_signal_received())
-        comms._kill_signal_received.clear()
+        comms._kill_signal_received.value = False
         self.assertFalse(comms.kill_signal_received())
 
     def test_worker_poison_pill(self):
@@ -639,66 +609,51 @@ class WorkerCommsTest(unittest.TestCase):
         comms = WorkerComms(MP_CONTEXTS['mp'][DEFAULT_START_METHOD], 5, False)
         comms.init_comms()
 
-        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 2, 0, 0, 0, 0, tzinfo=timezone.utc),
-                                         datetime(1970, 1, 3, 0, 0, 0, 0, tzinfo=timezone.utc),
-                                         datetime(1970, 1, 4, 0, 0, 0, 0, tzinfo=timezone.utc)]
-        MockDatetimeNow.CURRENT_IDX = 0
-
         # Signal workers started
-        with patch('mpire.comms.datetime', new=MockDatetimeNow):
-            for worker_id in range(5):
-                with self.subTest(worker_id=worker_id):
-                    MockDatetimeNow.CURRENT_IDX = 0
-                    self.assertListEqual([v.value for v in comms._workers_time_task_started[worker_id * 3:
-                                                                                            worker_id * 3 + 3]],
-                                         [0.0, 0.0, 0.0])
-                    comms.signal_worker_init_started(worker_id)
-                    comms.signal_worker_task_started(worker_id)
-                    comms.signal_worker_exit_started(worker_id)
-                    self.assertListEqual([v.value for v in comms._workers_time_task_started[worker_id * 3:
-                                                                                            worker_id * 3 + 3]],
-                                         [86400.0, 172800.0, 259200.0])
-
-        MockDatetimeNow.RETURN_VALUES = [datetime(1970, 1, 2, 0, 0, 10, 0, tzinfo=timezone.utc),
-                                         datetime(1970, 1, 3, 0, 0, 9, 0, tzinfo=timezone.utc),
-                                         datetime(1970, 1, 4, 0, 0, 8, 0, tzinfo=timezone.utc)]
+        for worker_id in range(5):
+            with self.subTest(worker_id=worker_id), patch('time.time', side_effect=[1000.0, 2000.0, 3000.0]):
+                self.assertListEqual(
+                    comms._workers_time_task_started[worker_id * 3 : worker_id * 3 + 3], [0.0, 0.0, 0.0]
+                )
+                comms.signal_worker_init_started(worker_id)
+                comms.signal_worker_task_started(worker_id)
+                comms.signal_worker_exit_started(worker_id)
+                self.assertListEqual(
+                    comms._workers_time_task_started[worker_id * 3 : worker_id * 3 + 3], [1000.0, 2000.0, 3000.0]
+                )
 
         # Check timeouts
-        with patch('mpire.comms.datetime', new=MockDatetimeNow):
-            for worker_id in range(5):
-                # worker_init, times out at > 10
-                for timeout, has_timed_out in [(8, True), (9, True), (10, True), (11, False)]:
-                    with self.subTest(timeout=timeout, worker_id=worker_id):
-                        MockDatetimeNow.CURRENT_IDX = 0
-                        self.assertEqual(comms.has_worker_init_timed_out(worker_id, timeout), has_timed_out)
+        for worker_id in range(5):
+            # worker_init, times out at > 10
+            for timeout, has_timed_out in [(8, True), (9, True), (10, True), (11, False)]:
+                with self.subTest(timeout=timeout, worker_id=worker_id), patch('time.time', return_value=1010.0):
+                    self.assertEqual(comms.has_worker_init_timed_out(worker_id, timeout), has_timed_out)
 
-                # task, times out at > 9
-                for timeout, has_timed_out in [(8, True), (9, True), (10, False), (11, False)]:
-                    with self.subTest(timeout=timeout, worker_id=worker_id):
-                        MockDatetimeNow.CURRENT_IDX = 1
-                        self.assertEqual(comms.has_worker_task_timed_out(worker_id, timeout), has_timed_out)
+            # task, times out at > 9
+            for timeout, has_timed_out in [(8, True), (9, True), (10, False), (11, False)]:
+                with self.subTest(timeout=timeout, worker_id=worker_id), patch('time.time', return_value=2009.0):
+                    self.assertEqual(comms.has_worker_task_timed_out(worker_id, timeout), has_timed_out)
 
-                # worker_exit, times out at > 8
-                for timeout, has_timed_out in [(8, True), (9, False), (10, False), (11, False)]:
-                    with self.subTest(timeout=timeout, worker_id=worker_id):
-                        MockDatetimeNow.CURRENT_IDX = 2
-                        self.assertEqual(comms.has_worker_exit_timed_out(worker_id, timeout), has_timed_out)
+            # worker_exit, times out at > 8
+            for timeout, has_timed_out in [(8, True), (9, False), (10, False), (11, False)]:
+                with self.subTest(timeout=timeout, worker_id=worker_id), patch('time.time', return_value=3008.0):
+                    self.assertEqual(comms.has_worker_exit_timed_out(worker_id, timeout), has_timed_out)
 
         # Reset
         for worker_id in range(5):
             with self.subTest(worker_id=worker_id):
                 comms.signal_worker_init_completed(worker_id)
-                self.assertListEqual([v.value for v in comms._workers_time_task_started[worker_id * 3:
-                                                                                        worker_id * 3 + 3]],
-                                     [0.0, 172800.0, 259200.0])
+                self.assertListEqual(
+                    comms._workers_time_task_started[worker_id * 3 : worker_id * 3 + 3], [0.0, 2000.0, 3000.0]
+                )
                 comms.signal_worker_task_completed(worker_id)
-                self.assertListEqual([v.value for v in comms._workers_time_task_started[worker_id * 3:
-                                                                                        worker_id * 3 + 3]],
-                                     [0.0, 0.0, 259200.0])
+                self.assertListEqual(
+                    comms._workers_time_task_started[worker_id * 3 : worker_id * 3 + 3], [0.0, 0.0, 3000.0]
+                )
                 comms.signal_worker_exit_completed(worker_id)
-                self.assertListEqual([v.value for v in comms._workers_time_task_started[worker_id * 3:
-                                                                                        worker_id * 3 + 3]],
-                                     [0.0, 0.0, 0.0])
+                self.assertListEqual(
+                    comms._workers_time_task_started[worker_id * 3 : worker_id * 3 + 3], [0.0, 0.0, 0.0]
+                )
 
         # Check timeouts. Should be False because nothing started
         for worker_id in range(5):

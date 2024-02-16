@@ -13,8 +13,9 @@ try:
 except ValueError:
     FORK_AVAILABLE = False
 
-# Check if we're running on Windows
+# Check if we're running on Windows or MacOS
 RUNNING_WINDOWS = platform.system() == "Windows"
+RUNNING_MACOS = platform.system() == "Darwin"
 
 
 # Threading context so we can use threading as backend as well

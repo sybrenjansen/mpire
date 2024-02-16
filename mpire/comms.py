@@ -1,11 +1,9 @@
 import collections
-import gc
+import ctypes
 import multiprocessing as mp
-import platform
 import queue
 import threading
 import time
-from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from mpire.context import RUNNING_WINDOWS
@@ -42,6 +40,48 @@ class WorkerComms:
     - Tasks & (exit) results comms
     - Exception handling comms
     - Terminating and restarting comms
+    
+    General overview of how the comms work:
+    - When ``map`` or ``imap`` is used, the workers need to return the ``idx`` of the task they just completed. This is
+        needed to return the results in order. This is communicated by using the ``_keep_order`` boolean value.
+    - The main process assigns tasks to the workers by using their respective task queue (``_task_queues``). When no
+        tasks have been completed yet, the main process assigns tasks in order. To determine which worker to assign the
+        next task to, the main process uses the ``_task_idx`` counter. When tasks have been completed, the main process
+        assigns the next task to the worker that completed the last task. This is communicated by using the
+        ``_last_completed_task_worker_id`` deque.
+    - Each worker keeps track of whether it is running a task by using the ``_worker_running_task`` boolean value. This
+        is used by the main process in case a worker needs to be interrupted (due to an exception somewhere else). 
+        When a worker is not busy with any task at the moment, the worker will exit itself because of the 
+        ``_exception_thrown`` event that is set in such cases. However, when it is running a task, we want to interrupt
+        it. The RLock object is used to ensure that there are no race conditions when accessing the 
+        ``_worker_running_task`` boolean value. E.g., when getting and setting the value without another process
+        doing something in between.
+    - Each worker also keeps track of which job it is working on by using the ``_worker_working_on_job`` array. This is
+        needed to assess whether a certain task times out, and we need to know which job to set to failed.
+    - The workers communicate their results to the main process by using the results queue (``_results_queue``). Each
+        worker keeps track of how many results it has added to the queue (``_results_added``), and the main process 
+        keeps track of how many results it has received from each worker (``_results_received``). This is used by the
+        workers to know when they can safely exit.
+    - Workers can request a restart when a maximum lifespan is configured and reached. This is done by setting the
+        ``_worker_restart_array`` boolean array. The main process listens to this array and restarts the worker when
+        needed. The ``_worker_restart_condition`` is used to signal the main process that a worker needs to be 
+        restarted.
+    - The ``_workers_dead`` array is used to keep track of which workers are alive and which are not. Sometimes, a
+        worker can be terminated by the OS (e.g., OOM), which we want to pick up on. The main process checks regularly
+        whether a worker is still alive according to the OS and according to the worker itself. If the OS says it's 
+        dead, but the value in ``_workers_dead`` is still False, we know something went wrong.
+    - The ``_workers_time_task_started`` array is used to keep track of when a worker started a task. This is used by
+        the main process to check whether a worker times out. 
+    - Exceptions are communicated by using the ``_exception_thrown`` event. Both the main process as the workers can set
+        this event. The main process will set this when, for example, a timeout has been reached when running a ``map``
+        task. The source of the exception is stored in the ``_exception_job_id`` value, which is used by the main 
+        process to obtain the exception and raise accordingly.
+    - The workers communicate every 0.1 seconds how many tasks they have completed. This is used by the main process to
+        update the progress bar. The workers communicate this by using the ``_tasks_completed_array`` array. The 
+        ``_progress_bar_last_updated`` datetime object is used to keep track of when the last update was sent. The
+        ``_progress_bar_shutdown`` boolean value is used to signal the progress bar handler thread to shut down. The
+        ``_progress_bar_complete`` event is used to signal the main process and workers that the progress bar is 
+        complete and that it's safe to exit.
     """
 
     # Amount of time in between each progress bar update
@@ -60,49 +100,47 @@ class WorkerComms:
         self._initialized = False
 
         # Whether or not to inform the child processes to keep order in mind (for the map functions)
-        self._keep_order = self.ctx.Event()
+        self._keep_order = self.ctx.Value(ctypes.c_bool, False, lock=True)
 
         # Queue to pass on tasks to child processes. We keep track of which worker completed the last task and which
         # worker is working on what task
         self._task_queues: List[mp.JoinableQueue] = []
-        self._task_idx: int = None  # type: ignore
-        self._worker_running_task_locks: List[mp.RLock] = []
+        self._task_idx: Optional[int] = None
         self._worker_running_task: List[mp.Value] = []
         self._last_completed_task_worker_id = collections.deque()
-        self._worker_working_on_job: List[mp.Value] = []
+        self._worker_working_on_job: Optional[mp.Array] = None
 
         # Queue where the child processes can pass on results, and counters to keep track of how many results have been
         # added and received per worker. results_added is a simple list of integers which is only accessed by the worker
         # itself
-        self._results_queue: mp.JoinableQueue = None  # type: ignore
+        self._results_queue: Optional[mp.JoinableQueue] = None
         self._results_added: List[int] = []
-        self._results_received: List[mp.Value] = []
+        self._results_received: Optional[mp.Array] = None
 
         # Array where the child processes can request a restart
-        self._worker_restart_array: List[mp.Value] = []
+        self._worker_restart_array: Optional[mp.Array] = None
         self._worker_restart_condition = self.ctx.Condition(self.ctx.Lock())
 
         # List of Event objects to indicate whether workers are alive
-        self._workers_dead: List[mp.Event] = []
+        self._workers_dead: Optional[mp.Array] = None
 
         # Array where the child processes indicate when they started a task, worker_init, and worker_exit used for
-        # checking timeouts. The array size is n_jobs * 3, where worker_id * 3 + i is used for indexing. i=0 is used for
-        # the worker_init, i=1 for the main task, and i=2 for the worker_exit function.
-        self._workers_time_task_started: List[mp.Value] = []
+        # checking timeouts. The array size is n_jobs * 3, where [worker_id * 3 + i] is used for indexing. i=0 is used
+        # for the worker_init, i=1 for the main task, and i=2 for the worker_exit function.
+        self._workers_time_task_started: Optional[mp.Array] = None
 
         # Lock object such that child processes can only throw one at a time. The Event object ensures only one
         # exception can be thrown
         self.exception_lock = self.ctx.Lock()
         self._exception_thrown = self.ctx.Event()
-        self._exception_job_id: mp.Value = None  # type: ignore
-        self._kill_signal_received = self.ctx.Event()
+        self._exception_job_id: Optional[mp.Value] = None
+        self._kill_signal_received = self.ctx.Value(ctypes.c_bool, False, lock=True)
 
-        # Array where the number of completed tasks is stored for the progress bar. We don't use the vanilla lock from
-        # multiprocessing.Array, but create a lock per worker such that workers can write concurrently.
-        self._tasks_completed_array: List[mp.Value] = []
-        self._progress_bar_last_updated: datetime = None  # type: ignore
-        self._progress_bar_shutdown: mp.Event = None  # type: ignore
-        self._progress_bar_complete: mp.Event = None  # type: ignore
+        # Array where the number of completed tasks is stored for the progress bar
+        self._tasks_completed_array: Optional[mp.Array] = None
+        self._progress_bar_last_updated: Optional[float] = None
+        self._progress_bar_shutdown: Optional[mp.Value] = None
+        self._progress_bar_complete: Optional[mp.Event] = None
 
     ################
     # Initialization
@@ -131,30 +169,31 @@ class WorkerComms:
         """
         # Task related
         self._task_queues = [self.ctx.JoinableQueue() for _ in range(self.n_jobs)]
-        self._worker_running_task_locks = [self.ctx.RLock() for _ in range(self.n_jobs)]
-        self._worker_running_task = [self.ctx.Value('b', False, lock=False) for _ in range(self.n_jobs)]
-        self._worker_working_on_job = [self.ctx.Value('i', 0, lock=True) for _ in range(self.n_jobs)]
+        self._worker_running_task = [
+            self.ctx.Value(ctypes.c_bool, False, lock=self.ctx.RLock()) for _ in range(self.n_jobs)
+        ]
+        self._worker_working_on_job = self.ctx.Array('i', self.n_jobs, lock=True)
 
         # Results related
         self._results_queue = self.ctx.JoinableQueue()
         self._results_added = [0 for _ in range(self.n_jobs)]
-        self._results_received = [self.ctx.Value('L', 0, lock=True) for _ in range(self.n_jobs)]
+        self._results_received = self.ctx.Array('L', self.n_jobs, lock=self.ctx.RLock())
 
         # Worker status
-        self._worker_restart_array = [self.ctx.Value('b', False, lock=True) for _ in range(self.n_jobs)]
-        self._workers_dead = [self.ctx.Event() for _ in range(self.n_jobs)]
-        [worker_dead.set() for worker_dead in self._workers_dead]
-        self._workers_time_task_started = [self.ctx.Value('d', 0.0, lock=True) for _ in range(self.n_jobs * 3)]
+        self._worker_restart_array = self.ctx.Array(ctypes.c_bool, self.n_jobs, lock=True)
+        self._workers_dead = self.ctx.Array(ctypes.c_bool, self.n_jobs, lock=True)
+        self._workers_dead[:] = [True] * self.n_jobs
+        self._workers_time_task_started = self.ctx.Array('d', self.n_jobs * 3, lock=True)
 
         # Exception related
         self._exception_thrown.clear()
         self._exception_job_id = self.ctx.Value('i', 0, lock=True)
-        self._kill_signal_received.clear()
+        self._kill_signal_received.value = False
 
         # Progress bar related
-        self._tasks_completed_array = [self.ctx.Value('L', 0, lock=True) for _ in range(self.n_jobs)]
-        self._progress_bar_last_updated = datetime.now()
-        self._progress_bar_shutdown = self.ctx.Event()
+        self._tasks_completed_array = self.ctx.Array('L', self.n_jobs, lock=self.ctx.RLock())
+        self._progress_bar_last_updated = time.time()
+        self._progress_bar_shutdown = self.ctx.Value(ctypes.c_bool, False, lock=True)
         self._progress_bar_complete = self.ctx.Event()
 
         self.reset_progress()
@@ -166,8 +205,7 @@ class WorkerComms:
         """
         self._task_idx = 0
         self._last_completed_task_worker_id.clear()
-        for task_completed in self._tasks_completed_array:
-            task_completed.value = 0
+        self._tasks_completed_array[:] = [0] * self.n_jobs
         self.clear_progress_bar_shutdown()
         self.clear_progress_bar_complete()
 
@@ -175,9 +213,9 @@ class WorkerComms:
     # Progress bar
     ################
 
-    def task_completed_progress_bar(self, worker_id: int, progress_bar_last_updated: datetime,
+    def task_completed_progress_bar(self, worker_id: int, progress_bar_last_updated: float,
                                     progress_bar_n_tasks_completed: Optional[int] = None,
-                                    force_update: bool = False) -> Tuple[datetime, int]:
+                                    force_update: bool = False) -> Tuple[float, int]:
         """
         Signal that we've completed a task every 0.1 seconds, for the progress bar
 
@@ -192,9 +230,10 @@ class WorkerComms:
             progress_bar_n_tasks_completed += 1
 
         # Check if we need to update
-        now = datetime.now()
-        if force_update or (now - progress_bar_last_updated).total_seconds() > self.progress_bar_update_interval:
-            self._tasks_completed_array[worker_id].value += progress_bar_n_tasks_completed
+        now = time.time()
+        if force_update or (now - progress_bar_last_updated) > self.progress_bar_update_interval:
+            with self._tasks_completed_array.get_lock():
+                self._tasks_completed_array[worker_id] += progress_bar_n_tasks_completed
             progress_bar_last_updated = now
             progress_bar_n_tasks_completed = 0
 
@@ -208,17 +247,15 @@ class WorkerComms:
         :return: The number of tasks done or a poison pill
         """
         # Check if we need to wait a bit for the next update
-        time_diff = (datetime.now() - self._progress_bar_last_updated).total_seconds()
+        time_diff = time.time() - self._progress_bar_last_updated
         if time_diff < self.progress_bar_update_interval:
             time.sleep(self.progress_bar_update_interval - time_diff)
 
         # Sum the tasks completed and return
         while (not self.exception_thrown() and not self.kill_signal_received() and
-               not self._progress_bar_shutdown.is_set()):
-            n_tasks_completed = 0
-            for worker_id in range(self.n_jobs):
-                n_tasks_completed += self._tasks_completed_array[worker_id].value
-            self._progress_bar_last_updated = datetime.now()
+               not self._progress_bar_shutdown.value):
+            n_tasks_completed = sum(self._tasks_completed_array)
+            self._progress_bar_last_updated = time.time()
             return n_tasks_completed
 
         return POISON_PILL
@@ -227,14 +264,14 @@ class WorkerComms:
         """
         Signals the progress bar handling process to shut down
         """
-        self._progress_bar_shutdown.set()
+        self._progress_bar_shutdown.value = True
 
     def clear_progress_bar_shutdown(self) -> None:
         """
         Clears the progress bar shutdown signal
         """
         if self._progress_bar_shutdown is not None:
-            self._progress_bar_shutdown.clear()
+            self._progress_bar_shutdown.value = False
 
     def signal_progress_bar_complete(self) -> None:
         """
@@ -264,19 +301,19 @@ class WorkerComms:
         """
         Set that we need to keep order in mind
         """
-        return self._keep_order.set()
+        self._keep_order.value = True
 
     def clear_keep_order(self) -> None:
         """
         Forget that we need to keep order in mind
         """
-        return self._keep_order.clear()
+        self._keep_order.value = False
 
     def keep_order(self) -> bool:
         """
         :return: Whether we need to keep order in mind
         """
-        return self._keep_order.is_set()
+        return self._keep_order.value
 
     ################
     # Tasks & results
@@ -360,21 +397,20 @@ class WorkerComms:
         :param worker_id: Worker ID
         :param running: Whether the worker is running a task
         """
-        with self._worker_running_task_locks[worker_id]:
-            self._worker_running_task[worker_id].value = running
+        self._worker_running_task[worker_id].value = running
 
-    def get_worker_running_task_lock(self, worker_id: int) -> mp.Lock:
+    def get_worker_running_task_lock(self, worker_id: int) -> mp.RLock:
         """
         Obtain the lock for the worker running task
 
         :param worker_id: Worker ID
-        :return: Lock
+        :return: RLock
         """
-        return self._worker_running_task_locks[worker_id]
+        return self._worker_running_task[worker_id].get_lock()
 
     def get_worker_running_task(self, worker_id: int) -> bool:
         """
-        Obtain whether the worker is running a task. Lock has to be obtained manually
+        Obtain whether the worker is running a task
 
         :param worker_id: Worker ID
         :return: Whether the worker is running a task
@@ -388,7 +424,7 @@ class WorkerComms:
         :param worker_id: Worker ID
         :param job_id: Job ID
         """
-        self._worker_working_on_job[worker_id].value = job_id
+        self._worker_working_on_job[worker_id] = job_id
 
     def get_worker_working_on_job(self, worker_id: int) -> int:
         """
@@ -397,7 +433,7 @@ class WorkerComms:
         :param worker_id: Worker ID
         :return: Job ID
         """
-        return self._worker_working_on_job[worker_id].value
+        return self._worker_working_on_job[worker_id]
 
     def add_results(self, worker_id: Optional[int], results: List[Tuple[Optional[int], bool, Any]]) -> None:
         """
@@ -423,7 +459,8 @@ class WorkerComms:
                 worker_id, results = self._results_queue.get(block=block, timeout=timeout)
                 self._results_queue.task_done()
                 if worker_id is not None:
-                    self._results_received[worker_id].value += 1
+                    with self._results_received.get_lock():
+                        self._results_received[worker_id] += 1
                     self._last_completed_task_worker_id.append(worker_id)
                 return results
         except EOFError:
@@ -436,7 +473,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._results_received[worker_id].value = 0
+        self._results_received[worker_id] = 0
 
     def wait_for_all_results_received(self, worker_id: int) -> None:
         """
@@ -444,7 +481,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        while self._results_received[worker_id].value != self._results_added[worker_id]:
+        while self._results_received[worker_id] != self._results_added[worker_id]:
             time.sleep(0.01)
 
     def add_new_map_params(self, map_params: WorkerMapParams) -> None:
@@ -485,7 +522,7 @@ class WorkerComms:
         """
         return self._exception_thrown.wait(timeout=timeout)
 
-    def exception_thrown_by(self) -> int:
+    def get_exception_thrown_job_id(self) -> int:
         """
         :return: Job ID which triggered the exception
         """
@@ -495,13 +532,13 @@ class WorkerComms:
         """
         Set the kill signal received event
         """
-        self._kill_signal_received.set()
+        self._kill_signal_received.value = True
 
     def kill_signal_received(self) -> bool:
         """
         :return: Whether a kill signal was received in one of the workers
         """
-        return self._kill_signal_received.is_set()
+        return self._kill_signal_received.value
 
     ################
     # Terminating & restarting
@@ -534,7 +571,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._worker_restart_array[worker_id].value = True
+        self._worker_restart_array[worker_id] = True
         with self._worker_restart_condition:
             self._worker_restart_condition.notify()
 
@@ -554,7 +591,7 @@ class WorkerComms:
         :return: List of worker IDs
         """
         def _get_worker_restarts():
-            return [worker_id for worker_id, restart in enumerate(self._worker_restart_array) if restart.value]
+            return [worker_id for worker_id, restart in enumerate(self._worker_restart_array) if restart]
 
         with self._worker_restart_condition:
 
@@ -572,7 +609,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._worker_restart_array[worker_id].value = False
+        self._worker_restart_array[worker_id] = False
 
     def signal_worker_alive(self, worker_id: int) -> None:
         """
@@ -580,7 +617,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_dead[worker_id].clear()
+        self._workers_dead[worker_id] = False
 
     def signal_worker_dead(self, worker_id: int) -> None:
         """
@@ -588,7 +625,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_dead[worker_id].set()
+        self._workers_dead[worker_id] = True
 
     def is_worker_alive(self, worker_id: int) -> bool:
         """
@@ -597,7 +634,7 @@ class WorkerComms:
         :param worker_id: Worker ID
         :return: Whether the worker is alive
         """
-        return not self._workers_dead[worker_id].is_set()
+        return not self._workers_dead[worker_id]
 
     def join_results_queues(self, keep_alive: bool = False) -> None:
         """
@@ -640,10 +677,6 @@ class WorkerComms:
         except (queue.Empty, OSError):
             if got_results:
                 dont_wait_event.set()
-        if platform.system() == "Darwin":
-            # Force collection of semaphore objects.
-            # TODO: This is a workaround for semaphore leakage on macOS.
-            gc.collect()
 
     def drain_queues(self) -> None:
         """
@@ -665,17 +698,21 @@ class WorkerComms:
         if RUNNING_WINDOWS:
             self._drain_and_join_queue(q, join)
         else:
-            process = self.ctx.Process(target=self._drain_and_join_queue, args=(q, join))
-            process.start()
-            process.join(timeout=5)
-            if process.is_alive():
-                process.terminate()
-                process.join()
+            try:
+                process = self.ctx.Process(target=self._drain_and_join_queue, args=(q, join))
+                process.start()
+                process.join(timeout=5)
+                if process.is_alive():
+                    process.terminate()
+                    process.join()
 
-            if join:
-                # The above was done in a separate process where the queue had a different feeder thread
-                q.close()
-                q.join_thread()
+                if join:
+                    # The above was done in a separate process where the queue had a different feeder thread
+                    q.close()
+                    q.join_thread()
+            except OSError:
+                # Queue could be just closed when starting the drain_and_join_queue process
+                pass
 
     @staticmethod
     def _drain_and_join_queue(q: mp.JoinableQueue, join: bool = True) -> None:
@@ -725,7 +762,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 0].value = datetime.now().timestamp()
+        self._workers_time_task_started[worker_id * 3] = time.time()
 
     def signal_worker_task_started(self, worker_id: int) -> None:
         """
@@ -733,7 +770,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 1].value = datetime.now().timestamp()
+        self._workers_time_task_started[worker_id * 3 + 1] = time.time()
 
     def signal_worker_exit_started(self, worker_id: int) -> None:
         """
@@ -741,7 +778,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 2].value = datetime.now().timestamp()
+        self._workers_time_task_started[worker_id * 3 + 2] = time.time()
 
     def signal_worker_init_completed(self, worker_id: int) -> None:
         """
@@ -749,7 +786,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 0].value = 0
+        self._workers_time_task_started[worker_id * 3] = 0
 
     def signal_worker_task_completed(self, worker_id: int) -> None:
         """
@@ -757,7 +794,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 1].value = 0
+        self._workers_time_task_started[worker_id * 3 + 1] = 0
 
     def signal_worker_exit_completed(self, worker_id: int) -> None:
         """
@@ -765,7 +802,7 @@ class WorkerComms:
 
         :param worker_id: Worker ID
         """
-        self._workers_time_task_started[worker_id * 3 + 2].value = 0
+        self._workers_time_task_started[worker_id * 3 + 2] = 0
 
     def has_worker_init_timed_out(self, worker_id: int, timeout: float) -> bool:
         """
@@ -775,7 +812,7 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        started_time = self._workers_time_task_started[worker_id * 3 + 0].value
+        started_time = self._workers_time_task_started[worker_id * 3]
         return self._has_worker_timed_out(started_time, timeout)
 
     def has_worker_task_timed_out(self, worker_id: int, timeout: float) -> bool:
@@ -786,7 +823,7 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        started_time = self._workers_time_task_started[worker_id * 3 + 1].value
+        started_time = self._workers_time_task_started[worker_id * 3 + 1]
         return self._has_worker_timed_out(started_time, timeout)
 
     def has_worker_exit_timed_out(self, worker_id: int, timeout: float) -> bool:
@@ -797,7 +834,7 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        started_time = self._workers_time_task_started[worker_id * 3 + 2].value
+        started_time = self._workers_time_task_started[worker_id * 3 + 2]
         return self._has_worker_timed_out(started_time, timeout)
 
     @staticmethod
@@ -809,4 +846,4 @@ class WorkerComms:
         :param timeout: Timeout in seconds
         :return: True when time has expired, False otherwise
         """
-        return False if started_time == 0.0 else (datetime.now().timestamp() - started_time) >= timeout
+        return False if started_time == 0.0 else (time.time() - started_time) >= timeout

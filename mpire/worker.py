@@ -5,9 +5,9 @@ except ImportError:
     import pickle
 import multiprocessing as mp
 import signal
+import time
 import traceback
 import _thread
-from datetime import datetime
 from functools import partial
 from threading import current_thread, main_thread, Thread
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
@@ -43,7 +43,7 @@ class AbstractWorker:
     def __init__(self, worker_id: int, pool_params: WorkerPoolParams, map_params: WorkerMapParams,
                  worker_comms: WorkerComms, worker_insights: WorkerInsights,
                  tqdm_connection_details: TqdmConnectionDetails,
-                 dashboard_connection_details: DashboardConnectionDetails, start_time: datetime) -> None:
+                 dashboard_connection_details: DashboardConnectionDetails, start_time: float) -> None:
         """
         :param worker_id: Worker ID
         :param pool_params: WorkerPool parameters
@@ -53,7 +53,7 @@ class AbstractWorker:
         :param tqdm_connection_details: Tqdm manager host, and whether the manager is started/connected
         :param dashboard_connection_details: Dashboard manager host, port_nr and whether a dashboard is
             started/connected
-        :param start_time: `datetime` object indicating at what time the Worker instance was created and started
+        :param start_time: Timestamp indicating at what time the Worker instance was created and started
         """
         super().__init__()
 
@@ -72,9 +72,9 @@ class AbstractWorker:
 
         # Local variables needed for each worker
         self.additional_args = None
-        self.progress_bar_last_updated = datetime.now()
+        self.progress_bar_last_updated = time.time()
         self.progress_bar_n_tasks_completed = 0
-        self.max_task_duration_last_updated = datetime.now()
+        self.max_task_duration_last_updated = self.progress_bar_last_updated
         self.max_task_duration_list = self.worker_insights.get_max_task_duration_list(self.worker_id)
         self.is_apply_func = False
         self.last_job_id = None
@@ -240,30 +240,48 @@ class AbstractWorker:
         - Another child process encountered an error in either the init/exit or map function which means we should exit
         - The current task timed out and we should interrupt it
 
-        This signal is only send when either the user defined function, worker init or worker exit function is running.
-        In such cases, a StopWorker exception is raised, which is caught by the ``_run_safely()`` function, so we can
-        quit gracefully.
-        """
-        exception_job_id = self.worker_comms.get_worker_working_on_job(self.worker_comms.exception_thrown_by())
-        if exception_job_id in {INIT_FUNC, EXIT_FUNC} or not self.is_apply_func:
-            self.worker_comms.signal_kill_signal_received()
-            raise StopWorker
+        When on Windows, this function can be invoked when no function is running. This means we will need to check if
+        there is a running task and only raise if there is. Otherwise, the exception thrown event will be set and the
+        worker will exit gracefully itself.
+        
+        On other platforms, this signal is only send when either the user defined function, worker init or worker exit
+        function is running. In such cases, a StopWorker exception is raised, which is caught by the ``_run_safely()``
+        function, so we can quit gracefully.
+        """            
+        exception_job_id = self.worker_comms.get_exception_thrown_job_id()
+        if RUNNING_WINDOWS:
+            with self.worker_comms.get_worker_running_task_lock(self.worker_id):
+                if self.worker_comms.get_worker_running_task(self.worker_id):
+                    self.worker_comms.set_worker_running_task(self.worker_id, False)
+                    if exception_job_id in {INIT_FUNC, EXIT_FUNC} or not self.is_apply_func:
+                        self.worker_comms.signal_kill_signal_received()
+                        raise StopWorker
+                    else:
+                        raise InterruptWorker
         else:
-            raise InterruptWorker
+            if exception_job_id in {INIT_FUNC, EXIT_FUNC} or not self.is_apply_func:
+                self.worker_comms.signal_kill_signal_received()
+                raise StopWorker
+            else:
+                raise InterruptWorker
 
     def _on_exception_exit_gracefully_windows(self) -> None:
         """
         Windows doesn't fully support signals as Unix-based systems do. Therefore, we have to work around it. This
         function is started in a thread. We wait for a kill signal (Event object) and interrupt the main thread if we
-        got it (derived from https://stackoverflow.com/a/40281422). This will raise a KeyboardInterrupt, which is then
-        caught by the signal handler, which in turn checks if we need to raise a StopWorker or InterruptWorker.
+        got it (derived from https://stackoverflow.com/a/40281422) and only when a function is running. This will raise
+        a KeyboardInterrupt, which is then caught by the signal handler, which in turn checks if we need to raise a 
+        StopWorker or InterruptWorker. When no function is running, the exception thrown event will be set and the 
+        worker will exit gracefully itself.
 
         Note: functions that release the GIL won't be interupted by this procedure (e.g., time.sleep). If graceful
         shutdown takes too long the process will be terminated by the main process.
         """
         while self.worker_comms.is_worker_alive(self.worker_id):
             if self.worker_comms.wait_for_exception_thrown(timeout=0.1):
-                _thread.interrupt_main()
+                with self.worker_comms.get_worker_running_task_lock(self.worker_id):
+                    if self.worker_comms.get_worker_running_task(self.worker_id):
+                        _thread.interrupt_main()
                 return
 
     def _set_additional_args(self) -> None:

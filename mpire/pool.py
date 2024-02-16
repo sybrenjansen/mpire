@@ -1,12 +1,9 @@
-import gc
 import logging
 import os
-import platform
 import queue
 import signal
 import threading
 import time
-from datetime import datetime
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Sized, Union, Tuple
 
 try:
@@ -218,7 +215,7 @@ class WorkerPool:
             # Create worker
             self._workers[worker_id] = self.Worker(
                 worker_id, self.pool_params, self.map_params, self._worker_comms, self._worker_insights,
-                TqdmManager.get_connection_details(), get_dashboard_connection_details(), datetime.now()
+                TqdmManager.get_connection_details(), get_dashboard_connection_details(), time.time()
             )
             self._workers[worker_id].daemon = self.pool_params.daemon
             self._workers[worker_id].name = f"Worker-{worker_id}"
@@ -275,7 +272,11 @@ class WorkerPool:
 
                 # Join worker. This can take a while as the worker could still be holding on to data it needs to send
                 # over the results queue
-                self._workers[worker_id].join()
+                try:
+                    self._workers[worker_id].join()
+                except OSError:
+                    # This can happen if the worker has already died (e.g., killed by the OS)
+                    pass
 
                 # Start new worker
                 self._worker_comms.reset_worker_restart(worker_id)
@@ -335,6 +336,15 @@ class WorkerPool:
                 return 'task', None, self._worker_comms.has_worker_task_timed_out
 
         while not self._worker_comms.exception_thrown() and not self._handler_threads_stop_event.is_set():
+            
+            if (
+                self.map_params.worker_init_timeout is None
+                and self.map_params.worker_exit_timeout is None
+                and all(job._timeout is None for job in self._cache.values())
+            ):
+                # No timeouts set, so no need to check
+                time.sleep(0.1)
+                continue
 
             for worker_id in range(self.pool_params.n_jobs):
                 # Obtain what the worker is working on and obtain corresponding timeout setting
@@ -913,7 +923,7 @@ class WorkerPool:
         """
         # Obtain exception
         if self._worker_comms.exception_thrown():
-            exception = self._cache[self._worker_comms.exception_thrown_by()].get_exception()
+            exception = self._cache[self._worker_comms.get_exception_thrown_job_id()].get_exception()
             cause = exception.__cause__
         else:
             self._worker_comms.signal_exception_thrown(MAIN_PROCESS)
@@ -1012,10 +1022,6 @@ class WorkerPool:
         send a sigkill.
         """
         if not self._workers:
-            if platform.system() == "Darwin":
-                # Force collection of semaphore objects.
-                # TODO: This is a workaround for semaphore leakage on macOS.
-                gc.collect()
             return
 
         # Set exception thrown so workers know to stop fetching new tasks
@@ -1075,23 +1081,6 @@ class WorkerPool:
 
         # We wait until workers are done terminating. However, we don't have all the patience in the world. When the
         # patience runs out we terminate them.
-        try_count = 10
-        while try_count > 0:
-            try:
-                self._workers[worker_id].join(timeout=0.1)
-            except AssertionError:
-                return
-            if not self._workers[worker_id].is_alive():
-                break
-
-            # For properly joining, it can help if we try to get some results here. Workers can still be busy putting
-            # items in queues under the hood
-            self._worker_comms.drain_results_queue_terminate_worker(dont_wait_event)
-            try_count -= 1
-            if not dont_wait_event.is_set():
-                dont_wait_event.wait()
-
-        # Join the worker process
         try_count = 10
         while try_count > 0:
             try:

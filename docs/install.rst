@@ -28,6 +28,7 @@ Python packages (installed automatically when installing MPIRE):
 - tqdm
 - pygments
 - pywin32 (Windows only)
+- importlib_resources (Python < 3.9 only)
 
 .. note::
 
