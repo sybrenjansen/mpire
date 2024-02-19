@@ -404,8 +404,7 @@ class WorkerPool:
 
     def map(self, func: Callable, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int] = None,
             max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
-            worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-            progress_bar_position: Optional[int] = None, concatenate_numpy_output: bool = True,
+            worker_lifespan: Optional[int] = None, progress_bar: bool = False, concatenate_numpy_output: bool = True,
             worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None,
             task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None,
             worker_exit_timeout: Optional[float] = None, progress_bar_options: Optional[Dict[str, Any]] = None,
@@ -431,11 +430,6 @@ class WorkerPool:
         :param worker_lifespan: Number of tasks a worker can handle before it is restarted. If ``None``, workers will
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: When ``True`` it will display a progress bar
-        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful when using
-            multiple progress bars at the same time.
-
-            DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
-            instead.
         :param concatenate_numpy_output: When ``True`` it will concatenate numpy output to a single numpy array
         :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
             should receive the worker ID as its first argument. If shared objects are provided the function should
@@ -471,8 +465,8 @@ class WorkerPool:
             iterable_len = len(iterable_of_args)
         results = self.map_unordered(
             func, ((args_idx, args) for args_idx, args in enumerate(iterable_of_args)), iterable_len, max_tasks_active,
-            chunk_size, n_splits, worker_lifespan, progress_bar, progress_bar_position, worker_init, worker_exit,
-            task_timeout, worker_init_timeout, worker_exit_timeout, progress_bar_options, progress_bar_style
+            chunk_size, n_splits, worker_lifespan, progress_bar, worker_init, worker_exit, task_timeout, 
+            worker_init_timeout, worker_exit_timeout, progress_bar_options, progress_bar_style
         )
 
         # Notify workers to forget about order
@@ -489,9 +483,9 @@ class WorkerPool:
                       iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                       chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
                       worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                      progress_bar_position: Optional[int] = None, worker_init: Optional[Callable] = None,
-                      worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
-                      worker_init_timeout: Optional[float] = None, worker_exit_timeout: Optional[float] = None,
+                      worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None, 
+                      task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None, 
+                      worker_exit_timeout: Optional[float] = None, 
                       progress_bar_options: Optional[Dict[str, Any]] = None,
                       progress_bar_style: Optional[str] = None) -> Any:
         """
@@ -515,11 +509,6 @@ class WorkerPool:
         :param worker_lifespan: Number of tasks a worker can handle before it is restarted. If ``None``, workers will
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: When ``True`` it will display a progress bar
-        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful when using
-            multiple progress bars at the same time.
-
-            DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
-            instead.
         :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
             should receive the worker ID as its first argument. If shared objects are provided the function should
             receive those as the next argument. If the worker state has been enabled it should receive a state variable
@@ -542,14 +531,13 @@ class WorkerPool:
         """
         # Simply call imap and cast it to a list. This make sure all elements are there before returning
         return list(self.imap_unordered(func, iterable_of_args, iterable_len, max_tasks_active, chunk_size,
-                                        n_splits, worker_lifespan, progress_bar, progress_bar_position, worker_init,
-                                        worker_exit, task_timeout, worker_init_timeout, worker_exit_timeout,
-                                        progress_bar_options, progress_bar_style))
+                                        n_splits, worker_lifespan, progress_bar, worker_init, worker_exit, 
+                                        task_timeout, worker_init_timeout, worker_exit_timeout, progress_bar_options,
+                                        progress_bar_style))
 
     def imap(self, func: Callable, iterable_of_args: Union[Sized, Iterable], iterable_len: Optional[int] = None,
              max_tasks_active: Optional[int] = None, chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
-             worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-             progress_bar_position: Optional[int] = None, worker_init: Optional[Callable] = None,
+             worker_lifespan: Optional[int] = None, progress_bar: bool = False, worker_init: Optional[Callable] = None,
              worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
              worker_init_timeout: Optional[float] = None, worker_exit_timeout: Optional[float] = None,
              progress_bar_options: Optional[Dict[str, Any]] = None,
@@ -575,11 +563,6 @@ class WorkerPool:
         :param worker_lifespan: Number of tasks a worker can handle before it is restarted. If ``None``, workers will
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: When ``True`` it will display a progress bar
-        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful when using
-            multiple progress bars at the same time.
-
-            DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
-            instead.
         :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
             should receive the worker ID as its first argument. If shared objects are provided the function should
             receive those as the next argument. If the worker state has been enabled it should receive a state variable
@@ -617,9 +600,9 @@ class WorkerPool:
         for result_idx, result in self.imap_unordered(func, ((args_idx, args) for args_idx, args
                                                              in enumerate(iterable_of_args)), iterable_len,
                                                       max_tasks_active, chunk_size, n_splits, worker_lifespan,
-                                                      progress_bar, progress_bar_position, worker_init, worker_exit,
-                                                      task_timeout, worker_init_timeout, worker_exit_timeout,
-                                                      progress_bar_options, progress_bar_style):
+                                                      progress_bar, worker_init, worker_exit, task_timeout, 
+                                                      worker_init_timeout, worker_exit_timeout, progress_bar_options,
+                                                      progress_bar_style):
 
             # Check if the next one(s) to return is/are temporarily stored. We use a while-true block with dict.pop() to
             # keep the temporary store as small as possible
@@ -648,10 +631,10 @@ class WorkerPool:
     def imap_unordered(self, func: Callable, iterable_of_args: Union[Sized, Iterable],
                        iterable_len: Optional[int] = None, max_tasks_active: Optional[int] = None,
                        chunk_size: Optional[int] = None, n_splits: Optional[int] = None,
-                       worker_lifespan: Optional[int] = None, progress_bar: bool = False,
-                       progress_bar_position: Optional[int] = None, worker_init: Optional[Callable] = None,
-                       worker_exit: Optional[Callable] = None, task_timeout: Optional[float] = None,
-                       worker_init_timeout: Optional[float] = None, worker_exit_timeout: Optional[float] = None,
+                       worker_lifespan: Optional[int] = None, progress_bar: bool = False, 
+                       worker_init: Optional[Callable] = None, worker_exit: Optional[Callable] = None, 
+                       task_timeout: Optional[float] = None, worker_init_timeout: Optional[float] = None, 
+                       worker_exit_timeout: Optional[float] = None, 
                        progress_bar_options: Optional[Dict[str, Any]] = None,
                        progress_bar_style: Optional[str] = None) -> Generator[Any, None, None]:
         """
@@ -675,11 +658,6 @@ class WorkerPool:
         :param worker_lifespan: Number of tasks a worker can handle before it is restarted. If ``None``, workers will
             stay alive the entire time. Use this when workers use up too much memory over the course of time
         :param progress_bar: When ``True`` it will display a progress bar
-        :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful when using
-            multiple progress bars at the same time.
-
-            DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
-            instead.
         :param worker_init: Function to call each time a new worker starts. When passing on the worker ID the function
             should receive the worker ID as its first argument. If shared objects are provided the function should
             receive those as the next argument. If the worker state has been enabled it should receive a state variable
@@ -713,8 +691,8 @@ class WorkerPool:
         # modified as well
         n_tasks, max_tasks_active, chunk_size, progress_bar, progress_bar_options = check_map_parameters(
             self.pool_params, iterable_of_args, iterable_len, max_tasks_active, chunk_size, n_splits, worker_lifespan,
-            progress_bar, progress_bar_position, progress_bar_options, progress_bar_style, task_timeout,
-            worker_init_timeout, worker_exit_timeout
+            progress_bar, progress_bar_options, progress_bar_style, task_timeout, worker_init_timeout, 
+            worker_exit_timeout
         )
         new_map_params = WorkerMapParams(func, worker_init, worker_exit, worker_lifespan, progress_bar, task_timeout,
                                          worker_init_timeout, worker_exit_timeout)

@@ -150,7 +150,7 @@ class WorkerMapParams:
 def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[Sized, Iterable],
                          iterable_len: Optional[int], max_tasks_active: Optional[int],
                          chunk_size: Optional[Union[int, float]], n_splits: Optional[int],
-                         worker_lifespan: Optional[int], progress_bar: bool, progress_bar_position: Optional[int],
+                         worker_lifespan: Optional[int], progress_bar: bool, 
                          progress_bar_options: Optional[Dict[str, Any]], progress_bar_style: Optional[str],
                          task_timeout: Optional[float], worker_init_timeout: Optional[float],
                          worker_exit_timeout: Optional[float]) \
@@ -169,11 +169,6 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
     :param worker_lifespan: Number of chunks a worker can handle before it is restarted. If ``None``, workers will
         stay alive the entire time. Use this when workers use up too much memory over the course of time
     :param progress_bar: When ``True`` it will display a progress bar
-    :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful when using
-        multiple progress bars at the same time.
-
-        DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
-        instead.
     :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
          ``tqdm.tqdm()`` for details. The arguments ``total`` and ``leave`` will be overwritten by MPIRE.
     :param progress_bar_style: Style to use for the progress bar
@@ -210,8 +205,7 @@ def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[
     check_number(worker_lifespan, 'worker_lifespan', allowed_types=(int,), none_allowed=True, min_=1)
 
     # Check progress bar parameters and set default values
-    progress_bar_options = check_progress_bar_options(progress_bar_options, progress_bar_position, n_tasks,
-                                                      progress_bar_style)
+    progress_bar_options = check_progress_bar_options(progress_bar_options, n_tasks, progress_bar_style)
 
     # Timeout parameters can't be negative
     for timeout_var, timeout_var_name in [(task_timeout, 'task_timeout'),
@@ -259,18 +253,13 @@ def check_number(var: Any, var_name: str, allowed_types: Tuple[Type, ...], none_
         raise ValueError(f"{var_name} should be >= {min_}")
 
 
-def check_progress_bar_options(progress_bar_options: Optional[Dict[str, Any]], progress_bar_position: Optional[int],
-                               n_tasks: Optional[int], progress_bar_style: Optional[str]) -> Dict[str, Any]:
+def check_progress_bar_options(progress_bar_options: Optional[Dict[str, Any]], n_tasks: Optional[int], 
+                               progress_bar_style: Optional[str]) -> Dict[str, Any]:
     """
     Check that the progress bar options are properly formatted and set some defaults
 
     :param progress_bar_options: Dictionary containing keyword arguments to pass to the ``tqdm`` progress bar. See
          ``tqdm.tqdm()`` for details. The arguments ``total`` and ``leave`` will be overwritten by MPIRE.
-    :param progress_bar_position: Denotes the position (line nr) of the progress bar. This is useful when using
-        multiple progress bars at the same time.
-
-        DEPRECATED in v2.6.0, to be removed in v2.10.0! Set the progress bar position using ``progress_bar_options``
-        instead.
     :param n_tasks: Number of tasks to process
     :param progress_bar_style: Progress bar style to use
     :return: Dictionary containing the progress bar options
@@ -284,19 +273,6 @@ def check_progress_bar_options(progress_bar_options: Optional[Dict[str, Any]], p
                       "using the iterable_len parameter", RuntimeWarning, stacklevel=2)
     if "leave" in progress_bar_options:
         warnings.warn("The 'leave' keyword argument will be overwritten by MPIRE", RuntimeWarning, stacklevel=2)
-
-    # Progress bar position should be a positive integer. This parameter is deprecated and will be removed in v2.10.0.
-    # For now, if the position is set in the progress_bar_options, that will be used. Otherwise, the position is set to
-    # progress_bar_position.
-    if progress_bar_position is not None:
-        warnings.warn("The 'progress_bar_position' parameter is deprecated and will be removed in v2.10.0. Set the "
-                      "progress bar position using 'progress_bar_options' instead", DeprecationWarning, stacklevel=2)
-        check_number(progress_bar_position, "progress_bar_position", (int,), False, min_=0)
-        if "position" in progress_bar_options:
-            warnings.warn("The 'progress_bar_position' is already provided in 'progress_bar_options', which will take "
-                          "precedence", RuntimeWarning, stacklevel=2)
-        else:
-            progress_bar_options["position"] = progress_bar_position
 
     # We currently do not support the position parameter for rich progress bars. Although this can be implemented by
     # using a single rich progress bar for all workers and using `add_task`, but this is not trivial to implement.
