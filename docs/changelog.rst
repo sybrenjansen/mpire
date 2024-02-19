@@ -1,8 +1,10 @@
 Changelog
 =========
 
-Unreleased
-==========
+2.10.0
+------
+
+*(2024-02-19)*
 
 * Added support for macOS (`#27`_, `#79`_, `#91`_)
 
