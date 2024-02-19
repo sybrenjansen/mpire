@@ -17,6 +17,8 @@ Unreleased
 * Use (global) average rate for the estimate on the dashboard when smoothing=0
   (`#117`_)
 * Make it possible to reuse the same `progress_bar_options` without raising warnings (`#117`_)
+* Removed deprecated `progress_bar_position` parameter from the `map` functions. Use 
+  `progress_bar_options['position']` instead (added since v2.6.0)
 
 .. _#27: https://github.com/sybrenjansen/mpire/issues/27
 .. _#79: https://github.com/sybrenjansen/mpire/issues/79

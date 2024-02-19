@@ -1034,23 +1034,6 @@ class ProgressBarTest(unittest.TestCase):
         with WorkerPool() as pool:
             self.assertListEqual(pool.map(square, [], progress_bar=True), [])
 
-    def test_invalid_progress_bar_position(self):
-        """
-        Test different values of progress_bar_position, which should be positive integer >= 0
-        """
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-
-            for progress_bar_position, error in [(-1, ValueError), ('numero uno', TypeError)]:
-                with self.subTest(input='regular input', progress_bar_position=progress_bar_position), \
-                        self.assertRaises(error), WorkerPool(n_jobs=1) as pool:
-                    pool.map(square, self.test_data, progress_bar=True, progress_bar_position=progress_bar_position)
-
-                with self.subTest(input='numpy input', progress_bar_position=progress_bar_position), \
-                        self.assertRaises(error), WorkerPool(n_jobs=1) as pool:
-                    pool.map(square_numpy, self.test_data_numpy, progress_bar=True,
-                             progress_bar_position=progress_bar_position)
-
     def test_progress_bar_options(self):
         """
         Test different progress bar options. Wrong inputs are tested in test_params
