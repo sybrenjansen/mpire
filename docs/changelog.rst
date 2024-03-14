@@ -1,6 +1,14 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+* Fixed a bug in the timeout handler where the cache dictionary could be changed during iteration (`#123`_)
+
+.. _#123: https://github.com/sybrenjansen/mpire/issues/123
+
+
 2.10.0
 ------
 
