@@ -337,10 +337,11 @@ class WorkerPool:
 
         while not self._worker_comms.exception_thrown() and not self._handler_threads_stop_event.is_set():
             
+            # We're making a shallow copy here to avoid dictionary changes size during iteration errors
             if (
                 self.map_params.worker_init_timeout is None
                 and self.map_params.worker_exit_timeout is None
-                and all(job._timeout is None for job in self._cache.values())
+                and all(job._timeout is None for job in self._cache.copy().values())
             ):
                 # No timeouts set, so no need to check
                 time.sleep(0.1)
