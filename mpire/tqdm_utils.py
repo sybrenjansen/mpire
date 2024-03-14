@@ -6,7 +6,6 @@ from multiprocessing import Lock as mp_Lock
 from multiprocessing.synchronize import Lock as LockType
 from typing import Optional, Tuple, Type
 
-from multiprocess import Lock as mp_dill_Lock
 from tqdm import TqdmExperimentalWarning, tqdm as tqdm_std
 from tqdm.notebook import tqdm as tqdm_notebook
 try:
@@ -16,6 +15,7 @@ except ImportError:
     tqdm_rich = None
     RICH_AVAILABLE = False
 
+from mpire.context import mp_dill
 from mpire.signal import DisableKeyboardInterruptSignal
 from mpire.utils import create_sync_manager
 
@@ -226,7 +226,7 @@ class TqdmPositionRegister:
         """
         :param use_dill: Whether dill is used as serialization library
         """
-        self.lock = mp_dill_Lock() if use_dill else mp_Lock()
+        self.lock = mp_dill.Lock() if use_dill else mp_Lock()
         self.highest_position = None
 
     def register_progress_bar_position(self, position: int) -> bool:

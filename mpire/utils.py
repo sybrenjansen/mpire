@@ -5,11 +5,10 @@ import os
 import time
 from datetime import timedelta
 from multiprocessing import cpu_count
-from multiprocessing.managers import SyncManager as mp_SyncManager
+from multiprocessing.managers import SyncManager
 from multiprocessing.sharedctypes import SynchronizedArray
 from typing import Callable, Collection, Generator, Iterable, List, Optional, Tuple, Union
 
-from multiprocess.managers import SyncManager as mp_dill_SyncManager
 try:
     import numpy as np
     NUMPY_INSTALLED = True
@@ -17,7 +16,7 @@ except ImportError:
     np = None
     NUMPY_INSTALLED = False
 
-from mpire.context import RUNNING_MACOS, RUNNING_WINDOWS
+from mpire.context import RUNNING_MACOS, RUNNING_WINDOWS, mp_dill
 
 # Needed for setting CPU affinity
 if RUNNING_WINDOWS:
@@ -251,7 +250,7 @@ class TimeIt:
                               (duration, self.format_args_func() if self.format_args_func is not None else None))
 
 
-def create_sync_manager(use_dill: bool) -> Union[mp_SyncManager, mp_dill_SyncManager]:
+def create_sync_manager(use_dill: bool) -> SyncManager:
     """
     Create a SyncManager instance
 
@@ -259,7 +258,7 @@ def create_sync_manager(use_dill: bool) -> Union[mp_SyncManager, mp_dill_SyncMan
     :return: SyncManager instance
     """
     authkey = os.urandom(24)
-    return mp_dill_SyncManager(authkey=authkey) if use_dill else mp_SyncManager(authkey=authkey)
+    return mp_dill.managers.SyncManager(authkey=authkey) if use_dill else SyncManager(authkey=authkey)
 
     
 class NonPickledSyncManager:

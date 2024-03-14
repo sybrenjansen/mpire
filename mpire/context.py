@@ -1,6 +1,7 @@
 import multiprocessing as mp
 try:
     import multiprocess as mp_dill
+    import multiprocess.managers  # Needed in utils.py
 except ImportError:
     mp_dill = None
 import platform
