@@ -1,11 +1,10 @@
 import logging
-import os
 import warnings
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
-from multiprocessing import Lock
-from multiprocessing.managers import SyncManager
-from typing import Optional, Tuple, Type, Union
+from multiprocessing import Lock as mp_Lock
+from multiprocessing.synchronize import Lock as LockType
+from typing import Optional, Tuple, Type
 
 from tqdm import TqdmExperimentalWarning, tqdm as tqdm_std
 from tqdm.notebook import tqdm as tqdm_notebook
@@ -16,10 +15,12 @@ except ImportError:
     tqdm_rich = None
     RICH_AVAILABLE = False
 
+from mpire.context import mp_dill
 from mpire.signal import DisableKeyboardInterruptSignal
+from mpire.utils import create_sync_manager
 
 PROGRESS_BAR_DEFAULT_STYLE = 'std'
-TqdmConnectionDetails = Tuple[Lock, "TqdmPositionRegister"]
+TqdmConnectionDetails = Tuple[LockType, "TqdmPositionRegister"]
 
 logger = logging.getLogger(__name__)
 
@@ -221,11 +222,14 @@ class TqdmPositionRegister:
     progress bars
     """
 
-    def __init__(self) -> None:
-        self.lock = Lock()
+    def __init__(self, use_dill: bool) -> None:
+        """
+        :param use_dill: Whether dill is used as serialization library
+        """
+        self.lock = mp_dill.Lock() if use_dill else mp_Lock()
         self.highest_position = None
 
-    def register_progress_bar_position(self, position) -> bool:
+    def register_progress_bar_position(self, position: int) -> bool:
         """
         Register new progress bar position. Returns True when it's the first one to register
 
@@ -265,10 +269,11 @@ class TqdmManager:
     POSITION_REGISTER = None
 
     @classmethod
-    def start_manager(cls) -> bool:
+    def start_manager(cls, use_dill: bool) -> bool:
         """
         Sets up and starts the tqdm manager
 
+        :param use_dill: Whether dill is used as serialization library
         :return: Whether the manager was started
         """
         # Don't do anything when there's already a tqdm manager that has started
@@ -279,11 +284,11 @@ class TqdmManager:
 
         # Create manager
         with DisableKeyboardInterruptSignal():
-            cls.MANAGER = SyncManager(authkey=os.urandom(24))
+            cls.MANAGER = create_sync_manager(use_dill)
             cls.MANAGER.register('TqdmPositionRegister', TqdmPositionRegister)
             cls.MANAGER.start()
             cls.LOCK = cls.MANAGER.Lock()
-            cls.POSITION_REGISTER = cls.MANAGER.TqdmPositionRegister()
+            cls.POSITION_REGISTER = cls.MANAGER.TqdmPositionRegister(use_dill)
 
         return True
 

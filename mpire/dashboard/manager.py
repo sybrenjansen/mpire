@@ -1,4 +1,5 @@
 from multiprocessing import Lock
+from multiprocessing.synchronize import Lock as LockType
 from multiprocessing.managers import BaseProxy
 from typing import Dict, Optional, Tuple
 
@@ -39,7 +40,7 @@ def get_dashboard_tqdm_details_dict() -> Dict:
     return DASHBOARD_TQDM_DETAILS_DICT
 
 
-def get_dashboard_tqdm_lock() -> Lock:
+def get_dashboard_tqdm_lock() -> LockType:
     """
     :return: Dashboard tqdm lock which should be used in a DashboardManager context
     """

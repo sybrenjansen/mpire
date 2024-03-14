@@ -5,8 +5,11 @@ Unreleased
 ----------
 
 * Fixed a bug in the timeout handler where the cache dictionary could be changed during iteration (`#123`_)
+* Fixed an authentication error when using a progress bar or insights in a spawn or forkserver context when using dill 
+  (`#124`_)
 
 .. _#123: https://github.com/sybrenjansen/mpire/issues/123
+.. _#124: https://github.com/sybrenjansen/mpire/issues/124
 
 
 2.10.0

@@ -2,10 +2,11 @@ import ctypes
 import multiprocessing as mp
 import unittest
 import warnings
-from multiprocessing import managers
+from multiprocessing import managers as mp_managers
 from time import sleep
 from unittest.mock import patch
 
+from multiprocess import managers as mp_dill_managers
 from tqdm import tqdm
 
 from mpire import WorkerPool
@@ -36,8 +37,8 @@ class WorkerInsightsTest(unittest.TestCase):
         """
         Test if resetting the insights is done properly
         """
-        for n_jobs in [1, 2, 4]:
-            insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs)
+        for n_jobs, use_dill in [(1, False), (2, True), (4, False)]:
+            insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs, use_dill)
             self.assertEqual(insights.ctx, mp.get_context(DEFAULT_START_METHOD))
             self.assertEqual(insights.n_jobs, n_jobs)
 
@@ -67,7 +68,8 @@ class WorkerInsightsTest(unittest.TestCase):
                 self.assertIsInstance(insights.worker_working_time, ctypes.Array)
                 self.assertIsInstance(insights.worker_exit_time, ctypes.Array)
                 self.assertIsInstance(insights.max_task_duration, ctypes.Array)
-                self.assertIsInstance(insights.max_task_args, managers.ListProxy)
+                self.assertIsInstance(insights.max_task_args, 
+                                      mp_dill_managers.ListProxy if use_dill else mp_managers.ListProxy)
 
                 # Basic sanity checks for the values
                 self.assertEqual(sum(insights.worker_start_up_time), 0)
@@ -186,7 +188,7 @@ class WorkerInsightsTest(unittest.TestCase):
         """
         Test that the right containers are selected given a worker ID
         """
-        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5)
+        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5, use_dill=False)
 
         with self.subTest(insights_enabled=False):
             for worker_id in range(5):
@@ -209,7 +211,7 @@ class WorkerInsightsTest(unittest.TestCase):
         """
         Test that the start up time is correctly added to worker_start_up_time for the right index
         """
-        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5)
+        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5, use_dill=False)
 
         # Shouldn't do anything when insights haven't been enabled
         with self.subTest(insights_enabled=False), patch('time.time', side_effect=[1.0, 2.0, 3.0, 7.0, 8.0]):
@@ -228,7 +230,7 @@ class WorkerInsightsTest(unittest.TestCase):
         """
         Test that the number of completed tasks is correctly added to worker_n_completed_tasks for the right index
         """
-        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5)
+        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5, use_dill=False)
 
         # Shouldn't do anything when insights haven't been enabled
         with self.subTest(insights_enabled=False):
@@ -248,7 +250,7 @@ class WorkerInsightsTest(unittest.TestCase):
         """
         Test whether the update_task_insights is triggered correctly when ``force_update=False``.
         """
-        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5)
+        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=5, use_dill=False)
         max_task_duration_last_updated = 1.0
 
         # Shouldn't do anything when insights haven't been enabled
@@ -293,7 +295,7 @@ class WorkerInsightsTest(unittest.TestCase):
         """
         Test whether task insights are being updated correctly
         """
-        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=2)
+        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=2, use_dill=False)
         max_task_duration_last_updated = 0.0
         
         # Shouldn't do anything when insights haven't been enabled
@@ -324,7 +326,7 @@ class WorkerInsightsTest(unittest.TestCase):
         """
         Test if the insights are properly processed
         """
-        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=2)
+        insights = WorkerInsights(mp.get_context(DEFAULT_START_METHOD), n_jobs=2, use_dill=False)
 
         with self.subTest(enable_insights=False):
             insights.reset_insights(enable_insights=False)
