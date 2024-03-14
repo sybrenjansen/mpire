@@ -1,6 +1,15 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+* Fixed an authentication error when using a progress bar or insights in a spawn or forkserver context when using dill 
+  (`#124`_)
+
+.. _#124: https://github.com/sybrenjansen/mpire/issues/124
+
+
 2.10.0
 ------
 

@@ -114,7 +114,7 @@ class WorkerPool:
         self._progress_bar_handler = None
 
         # Worker insights, used for profiling
-        self._worker_insights = WorkerInsights(self.ctx, self.pool_params.n_jobs)
+        self._worker_insights = WorkerInsights(self.ctx, self.pool_params.n_jobs, self.pool_params.use_dill)
 
     def pass_on_worker_id(self, pass_on: bool = True) -> None:
         """
@@ -718,7 +718,7 @@ class WorkerPool:
             # Start tqdm manager if a progress bar is desired. Will only start one when not already started. This has to
             # be done before starting the workers in case nested pools are used
             if progress_bar:
-                tqdm_manager_owner = TqdmManager.start_manager()
+                tqdm_manager_owner = TqdmManager.start_manager(self.pool_params.use_dill)
 
             # Start workers if there aren't any. If they already exist check if we need to pass on new parameters
             if self._workers and not self._worker_comms.is_initialized():

@@ -5,10 +5,11 @@ import os
 import time
 from datetime import timedelta
 from multiprocessing import cpu_count
-from multiprocessing.managers import SyncManager
+from multiprocessing.managers import SyncManager as mp_SyncManager
 from multiprocessing.sharedctypes import SynchronizedArray
 from typing import Callable, Collection, Generator, Iterable, List, Optional, Tuple, Union
 
+from multiprocess.managers import SyncManager as mp_dill_SyncManager
 try:
     import numpy as np
     NUMPY_INSTALLED = True
@@ -249,14 +250,28 @@ class TimeIt:
             heapq.heappushpop(self.max_time_array,
                               (duration, self.format_args_func() if self.format_args_func is not None else None))
 
+
+def create_sync_manager(use_dill: bool) -> Union[mp_SyncManager, mp_dill_SyncManager]:
+    """
+    Create a SyncManager instance
+
+    :param use_dill: Whether dill is used as serialization library
+    :return: SyncManager instance
+    """
+    authkey = os.urandom(24)
+    return mp_dill_SyncManager(authkey=authkey) if use_dill else mp_SyncManager(authkey=authkey)
+
     
 class NonPickledSyncManager:
     """ SyncManager wrapper that won't be pickled """
     
-    def __init__(self) -> None:
-        self.manager = SyncManager()
+    def __init__(self, use_dill: bool) -> None:
+        """
+        :param use_dill: Whether dill is used as serialization library
+        """
+        self.manager = create_sync_manager(use_dill)
         
-    def __getattr__(self, item):
+    def __getattr__(self, item: str):
         return getattr(self.manager, item)
 
     def __getstate__(self) -> dict:

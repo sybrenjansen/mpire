@@ -15,15 +15,17 @@ class WorkerInsights:
     exit functions are provided it will time those as well.
     """
 
-    def __init__(self, ctx: multiprocessing.context.BaseContext, n_jobs: int) -> None:
+    def __init__(self, ctx: multiprocessing.context.BaseContext, n_jobs: int, use_dill: bool) -> None:
         """
         Parameter class for worker insights.
 
         :param ctx: Multiprocessing context
         :param n_jobs: Number of workers
+        :param use_dill: Whether dill is used as serialization library
         """
         self.ctx = ctx
         self.n_jobs = n_jobs
+        self.use_dill = use_dill
 
         # Whether insights have been enabled or not
         self.insights_enabled = False
@@ -66,7 +68,7 @@ class WorkerInsights:
             # We need to use a special wrapper which sets the manager to None when pickled. For some reason Python 
             # won't use the __getstate__/__setstate__ of this class when passing the object to a worker, so we move
             # the logic to the wrapper instead.
-            self.insights_manager = NonPickledSyncManager()
+            self.insights_manager = NonPickledSyncManager(self.use_dill)
             self.insights_manager.start()
             self.insights_manager_lock = self.ctx.Lock()
             self.worker_start_up_time = self.ctx.Array(ctypes.c_double, self.n_jobs, lock=False)
