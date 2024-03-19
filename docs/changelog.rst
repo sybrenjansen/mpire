@@ -1,8 +1,10 @@
 Changelog
 =========
 
-Unreleased
-----------
+2.10.1
+------
+
+*(2024-03-19)*
 
 * Fixed a bug in the timeout handler where the cache dictionary could be changed during iteration (`#123`_)
 * Fixed an authentication error when using a progress bar or insights in a spawn or forkserver context when using dill 
