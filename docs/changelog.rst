@@ -1,6 +1,16 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+* Function details in ``progress_bar.py`` are only obtained when the dashboard is running (`#128`_)
+* Obtaining the user name is now put in a try-except block to prevent MPIRE from crashing when the user name cannot be
+  obtained. which can happen when running in a container as a non-root user (`#128`_)
+
+.. _#128: https://github.com/sybrenjansen/mpire/issues/128
+
+
 2.10.1
 ------
 

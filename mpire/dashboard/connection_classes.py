@@ -1,13 +1,14 @@
 from dataclasses import dataclass
 from multiprocessing import Event
 from multiprocessing.managers import BaseManager
-from typing import Any, Optional
+from multiprocessing.synchronize import Event as EventType
+from typing import Optional
 
 
 class DashboardStartedEvent:
     
     def __init__(self) -> None:
-        self.event: Optional[Event] = None
+        self.event: Optional[EventType] = None
         
     def init(self) -> None:
         self.event = Event()

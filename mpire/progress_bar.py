@@ -52,7 +52,7 @@ class ProgressBarHandler:
         self.progress_bar_style = progress_bar_style
         self.worker_comms = worker_comms
         self.worker_insights = worker_insights
-        if show_progress_bar and DASHBOARD_STARTED_EVENT is not None:
+        if show_progress_bar and DASHBOARD_STARTED_EVENT is not None and DASHBOARD_STARTED_EVENT.is_set():
             self.function_details = get_function_details(map_params.func)
             self.function_details['n_jobs'] = pool_params.n_jobs
         else:
@@ -186,7 +186,6 @@ class ProgressBarHandler:
         :param progress_bar: tqdm progress bar instance
         """
         if self.progress_bar_id is None and DASHBOARD_STARTED_EVENT is not None and DASHBOARD_STARTED_EVENT.is_set():
-
             # Connect to manager server
             self.dashboard_dict, self.dashboard_details_dict, dashboard_tqdm_lock = get_manager_client_dicts()
 
