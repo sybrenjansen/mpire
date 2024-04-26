@@ -9,7 +9,6 @@ import logging
 import os
 import signal
 import socket
-import sys
 from datetime import datetime
 from multiprocessing import Event, Process
 from multiprocessing.managers import BaseProxy
@@ -45,7 +44,13 @@ def index() -> str:
 
     :return: HTML
     """
-    return render_template('index.html', username=getpass.getuser(), hostname=socket.gethostname(),
+    # Obtain user. This can fail when the current uid refers to a non-existing user, which can happen when running in a
+    # container as a non-root user. See https://github.com/sybrenjansen/mpire/issues/128.
+    try:
+        user = getpass.getuser()
+    except KeyError:
+        user = "n/a"
+    return render_template('index.html', username=user, hostname=socket.gethostname(),
                            manager_host=DASHBOARD_MANAGER_CONNECTION_DETAILS.host or 'localhost',
                            manager_port_nr=DASHBOARD_MANAGER_CONNECTION_DETAILS.port)
 

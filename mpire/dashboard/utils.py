@@ -128,8 +128,15 @@ def get_function_details(func: Callable) -> Dict[str, Union[str, int]]:
         function_line_no = 'n/a'
         function_name = 'n/a'
 
+    # Obtain user. This can fail when the current uid refers to a non-existing user, which can happen when running in a
+    # container as a non-root user. See https://github.com/sybrenjansen/mpire/issues/128.
+    try:
+        user = getpass.getuser()
+    except KeyError:
+        user = "n/a"
+        
     # Populate details
-    func_details = {'user': f'{getpass.getuser()}@{socket.gethostname()}',
+    func_details = {'user': f'{user}@{socket.gethostname()}',
                     'function_filename': function_filename,
                     'function_line_no': function_line_no,
                     'function_name': function_name,
