@@ -1,8 +1,10 @@
 Changelog
 =========
 
-Unreleased
-----------
+2.10.2
+------
+
+*(2024-05-07)*
 
 * Function details in ``progress_bar.py`` are only obtained when the dashboard is running (`#128`_)
 * Obtaining the user name is now put in a try-except block to prevent MPIRE from crashing when the user name cannot be
