@@ -1,6 +1,15 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+* Expanded error message in case of unexpected worker death (`#130`_)
+* The progress bar will now show ``Keyboard interrupt`` when a keyboard interrupt is raised to distinguish it from 
+  other exceptions
+
+.. _#130: https://github.com/sybrenjansen/mpire/issues/130
+
 2.10.2
 ------
 

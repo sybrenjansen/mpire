@@ -307,7 +307,10 @@ class WorkerPool:
                     # Obtain task it was working on and set it to failed
                     job_id = self._worker_comms.get_worker_working_on_job(worker_id)
                     self._worker_comms.signal_exception_thrown(job_id)
-                    err = RuntimeError(f"Worker-{worker_id} died unexpectedly")
+                    err = RuntimeError(
+                        f"Worker-{worker_id} died unexpectedly. This usually means the OS/kernel killed the process "
+                        "due to running out of memory"
+                    )
 
                     # When a worker dies unexpectedly, the pool shuts down and we set all tasks that haven't completed
                     # yet to failed

@@ -7,7 +7,7 @@ import warnings
 
 from tqdm import TqdmExperimentalWarning, tqdm as tqdm_type
 
-from mpire.comms import WorkerComms, POISON_PILL
+from mpire.comms import MAIN_PROCESS, POISON_PILL, WorkerComms
 from mpire.exception import remove_highlighting
 from mpire.insights import WorkerInsights
 from mpire.params import WorkerMapParams, WorkerPoolParams
@@ -141,7 +141,12 @@ class ProgressBarHandler:
                 # Check if we got a poison pill because there was an error. If so, we obtain the exception information
                 # and send it to the dashboard, if available.)
                 if self.worker_comms.exception_thrown() or self.worker_comms.kill_signal_received():
-                    progress_bar.set_description('Exception occurred, terminating ... ')
+                    error_str = (
+                        "Keyboard interrupt" 
+                        if self.worker_comms.get_exception_thrown_job_id() == MAIN_PROCESS else 
+                        "Exception occurred"
+                    )
+                    progress_bar.set_description(f"{error_str}, terminating workers")
                     if self.worker_comms.exception_thrown():
                         # Wait for exception traceback str to be set
                         with self.exception_traceback_str_set_condition:
