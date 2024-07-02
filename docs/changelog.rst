@@ -7,7 +7,11 @@ Unreleased
 * Expanded error message in case of unexpected worker death (`#130`_)
 * The progress bar will now show ``Keyboard interrupt`` when a keyboard interrupt is raised to distinguish it from 
   other exceptions
+* In the case of an unexpected worker death (e.g., OOM errors) and the worker was working on an ``apply`` task, the 
+  worker will now be restarted and the other workers will continue their work. The task that caused the death will be 
+  set to failed (`#110`_)
 
+.. _#110: https://github.com/sybrenjansen/mpire/issues/110
 .. _#130: https://github.com/sybrenjansen/mpire/issues/130
 
 2.10.2

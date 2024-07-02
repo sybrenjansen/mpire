@@ -2,19 +2,34 @@ import collections
 import itertools
 import queue
 import threading
+from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from mpire.comms import EXIT_FUNC, INIT_FUNC
+from mpire.comms import EXIT_FUNC, MAIN_PROCESS
 
 job_counter = itertools.count()
 
 
+class JobType(Enum):
+    MAIN = auto()
+    INIT = auto()
+    MAP = auto()
+    EXIT = auto()
+    APPLY = auto()
+
+
 class AsyncResult:
+    """Adapted from ``multiprocessing.pool.ApplyResult``."""
 
-    """ Adapted from ``multiprocessing.pool.ApplyResult``. """
-
-    def __init__(self, cache: Dict, callback: Optional[Callable], error_callback: Optional[Callable],
-                 job_id: Optional[int] = None, delete_from_cache: bool = True, timeout: Optional[float] = None) -> None:
+    def __init__(
+        self,
+        cache: Dict,
+        callback: Optional[Callable],
+        error_callback: Optional[Callable],
+        job_id: Optional[int] = None,
+        delete_from_cache: bool = True,
+        timeout: Optional[float] = None,
+    ) -> None:
         """
         :param cache: Cache for storing intermediate results
         :param callback: Callback function to call when the task is finished. The callback function receives the output
@@ -32,6 +47,7 @@ class AsyncResult:
         self._delete_from_cache = delete_from_cache
         self._timeout = timeout
 
+        self.type = JobType.APPLY
         self.job_id = next(job_counter) if job_id is None else job_id
         self._ready_event = threading.Event()
         self._success = None
@@ -103,11 +119,11 @@ class AsyncResult:
 
 
 class UnorderedAsyncResultIterator:
+    """Stores results of a task and provides an iterator to obtain the results in an unordered fashion"""
 
-    """ Stores results of a task and provides an iterator to obtain the results in an unordered fashion """
-
-    def __init__(self, cache: Dict, n_tasks: Optional[int], job_id: Optional[int] = None,
-                 timeout: Optional[float] = None) -> None:
+    def __init__(
+        self, cache: Dict, n_tasks: Optional[int], job_id: Optional[int] = None, timeout: Optional[float] = None
+    ) -> None:
         """
         :param cache: Cache for storing intermediate results
         :param n_tasks: Number of tasks that will be executed. If None, we don't know the lenght yet
@@ -119,6 +135,7 @@ class UnorderedAsyncResultIterator:
         self._n_tasks = None
         self._timeout = timeout
 
+        self.type = JobType.MAP
         self.job_id = next(job_counter) if job_id is None else job_id
         self._items = collections.deque()
         self._condition = threading.Condition(lock=threading.Lock())
@@ -202,8 +219,9 @@ class UnorderedAsyncResultIterator:
         """
         if self._n_tasks is not None:
             if self._n_tasks != length:
-                raise ValueError(f"Length of iterator has already been set to {self._n_tasks}, "
-                                 f"but is now set to {length}")
+                raise ValueError(
+                    f"Length of iterator has already been set to {self._n_tasks}, but is now set to {length}"
+                )
             # Length has already been set. No need to do anything
             return
 
@@ -228,8 +246,10 @@ class UnorderedAsyncResultIterator:
 class AsyncResultWithExceptionGetter(AsyncResult):
 
     def __init__(self, cache: Dict, job_id: int) -> None:
-        super().__init__(cache, callback=None, error_callback=None, job_id=job_id, delete_from_cache=False,
-                         timeout=None)
+        super().__init__(
+            cache, callback=None, error_callback=None, job_id=job_id, delete_from_cache=False, timeout=None
+        )
+        self.type = JobType.MAIN if job_id == MAIN_PROCESS else JobType.INIT
 
     def get_exception(self) -> Exception:
         """
@@ -251,6 +271,7 @@ class UnorderedAsyncExitResultIterator(UnorderedAsyncResultIterator):
 
     def __init__(self, cache: Dict) -> None:
         super().__init__(cache, n_tasks=None, job_id=EXIT_FUNC, timeout=None)
+        self.type = JobType.EXIT
 
     def get_results(self) -> List[Any]:
         """
@@ -270,5 +291,6 @@ class UnorderedAsyncExitResultIterator(UnorderedAsyncResultIterator):
         self._got_exception.clear()
 
 
-AsyncResultType = Union[AsyncResult, AsyncResultWithExceptionGetter, UnorderedAsyncResultIterator,
-                        UnorderedAsyncExitResultIterator]
+AsyncResultType = Union[
+    AsyncResult, AsyncResultWithExceptionGetter, UnorderedAsyncResultIterator, UnorderedAsyncExitResultIterator
+]
