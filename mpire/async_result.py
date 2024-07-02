@@ -2,7 +2,7 @@ import collections
 import itertools
 import queue
 import threading
-from enum import Enum
+from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from mpire.comms import EXIT_FUNC, MAIN_PROCESS
@@ -11,11 +11,11 @@ job_counter = itertools.count()
 
 
 class JobType(Enum):
-    MAIN = 1
-    INIT = 2
-    MAP = 3
-    EXIT = 4
-    APPLY = 5
+    MAIN = auto()
+    INIT = auto()
+    MAP = auto()
+    EXIT = auto()
+    APPLY = auto()
 
 
 class AsyncResult:
