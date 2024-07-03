@@ -13,7 +13,7 @@ except ImportError:
     np = None
     NUMPY_INSTALLED = False
 
-from mpire.async_result import (AsyncResult, AsyncResultType, AsyncResultWithExceptionGetter,
+from mpire.async_result import (AsyncResult, AsyncResultType, AsyncResultWithExceptionGetter, JobType,
                                 UnorderedAsyncExitResultIterator, UnorderedAsyncResultIterator)
 from mpire.comms import EXIT_FUNC, INIT_FUNC, MAIN_PROCESS, POISON_PILL, WorkerComms
 from mpire.context import DEFAULT_START_METHOD, RUNNING_WINDOWS
@@ -298,26 +298,36 @@ class WorkerPool:
             # we just wait a bit and try again.
             for worker_id in range(len(self._workers)):
                 try:
-                    worker_died = (self._worker_comms.is_worker_alive(worker_id) and
-                                   not self._workers[worker_id].is_alive())
+                    worker_died = (
+                        self._worker_comms.is_worker_alive(worker_id) and not self._workers[worker_id].is_alive()
+                    )
                 except ValueError:
                     worker_died = False
 
                 if worker_died:
+                    self._worker_comms.signal_worker_dead(worker_id)
+                    
                     # Obtain task it was working on and set it to failed
                     job_id = self._worker_comms.get_worker_working_on_job(worker_id)
-                    self._worker_comms.signal_exception_thrown(job_id)
+                    job_type = self._cache[job_id].type
                     err = RuntimeError(
                         f"Worker-{worker_id} died unexpectedly. This usually means the OS/kernel killed the process "
                         "due to running out of memory"
                     )
-
-                    # When a worker dies unexpectedly, the pool shuts down and we set all tasks that haven't completed
-                    # yet to failed
-                    job_ids = set(self._cache.keys()) - {MAIN_PROCESS}
-                    for job_id in job_ids:
-                        self._cache[job_id]._set(success=False, result=err)
-                    return
+                    self._cache[job_id]._set(success=False, result=err)
+                    
+                    if job_type == JobType.APPLY:
+                        # When a worker of an apply task dies unexpectedly we restart the worker and continue
+                        self._worker_comms.reinit_comms_for_worker(worker_id)
+                        self._start_worker(worker_id)
+                    else:
+                        # When a worker of a map task dies unexpectedly, the pool shuts down and we set all tasks that 
+                        # haven't completed yet to failed
+                        self._worker_comms.signal_exception_thrown(job_id)
+                        job_ids = set(self._cache.keys()) - {MAIN_PROCESS}
+                        for job_id in job_ids:
+                            self._cache[job_id]._set(success=False, result=err)
+                        return
 
             # Check this every once in a while
             time.sleep(0.1)

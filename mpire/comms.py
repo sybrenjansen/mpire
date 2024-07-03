@@ -121,7 +121,7 @@ class WorkerComms:
         self._worker_restart_array: Optional[mp.Array] = None
         self._worker_restart_condition = self.ctx.Condition(self.ctx.Lock())
 
-        # List of Event objects to indicate whether workers are alive
+        # Array to indicate whether workers are alive, which is used to check whether a worker was terminated by the OS
         self._workers_dead: Optional[mp.Array] = None
 
         # Array where the child processes indicate when they started a task, worker_init, and worker_exit used for
@@ -198,6 +198,15 @@ class WorkerComms:
 
         self.reset_progress()
         self._initialized = True
+        
+    def reinit_comms_for_worker(self, worker_id: int) -> None:
+        """
+        Reinitialize the comms for a worker. This is used when a worker is restarted in case of an unexpected death.
+        
+        For some reason, recreating the worker running task value makes sure the worker doesn't get stuck when it's
+        restarted in case of an unexpected death. For normal restarts, this is not necessary.
+        """
+        self._worker_running_task[worker_id] = self.ctx.Value(ctypes.c_bool, False, lock=self.ctx.RLock())
 
     def reset_progress(self) -> None:
         """

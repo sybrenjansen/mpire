@@ -1381,9 +1381,7 @@ class ExceptionTest(unittest.TestCase):
         Tests if MPIRE correctly shuts down after process becomes defunct using exit()
         """
         print()
-        for n_jobs, progress_bar, worker_lifespan in [(1, False, None),
-                                                      (3, True, 1),
-                                                      (3, False, 3)]:
+        for n_jobs, progress_bar, worker_lifespan in [(1, False, None), (3, True, 1), (3, False, 3)]:
             for start_method in TEST_START_METHODS:
                 # Progress bar on Windows + threading is not supported right now
                 if RUNNING_WINDOWS and start_method == 'threading' and progress_bar:
@@ -1394,18 +1392,16 @@ class ExceptionTest(unittest.TestCase):
                         WorkerPool(n_jobs=n_jobs, start_method=start_method) as pool:
                     pool.map(self._exit, range(100), progress_bar=progress_bar, worker_lifespan=worker_lifespan)
 
-    def test_defunct_processes_kill(self):
+    def test_defunct_processes_kill_map(self):
         """
-        Tests if MPIRE correctly shuts down after one process becomes defunct using os.kill().
+        Tests if MPIRE correctly shuts down after one process becomes defunct using os.kill() in a map function.
 
         We kill worker 0 and to be sure it's alive we set an event object and then go in an infinite loop. The kill
         thread waits until the event is set and then kills the worker. The other workers are also ensured to have done
         something so we can test what happens during restarts
         """
         print()
-        for n_jobs, progress_bar, worker_lifespan in [(1, False, None),
-                                                      (3, True, 1),
-                                                      (3, False, 3)]:
+        for n_jobs, progress_bar, worker_lifespan in [(1, False, None), (3, True, 1), (3, False, 3)]:
             for start_method in TEST_START_METHODS:
                 # Can't kill threads
                 if start_method == 'threading':
@@ -1421,6 +1417,36 @@ class ExceptionTest(unittest.TestCase):
                     pool.set_shared_objects(events)
                     pool.map(self._worker_0_sleeps_others_square, range(100), progress_bar=progress_bar,
                              worker_lifespan=worker_lifespan, chunk_size=1)
+                    
+    def test_defunct_processes_kill_apply(self):
+        """
+        Tests if MPIRE correctly continues after one process becomes defunct using os.kill() in an apply function.
+        
+        We kill worker 0 and to be sure it's alive we set an event object and then go in an infinite loop. The kill
+        thread waits until the event is set and then kills the worker. The other workers are also ensured to have done
+        something so we can test what happens during restarts
+        """
+        print()
+        for n_jobs in [1, 3]:
+            for start_method in TEST_START_METHODS:
+                # Can't kill threads
+                if start_method == 'threading':
+                    continue
+
+                print(f"========== {start_method}, {n_jobs} ==========")
+                with self.subTest(n_jobs=n_jobs, start_method=start_method), \
+                        WorkerPool(n_jobs=3, pass_worker_id=True) as pool:
+                    events = [pool.ctx.Event() for _ in range(3)]
+                    kill_thread = Thread(target=self._kill_process, args=(events[0], pool))
+                    kill_thread.start()
+                    pool.set_shared_objects(events)
+                    futures = [
+                        pool.apply_async(self._worker_0_sleeps_others_square, args=(x,)) 
+                        for x in range(100)
+                    ]
+                    [futures.wait() for futures in futures]
+                    assert [future.successful() for future in futures] == [False] + [True] * 99
+            
 
     def test_dill_deadlock(self):
         """
@@ -1452,7 +1478,7 @@ class ExceptionTest(unittest.TestCase):
         """
         Worker 0 waits until the other workers have at least spun up and then sets her event and sleeps
         """
-        if worker_id == 0:
+        if worker_id == 0 and not events[0].is_set():
             [event.wait() for event in events[1:]]
             events[0].set()
             while True:
