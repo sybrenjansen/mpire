@@ -10,9 +10,11 @@ Unreleased
 * In the case of an unexpected worker death (e.g., OOM errors) and the worker was working on an ``apply`` task, the 
   worker will now be restarted and the other workers will continue their work. The task that caused the death will be 
   set to failed (`#110`_)
+* Add option on dashboard to change the refresh interval (`#136`_)
 
 .. _#110: https://github.com/sybrenjansen/mpire/issues/110
 .. _#130: https://github.com/sybrenjansen/mpire/issues/130
+.. _#136: https://github.com/sybrenjansen/mpire/pull/136
 
 2.10.2
 ------
