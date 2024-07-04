@@ -62,12 +62,21 @@ def progress_bar_update() -> str:
 
     :return: JSON string containing progress bar updates
     """
+    # If the `since` get parameter is provided, we'll only return progress bars that (may) have updated since.
+    if since := request.args.get('since', type=int, default=None):
+        since = datetime.fromtimestamp(since)
+
     # As we get updates only when the progress bar is updated we need to fix the 'duration' and 'time remaining' parts
     # (time never stops)
     now = datetime.now()
     result = []
     for pb_id in sorted(_DASHBOARD_TQDM_DICT.keys()):
-        progress = _DASHBOARD_TQDM_DICT.get(pb_id)
+        progress = _DASHBOARD_TQDM_DICT.get(pb_id).copy()
+
+        # Skip progressbars that were already finished
+        if since and progress['finished_raw'] is not None and progress['finished_raw'] < since:
+            continue
+
         if progress['total'] is None:
             progress['total'] = '?'
         if progress['success'] and progress['n'] != progress['total']:
@@ -77,7 +86,7 @@ def progress_bar_update() -> str:
                                      else '-')
         result.append(progress)
 
-    return jsonify(result=result)
+    return jsonify(result=result, time=int(now.timestamp()))
 
 
 @app.route('/_progress_bar_new')

@@ -13,9 +13,9 @@ $(function() {
 
 var progress_bar_animation_duration = 450;
 var refresh_interval = 500;
+var last_refresh = 1;
 var completed_pb_ids = {};
-refresh();
-setInterval(refresh, refresh_interval);
+var interval_id = setInterval(refresh, refresh_interval);
 
 
 // Update progress bar given an ID and a progress (between 0-1)
@@ -122,9 +122,22 @@ function AddReadMore(tag_id, char_limit, text)
 // Refresh contents
 function refresh()
 {
-    $.getJSON($SCRIPT_ROOT + '/_progress_bar_update', {}, function(data)
+    var new_refresh_interval = Math.max(100, parseInt($('#refresh_interval').val()));
+    if (! isNaN(new_refresh_interval) && new_refresh_interval != refresh_interval)
+    {
+        refresh_interval = new_refresh_interval;
+        clearInterval(interval_id);
+        interval_id = setInterval(refresh, refresh_interval);
+        $('#refresh_interval').val(refresh_interval);
+    }
+
+    $.getJSON($SCRIPT_ROOT + '/_progress_bar_update', {"since": last_refresh}, function(data)
     {
         var i, worker_id, worker_prefix, task_idx, task_prefix;
+        if (data.time !== undefined)
+        {
+            last_refresh = data.time;
+        }
         for (i = 0; i < data.result.length; i++)
         {
             var pb = data.result[i];
