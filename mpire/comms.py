@@ -29,12 +29,14 @@ NEW_TASK_PARAMS_PILL = '\3'
 MAIN_PROCESS = -1
 
 # The job done wait type is used to signal the main process that the worker has received the job done signal for a
-# specific job.
+# specific job. The max duration tasks type is used to signal the main process that the worker has sent the max
+# duration tasks update.
 class TaskType(Enum):
     WORKER_INIT = auto()
     TARGET_FUNC = auto()
     WORKER_EXIT = auto()
     JOB_DONE = auto()
+    MAX_DURATION_TASKS = auto()
     
 
 @dataclass
@@ -54,8 +56,8 @@ class WorkerComms:
     """
 
     def __init__(self, ctx: mp.context.BaseContext, worker_id: int, results_queue: mp.JoinableQueue, 
-                 max_duration_tasks_queue: mp.JoinableQueue, request_worker_restart_condition: mp.Condition, 
-                 terminate_pool_event: mp.Event, task_comms_lock: mp.Lock) -> None:
+                 request_worker_restart_condition: mp.Condition, terminate_pool_event: mp.Event, 
+                 task_comms_lock: mp.Lock) -> None:
         """
         :param ctx: Multiprocessing context
         :param worker_id: Worker ID
@@ -86,9 +88,6 @@ class WorkerComms:
         self.results_queue = results_queue
         self.results_added = 0
         self.results_received = ctx.Value("L", 0, lock=ctx.RLock())
-        
-        # Queue to pass on max duration tasks, for worker insights
-        self.max_duration_tasks_queue = max_duration_tasks_queue
 
         # Value to indicate whether the worker needs to be restarted, and a condition primitive to signal the main 
         # process that the worker needs to be restarted
@@ -147,7 +146,7 @@ class WorkerComms:
         if force_update or (
             (now - task_comms.max_duration_tasks_last_updated) > self.max_duration_tasks_update_interval
         ):
-            self.max_duration_tasks_queue.put((job_id, task_comms.max_duration_tasks))
+            self.add_results(job_id, TaskType.MAX_DURATION_TASKS, True, None, task_comms.max_duration_tasks)
             task_comms.max_duration_tasks_last_updated = now
 
     ################
@@ -326,7 +325,7 @@ class WorkerComms:
         Wait for the main process to receive all the results
         """
         while self.results_received.value != self.results_added:
-            time.sleep(0.01)
+            time.sleep(0.001)
 
     ################
     # Exceptions
@@ -553,9 +552,6 @@ class Comms:
 
         # Queue where the child processes can pass on results
         self._results_queue: Optional[mp.JoinableQueue] = None
-        
-        # Queue where the workers can pass on max duration tasks, for worker insights
-        self._max_duration_tasks_queue: Optional[mp.JoinableQueue] = None
 
         # Condition primitive to signal the main process that a worker needs to be restarted
         self._worker_restart_condition = self.ctx.Condition(self.ctx.Lock())
@@ -602,7 +598,6 @@ class Comms:
 
         # Results related
         self._results_queue = self.ctx.JoinableQueue()
-        self._max_duration_tasks_queue = self.ctx.JoinableQueue()
 
         # Exception related
         self._terminate_pool.clear()
@@ -611,7 +606,6 @@ class Comms:
         self._worker_comms = [
             WorkerComms(
                 ctx=self.ctx, worker_id=worker_id, results_queue=self._results_queue, 
-                max_duration_tasks_queue=self._max_duration_tasks_queue, 
                 request_worker_restart_condition=self._worker_restart_condition, 
                 terminate_pool_event=self._terminate_pool, task_comms_lock=self._task_comms_locks[worker_id]
             ) for worker_id in range(self.n_jobs)
@@ -704,14 +698,6 @@ class Comms:
         :param job_id: Job ID
         """
         self._task_comms[job_id].wait_for_progress_bar_complete()
-    
-    def get_max_duration_tasks_update(self) -> Tuple[int, List[Tuple[float, Optional[str]]]]:
-        """
-        Obtain the next max duration tasks update
-
-        :return: Job ID and max duration tasks for the worker
-        """
-        return self._max_duration_tasks_queue.get(block=True)
     
     def update_max_duration_tasks(self, job_id: int, max_duration_tasks: List[Tuple[float, Optional[str]]]) -> None:
         """
@@ -902,12 +888,6 @@ class Comms:
         'Tell' the results listener its job is done.
         """
         self._results_queue.put(Result(data=POISON_PILL))
-        
-    def insert_poison_pill_max_duration_tasks_listener(self) -> None:
-        """
-        'Tell' the worker insights listener its job is done.
-        """
-        self._max_duration_tasks_queue.put((POISON_PILL, POISON_PILL))
 
     def signal_worker_restart_condition(self) -> None:
         """
@@ -964,8 +944,6 @@ class Comms:
         if not keep_alive:
             self._results_queue.close()
             self._results_queue.join_thread()
-            
-        # TODO: also the max duration tasks queue? After merging them, we can just join one queue
 
     def join_task_queues(self) -> None:
         """
@@ -1001,7 +979,6 @@ class Comms:
         for comms in self._worker_comms:
             self.drain_and_join_queue(comms.task_queue)
         self.drain_and_join_queue(self._results_queue)
-        self.drain_and_join_queue(self._max_duration_tasks_queue)
 
     def drain_and_join_queue(self, q: mp.JoinableQueue, join: bool = True) -> None:
         """

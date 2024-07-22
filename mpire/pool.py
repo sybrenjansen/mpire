@@ -5,6 +5,7 @@ import queue
 import signal
 import threading
 import time
+from collections import defaultdict
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Set, Sized, Union
 
 try:
@@ -129,11 +130,10 @@ class WorkerPool:
         AsyncResultWithExceptionGetter(self._cache, MAIN_PROCESS)  # TODO: what is this used for?? Can we get rid of this? Maybe
         self._exit_results: Dict[int, UnorderedAsyncExitResultIterator] = {}
         self._skipped_job_ids: Set[int] = set()
-        self._job_done_received: Dict[int, int] = {}
+        self._job_done_received_event: Dict[int, threading.Event] = {}
 
         # Container of the child processes and corresponding communication objects
         self._workers = []
-        # self._worker_comms = Comms(self.ctx, self.pool_params.n_jobs, self.pool_params.order_tasks)
         self._worker_comms = Comms(self.ctx, self.pool_params.n_jobs, self.pool_params.order_tasks)
 
         # Threads needed for gathering results, restarts, and checking for unexpective deaths and timeouts
@@ -141,7 +141,6 @@ class WorkerPool:
         self._restart_handler_thread = None
         self._timeout_handler_thread = None
         self._unexpected_death_handler_thread = None
-        self._max_duration_tasks_handler_thread = None
         self._handler_threads_stop_event = threading.Event()
 
         # Progress bar handler, in case it is used
@@ -228,12 +227,10 @@ class WorkerPool:
         self._restart_handler_thread = threading.Thread(target=self._restart_handler, daemon=True)
         self._timeout_handler_thread = threading.Thread(target=self._timeout_handler, daemon=True)
         self._unexpected_death_handler_thread = threading.Thread(target=self._unexpected_death_handler, daemon=True)
-        self._max_duration_tasks_handler_thread = threading.Thread(target=self._max_duration_tasks_handler, daemon=True)
         self._results_handler_thread.start()
         self._restart_handler_thread.start()
         self._timeout_handler_thread.start()
         self._unexpected_death_handler_thread.start()
-        self._max_duration_tasks_handler_thread.start()
 
     def _start_worker(self, worker_id: int) -> None:
         """
@@ -273,6 +270,8 @@ class WorkerPool:
         Listen for results from the workers and add it to the results object in the cache. If exit results are given,
         store them in the exit results object instead.
         """
+        job_done_received = defaultdict(int)
+        
         while True:
             results_batch = self._worker_comms.get_results(block=True)
             for result in results_batch:
@@ -286,10 +285,15 @@ class WorkerPool:
 
                 try:
                     if result.success:
+                        # Based on the task type we store the results in the cache or in a separate results object
                         if result.task_type == TaskType.WORKER_EXIT:
                             self._exit_results[result.job_id]._set(success=True, result=result.data)
                         elif result.task_type == TaskType.JOB_DONE:
-                            self._job_done_received[result.job_id] += 1
+                            job_done_received[result.job_id] += 1
+                            if job_done_received[result.job_id] == self.pool_params.n_jobs:
+                                self._job_done_received_event[result.job_id].set()
+                        elif result.task_type == TaskType.MAX_DURATION_TASKS:
+                            self._worker_comms.update_max_duration_tasks(result.job_id, result.data)
                         else:
                             self._cache[result.job_id]._set(
                                 success=True, 
@@ -344,30 +348,8 @@ class WorkerPool:
                 # Start new worker
                 if self.enable_prints:
                     print(f"Pool: Worker-{worker_id} asked for restart, starting new worker")
-                # TODO: There;s a big chance a lock is being held by the main process while starting a new worker. This
-                # can cause the worker to hang. We need to releases all locks before starting a new worker. But how??
-                # TODO: we can split the comms up in two parts: one for the main process and one for the workers. There
-                #  are a few shared primitives:
-                #  - _worker_restart_condition (but this one is handled here, so is not a problem)
-                #  - _results_queue
-                #  - _max_duration_tasks_queue
-                #  - _terminate_pool event
-                # TODO: Queues have the _after_fork thingy, so that shouldn't be a problem, right? So is it only the event?
-                #  that event object is checked a lot of times. So perhaps create one per worker and don't check it while
-                #  starting a new worker?? But how do we do that then?
-                
                 self._worker_comms.reinit_worker_comms(worker_id)
                 self._start_worker(worker_id)
-                
-                # Wait for workers to be alive, before processing new restarts # TODO: determine if this needs to be done per worker or here
-                # if self.enable_prints:
-                #     print(f"Pool: waiting for worker {worker_id} to be alive")
-                # while not self._worker_comms.is_worker_alive(worker_id):
-                #     time.sleep(0.01)
-                # if self.enable_prints:
-                #     print(f"Pool: Worker-{worker_id} is alive")
-    
-                
 
     def _unexpected_death_handler(self) -> None:
         """
@@ -462,19 +444,6 @@ class WorkerPool:
 
             # Check this every once in a while
             time.sleep(0.1)
-            
-    def _max_duration_tasks_handler(self) -> None:
-        """
-        Collect the maximum duration tasks from the workers and update the task comms with the new insights
-        """
-        while True:            
-            job_id, max_duration_tasks = self._worker_comms.get_max_duration_tasks_update()
-            
-            # Poison pill, stop the listener
-            if job_id == POISON_PILL:
-                return
-            
-            self._worker_comms.update_max_duration_tasks(job_id, max_duration_tasks)
 
     def get_exit_results(self) -> Dict[int, List]:
         """
@@ -753,8 +722,8 @@ class WorkerPool:
         imap_iterator = None
         job_id = None
         try:
-            # Start tqdm manager if a progress bar is desired. Will only start one when not already started. This has to
-            # be done before starting the workers in case nested pools are used
+            # Start tqdm manager if a progress bar is desired. Will only start one when not already started. This has 
+            # to be done before starting the workers in case nested pools are used
             if progress_bar:
                 tqdm_manager_owner = TqdmManager.start_manager(self.pool_params.use_dill)
 
@@ -775,7 +744,7 @@ class WorkerPool:
             self._worker_comms.create_task_comms(job_id)
             if worker_exit:
                 self._exit_results[job_id] = UnorderedAsyncExitResultIterator()
-            self._job_done_received[job_id] = 0
+            self._job_done_received_event[job_id] = threading.Event()
 
             # Pass on map parameters just once
             map_params = WorkerTaskParams(JobType.MAP, func, worker_init, worker_exit, worker_lifespan, progress_bar, 
@@ -891,14 +860,13 @@ class WorkerPool:
                     # results are in and shared memory connections are closed
                     if self.enable_prints:
                         print("Pool: Waiting for all workers to receive job done")
-                    while self._job_done_received[job_id] < self.pool_params.n_jobs:
-                        time.sleep(0.1)
+                    self._job_done_received_event[job_id].wait()
                     if self.enable_prints:
                         print("Pool: All workers have received job done")
                         
                     # Add poison pill if keep_alive is False
                     if not self.pool_params.keep_alive:
-                        self.stop_and_join()  # TODO: without it it should also work though
+                        self.stop_and_join()
 
                     # Wait for the progress bar to finish, before we clean it up
                     if progress_bar:
@@ -925,7 +893,7 @@ class WorkerPool:
                 self._worker_comms.clean_up_task_comms_shm(job_id)                
 
             # We keep task_comms and exit_results in case we want to retrieve insights or exit results
-            for container in (self._task_params, self._job_done_received, self._progress_bar_handler):
+            for container in (self._task_params, self._job_done_received_event, self._progress_bar_handler):
                 if job_id in container:
                     del container[job_id]
 
@@ -1295,12 +1263,6 @@ class WorkerPool:
         if self._unexpected_death_handler_thread is not None and self._unexpected_death_handler_thread.is_alive():
             self._unexpected_death_handler_thread.join()
             self._unexpected_death_handler_thread = None
-            
-        # Join worker stats handler thread
-        if self._max_duration_tasks_handler_thread is not None and self._max_duration_tasks_handler_thread.is_alive():
-            self._worker_comms.insert_poison_pill_max_duration_tasks_listener()
-            self._max_duration_tasks_handler_thread.join()
-            self._max_duration_tasks_handler_thread = None
 
     def print_insights(self) -> None:
         """
