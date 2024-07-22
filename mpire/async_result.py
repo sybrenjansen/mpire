@@ -2,20 +2,9 @@ import collections
 import itertools
 import queue
 import threading
-from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from mpire.comms import EXIT_FUNC, MAIN_PROCESS
-
 job_counter = itertools.count()
-
-
-class JobType(Enum):
-    MAIN = auto()
-    INIT = auto()
-    MAP = auto()
-    EXIT = auto()
-    APPLY = auto()
 
 
 class AsyncResult:
@@ -47,7 +36,6 @@ class AsyncResult:
         self._delete_from_cache = delete_from_cache
         self._timeout = timeout
 
-        self.type = JobType.APPLY
         self.job_id = next(job_counter) if job_id is None else job_id
         self._ready_event = threading.Event()
         self._success = None
@@ -135,7 +123,6 @@ class UnorderedAsyncResultIterator:
         self._n_tasks = None
         self._timeout = timeout
 
-        self.type = JobType.MAP
         self.job_id = next(job_counter) if job_id is None else job_id
         self._items = collections.deque()
         self._condition = threading.Condition(lock=threading.Lock())
@@ -149,6 +136,8 @@ class UnorderedAsyncResultIterator:
 
         if n_tasks is not None:
             self.set_length(n_tasks)
+            
+        self.enable_prints = False
 
     def __iter__(self) -> "UnorderedAsyncResultIterator":
         return self
@@ -164,9 +153,14 @@ class UnorderedAsyncResultIterator:
         """
         if self._items:
             self._n_returned += 1
-            return self._items.popleft()
+            r = self._items.popleft()
+            if self.enable_prints:
+                print("Imap iterator: next returning (1):", r, self._n_tasks, self._n_returned)
+            return r
 
         if self._n_tasks is not None and self._n_returned == self._n_tasks:
+            if self.enable_prints:
+                print("Imap iterator: raising StopIteration:", self._n_tasks, self._n_returned)
             raise StopIteration
 
         if not block:
@@ -182,9 +176,18 @@ class UnorderedAsyncResultIterator:
                     raise StopIteration
 
             self._n_returned += 1
-            return self._items.popleft()
+            r = self._items.popleft()
+            if self.enable_prints:
+                print("Imap iterator: next returning (2):", r, self._n_tasks, self._n_returned)
+            return r
 
     __next__ = next
+    
+    def exception_thrown(self) -> bool:
+        """
+        :return: True if an exception was thrown during the task execution
+        """
+        return self._got_exception.is_set()
 
     def wait(self) -> None:
         """
@@ -249,7 +252,6 @@ class AsyncResultWithExceptionGetter(AsyncResult):
         super().__init__(
             cache, callback=None, error_callback=None, job_id=job_id, delete_from_cache=False, timeout=None
         )
-        self.type = JobType.MAIN if job_id == MAIN_PROCESS else JobType.INIT
 
     def get_exception(self) -> Exception:
         """
@@ -269,26 +271,14 @@ class AsyncResultWithExceptionGetter(AsyncResult):
 
 class UnorderedAsyncExitResultIterator(UnorderedAsyncResultIterator):
 
-    def __init__(self, cache: Dict) -> None:
-        super().__init__(cache, n_tasks=None, job_id=EXIT_FUNC, timeout=None)
-        self.type = JobType.EXIT
+    def __init__(self) -> None:
+        super().__init__(cache={}, n_tasks=None, job_id=0, timeout=None)
 
     def get_results(self) -> List[Any]:
         """
         :return: List of exit results
         """
         return list(self._items)
-
-    def reset(self) -> None:
-        """
-        Reset the result object
-        """
-        self._n_tasks = None
-        self._items.clear()
-        self._n_received = 0
-        self._n_returned = 0
-        self._exception = None
-        self._got_exception.clear()
 
 
 AsyncResultType = Union[

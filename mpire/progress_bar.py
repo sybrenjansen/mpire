@@ -1,16 +1,15 @@
 import threading
 import traceback
+import warnings
 from datetime import datetime, timedelta
 from threading import Event, Thread
 from typing import Any, Dict, Optional, Type
-import warnings
 
 from tqdm import TqdmExperimentalWarning, tqdm as tqdm_type
 
-from mpire.comms import MAIN_PROCESS, POISON_PILL, WorkerComms
+from mpire.comms import Comms
 from mpire.exception import remove_highlighting
-from mpire.insights import WorkerInsights
-from mpire.params import WorkerMapParams, WorkerPoolParams
+from mpire.params import WorkerTaskParams, WorkerPoolParams
 from mpire.signal import DisableKeyboardInterruptSignal
 from mpire.tqdm_utils import get_tqdm, TqdmManager
 from mpire.utils import format_seconds
@@ -34,10 +33,11 @@ DATETIME_FORMAT = "%Y-%m-%d, %H:%M:%S"
 
 class ProgressBarHandler:
 
-    def __init__(self, pool_params: WorkerPoolParams, map_params: WorkerMapParams, show_progress_bar: bool,
-                 progress_bar_options: Dict[str, Any], progress_bar_style: Optional[str], worker_comms: WorkerComms,
-                 worker_insights: WorkerInsights) -> None:
+    def __init__(self, job_id:int, pool_params: WorkerPoolParams, map_params: WorkerTaskParams, 
+                 show_progress_bar: bool, progress_bar_options: Dict[str, Any], progress_bar_style: Optional[str], 
+                 worker_comms: Comms) -> None:
         """
+        :param job_id: Job ID of the task
         :param pool_params: WorkerPool parameters
         :param map_params: Map parameters
         :param show_progress_bar: When ``True`` will display a progress bar
@@ -45,13 +45,13 @@ class ProgressBarHandler:
          ``tqdm.tqdm()`` for details.
         :param progress_bar_style: The progress bar style to use
         :param worker_comms: Worker communication objects (queues, locks, events, ...)
-        :param worker_insights: WorkerInsights object which stores the worker insights
         """
+        self.job_id = job_id
         self.show_progress_bar = show_progress_bar
         self.progress_bar_options = progress_bar_options
         self.progress_bar_style = progress_bar_style
         self.worker_comms = worker_comms
-        self.worker_insights = worker_insights
+        self.insights_enabled = pool_params.insights_enabled
         if show_progress_bar and DASHBOARD_STARTED_EVENT is not None and DASHBOARD_STARTED_EVENT.is_set():
             self.function_details = get_function_details(map_params.func)
             self.function_details['n_jobs'] = pool_params.n_jobs
@@ -60,14 +60,18 @@ class ProgressBarHandler:
 
         self.thread = None
         self.thread_started = Event()
+        self.shutdown = Event()
         self.progress_bar_id = None
         self.total = None
         self.total_updated = Event()
         self.exception_traceback_str = None
         self.exception_traceback_str_set_condition = threading.Condition(lock=threading.Lock())
+        self.exception_triggered_by_keyboard_interrupt = False
         self.dashboard_dict = None
         self.dashboard_details_dict = None
         self.start_t = None
+        
+        self.enable_prints = False
 
     def __enter__(self) -> 'ProgressBarHandler':
         """
@@ -90,17 +94,15 @@ class ProgressBarHandler:
         """
         Enables the use of the ``with`` statement. Terminates the progress handler thread if there is one
         """
+        # Signal shutdown and close the handling thread
         if self.show_progress_bar and self.thread.is_alive():
-
-            # If this exit is called with an exception, then we assume an external kill signal was received (this is,
-            # for example, necessary in nested pools when an error occurs)
-            if exc_type is not None:
-                self.worker_comms.signal_kill_signal_received()
-
-            # Signal shutdown and close the handling thread
-            if not self.worker_comms.exception_thrown():
-                self.worker_comms.signal_progress_bar_shutdown()
+            self.shutdown.set()
+            if self.enable_prints:
+                print("Pbar: waiting for thread to join")
             self.thread.join()
+            
+        if self.enable_prints:
+            print("Pbar: done exiting")
 
     def _progress_bar_handler(self) -> None:
         """
@@ -132,32 +134,39 @@ class ProgressBarHandler:
         self._register_progress_bar(progress_bar)
 
         while True:
-            # Wait for a job to finish
-            tasks_completed = self.worker_comms.get_tasks_completed_progress_bar()
+            # Wait until we are at the next update interval
+            tasks_completed = self.worker_comms.get_n_tasks_completed(self.job_id)
+            
+            if self.enable_prints:
+                print(f"Pbar: tasks_completed={tasks_completed}, progress_bar.n={progress_bar.n}", 
+                      self.worker_comms.should_terminate(), self.shutdown.is_set())
 
-            # If we received a poison pill, we should quit right away. We do force a final refresh of the progress bar
-            # to show the latest status
-            if tasks_completed is POISON_PILL:
-                # Check if we got a poison pill because there was an error. If so, we obtain the exception information
-                # and send it to the dashboard, if available.)
-                if self.worker_comms.exception_thrown() or self.worker_comms.kill_signal_received():
-                    error_str = (
-                        "Keyboard interrupt" 
-                        if self.worker_comms.get_exception_thrown_job_id() == MAIN_PROCESS else 
-                        "Exception occurred"
-                    )
-                    progress_bar.set_description(f"{error_str}, terminating workers")
-                    if self.worker_comms.exception_thrown():
-                        # Wait for exception traceback str to be set
-                        with self.exception_traceback_str_set_condition:
-                            if self.exception_traceback_str is None:
-                                self.exception_traceback_str_set_condition.wait()
-                        self._send_dashboard_update(progress_bar, failed=True,
-                                                    traceback_str=self.exception_traceback_str)
-                    elif self.worker_comms.kill_signal_received():
-                        self._send_dashboard_update(progress_bar, failed=True, traceback_str='Kill signal received')
+            # If we have any kind of kill signal, we should quit right away. We do force a final refresh of the 
+            # progress bar to show the latest status
+            if self.worker_comms.should_terminate() or self.shutdown.is_set():
+                
+                if self.enable_prints:
+                    print("Pbar: should shut down now")
+                
+                # Show appropriate message on the progress bar
+                error_str = ("Keyboard interrupt" if self.exception_triggered_by_keyboard_interrupt else 
+                             "Exception occurred")
+                progress_bar.set_description(f"{error_str}, terminating workers")
+
+                # Wait for exception traceback str to be set so we can send it to the dashboard
+                if self.enable_prints:
+                    print("Pbar: waiting for traceback_str")
+                with self.exception_traceback_str_set_condition:
+                    if self.exception_traceback_str is None:
+                        self.exception_traceback_str_set_condition.wait()
+                if self.enable_prints:
+                    print("Pbar: got traceback_str")
+                self._send_dashboard_update(progress_bar, failed=True,
+                                            traceback_str=self.exception_traceback_str)
 
                 # Final update of the progress bar
+                if self.enable_prints:
+                    print("Pbar: final refresh")
                 progress_bar.final_refresh(tqdm_position_register.get_highest_progress_bar_position())
                 break
 
@@ -175,14 +184,18 @@ class ProgressBarHandler:
             # Update progress bar
             progress_bar.update(tasks_completed - progress_bar.n)
             if progress_bar.n == progress_bar.total:
-                self.worker_comms.signal_progress_bar_complete()
-                self.worker_comms.wait_until_progress_bar_is_complete()
+                self.worker_comms.signal_progress_bar_complete(self.job_id)
+                self.worker_comms.wait_for_progress_bar_complete(self.job_id)
                 self._send_dashboard_update(progress_bar)
+                break
 
             # Send update to dashboard in case a dashboard is started, but only when tqdm updated its view as well. This
             # will make the dashboard a lot more responsive
             if progress_bar.n == progress_bar.last_print_n:
                 self._send_dashboard_update(progress_bar)
+        
+        if self.enable_prints:
+            print("Pbar: done with loop")
 
     def _register_progress_bar(self, progress_bar: tqdm_type) -> None:
         """
@@ -246,7 +259,7 @@ class ProgressBarHandler:
                 "finished": ((now + timedelta(seconds=remaining_time)).strftime(DATETIME_FORMAT)
                              if remaining_time is not None else ''),
                 "traceback": traceback_str.strip() if traceback_str is not None else None,
-                "insights": self.worker_insights.get_insights()}
+                "insights": self.worker_comms.get_task_insights(self.job_id) if self.insights_enabled else {}}
 
     def set_new_total(self, total: int) -> None:
         """
@@ -257,12 +270,16 @@ class ProgressBarHandler:
         self.total = total
         self.total_updated.set()
 
-    def set_exception(self, traceback_err: Exception) -> None:
+    def set_exception(self, traceback_err: Exception, keyboard_interrupt: bool) -> None:
         """
         Set the exception traceback string and notify the progress bar handler that it's ready
 
         :param traceback_err: Traceback error
+        :param keyboard_interrupt: Whether or not the exception was a keyboard interrupt
         """
+        self.exception_triggered_by_keyboard_interrupt = keyboard_interrupt
+        self.shutdown.set()
+        
         if traceback_err.__cause__ is not None:
             traceback_str = "".join(traceback.format_tb(traceback_err.__traceback__))
         else:

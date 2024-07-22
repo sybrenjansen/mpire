@@ -1,13 +1,10 @@
-import heapq
 import itertools
 import math
 import os
-import time
 from datetime import timedelta
 from multiprocessing import cpu_count
 from multiprocessing.managers import SyncManager
-from multiprocessing.sharedctypes import SynchronizedArray
-from typing import Callable, Collection, Generator, Iterable, List, Optional, Tuple, Union
+from typing import Collection, Generator, Iterable, List, Optional, Tuple, Union
 
 try:
     import numpy as np
@@ -214,40 +211,6 @@ def format_seconds(seconds: Optional[Union[int, float]], with_milliseconds: bool
         duration = duration[0]
 
     return duration
-
-
-class TimeIt:
-
-    """ Simple class that provides a context manager for keeping track of task duration and adds the total number
-     of seconds in a designated output array """
-
-    def __init__(self, cum_time_array: Optional[SynchronizedArray], array_idx: int, 
-                 max_time_array: Optional[SynchronizedArray] = None, 
-                 format_args_func: Optional[Callable] = None) -> None:
-        """
-        :param cum_time_array: Optional array to store cumulative time in
-        :param array_idx: Index of cum_time_array to store the time value to
-        :param max_time_array: Optional array to store maximum time duration in. Note that the array_idx doesn't apply
-            to this array. The entire array is used for heapq
-        :param format_args_func: Optional function which should return the formatted args corresponding to the function
-            called within this context manager
-        """
-        self.cum_time_array = cum_time_array
-        self.array_idx = array_idx
-        self.max_time_array = max_time_array
-        self.format_args_func = format_args_func
-        self.start_time = None
-
-    def __enter__(self) -> None:
-        self.start_time = time.time()
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        duration = time.time() - self.start_time
-        if self.cum_time_array is not None:
-            self.cum_time_array[self.array_idx] += duration
-        if self.max_time_array is not None and duration > self.max_time_array[0][0]:
-            heapq.heappushpop(self.max_time_array,
-                              (duration, self.format_args_func() if self.format_args_func is not None else None))
 
 
 def create_sync_manager(use_dill: bool) -> SyncManager:

@@ -1,4 +1,5 @@
 import collections.abc
+import queue
 try:
     import dill as pickle
 except ImportError:
@@ -8,9 +9,10 @@ import signal
 import time
 import traceback
 import _thread
+from dataclasses import dataclass
 from functools import partial
 from threading import current_thread, main_thread, Thread
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
 
 try:
     import multiprocess
@@ -24,15 +26,24 @@ except ImportError:
     np = None
     NUMPY_INSTALLED = False
 
-from mpire.comms import (APPLY_PILL, EXIT_FUNC, INIT_FUNC, NEW_MAP_PARAMS_PILL, NON_LETHAL_POISON_PILL, POISON_PILL,
-                         WorkerComms)
+from mpire.comms import JOB_DONE_PILL, NEW_TASK_PARAMS_PILL, POISON_PILL, SKIP_JOB_PILL, Comms, WorkerComms, TaskType
 from mpire.context import FORK_AVAILABLE, MP_CONTEXTS, RUNNING_WINDOWS
 from mpire.dashboard.connection_utils import DashboardConnectionDetails, set_dashboard_connection
 from mpire.exception import CannotPickleExceptionError, InterruptWorker, StopWorker
-from mpire.insights import WorkerInsights
-from mpire.params import WorkerMapParams, WorkerPoolParams
+from mpire.task_comms import TimeIt, TaskWorkerComms, WorkerStatsType
+from mpire.params import JobType, WorkerTaskParams, WorkerPoolParams
 from mpire.tqdm_utils import TqdmConnectionDetails, TqdmManager
-from mpire.utils import TimeIt
+
+
+@dataclass
+class RunResult:
+    results: Any
+    success: bool
+    send_results: bool
+    
+    
+# TODO: run with worker_lifespan. This is not working yet! This has to do with the pbar I think! The progress has been
+#       reset somehow. Because of the local? we create again?
 
 
 class AbstractWorker:
@@ -40,16 +51,16 @@ class AbstractWorker:
     A multiprocessing helper class which continuously asks the queue for new jobs, until a poison pill is inserted
     """
 
-    def __init__(self, worker_id: int, pool_params: WorkerPoolParams, map_params: WorkerMapParams,
-                 worker_comms: WorkerComms, worker_insights: WorkerInsights,
-                 tqdm_connection_details: TqdmConnectionDetails,
+    def __init__(self, worker_id: int, pool_params: WorkerPoolParams, worker_comms: WorkerComms, 
+                 active_task_params: Dict[int, WorkerTaskParams], skipped_job_ids: Set[int],
+                 tqdm_connection_details: TqdmConnectionDetails, 
                  dashboard_connection_details: DashboardConnectionDetails, start_time: float) -> None:
         """
         :param worker_id: Worker ID
         :param pool_params: WorkerPool parameters
-        :param map_params: WorkerPool map parameters
         :param worker_comms: Worker communication objects (queues, locks, events, ...)
-        :param worker_insights: WorkerInsights object which stores the worker insights
+        :param active_task_params: Active task parameters (used in case a worker gets restarted)
+        :param skipped_job_ids: Job IDs that have been skipped (used in case a worker gets restarted)
         :param tqdm_connection_details: Tqdm manager host, and whether the manager is started/connected
         :param dashboard_connection_details: Dashboard manager host, port_nr and whether a dashboard is
             started/connected
@@ -60,9 +71,9 @@ class AbstractWorker:
         # Parameters
         self.worker_id = worker_id
         self.pool_params = pool_params
-        self.map_params = map_params
         self.worker_comms = worker_comms
-        self.worker_insights = worker_insights
+        self.active_task_params = active_task_params
+        self.skipped_job_ids = skipped_job_ids
         self.tqdm_connection_details = tqdm_connection_details
         self.dashboard_connection_details = dashboard_connection_details
         self.start_time = start_time
@@ -71,27 +82,30 @@ class AbstractWorker:
         self.worker_state = {}
 
         # Local variables needed for each worker
+        self.n_tasks_executed: Dict[int, int] = {}
+        self.task_params: Dict[int, WorkerTaskParams] = {}
+        self.task_function: Dict[int, Callable] = {}
         self.additional_args = None
-        self.progress_bar_last_updated = time.time()
-        self.progress_bar_n_tasks_completed = 0
-        self.max_task_duration_last_updated = self.progress_bar_last_updated
-        self.max_task_duration_list = self.worker_insights.get_max_task_duration_list(self.worker_id)
-        self.is_apply_func = False
+        self.task_worker_comms: Dict[int, TaskWorkerComms] = {}
+        self.poison_pill_received = False
         self.last_job_id = None
-        self.init_func_completed = False
+        self.last_task_type = None
+        
+        self.enable_prints = False
 
     def run(self) -> None:
         """
         Continuously asks the tasks queue for new task arguments. When not receiving a poisonous pill or when the max
         life span is not yet reached it will execute the new task and put the results in the results queue.
         """
+        if self.enable_prints:
+            print(f"Worker-{self.worker_id} started", flush=True)
+        
         # Register handlers for graceful shutdown
         self._set_signal_handlers()
 
-        n_tasks_executed = 0
         try:
-            self.worker_comms.signal_worker_alive(self.worker_id)
-            self.worker_comms.reset_results_received(self.worker_id)
+            self.worker_comms.signal_worker_alive()
 
             # Set tqdm and dashboard connection details. This is needed for nested pools and in the case forkserver or
             # spawn is used as start method
@@ -99,106 +113,131 @@ class AbstractWorker:
             set_dashboard_connection(self.dashboard_connection_details, auto_connect=False)
 
             # Store how long it took to start up
-            self.worker_insights.update_start_up_time(self.worker_id, self.start_time)
+            start_up_time = time.time() - self.start_time
 
             # Gather and set additional args to pass to the function
             self._set_additional_args()
+            
+            # Set active task parameters. We sort the list so the init functions are run in the correct order
+            for job_id, task_params in sorted(self.active_task_params.items()):
+                self._handle_new_task_params(job_id, task_params)
 
-            # Determine what function to call. If we have to keep in mind the order (for map) we use the helper function
-            # with idx support which deals with the provided idx variable.
-            func = self._get_func(self.map_params.func)
-
-            while self.map_params.worker_lifespan is None or n_tasks_executed < self.map_params.worker_lifespan:
+            while all(params.worker_lifespan is None or self.n_tasks_executed[job_id] < params.worker_lifespan 
+                      for job_id, params in self.task_params.items()):
+                
+                # When we received a poison pill and there are no more tasks to execute, we can return
+                if self.poison_pill_received and not self.task_params:
+                    if self.enable_prints:
+                        print(f"Worker-{self.worker_id} received poison pill and has no more tasks to execute, returning")
+                    return
 
                 # Obtain new chunk of jobs
-                with TimeIt(self.worker_insights.worker_waiting_time, self.worker_id):
-                    next_chunked_args = self.worker_comms.get_task(self.worker_id)
-                    apply_func = None
-                    is_apply_func = False
-
-                # Handle poison pill
-                if next_chunked_args == POISON_PILL or next_chunked_args == NON_LETHAL_POISON_PILL:
-                    lethal = next_chunked_args == POISON_PILL
-                    self._handle_poison_pill(lethal, n_tasks_executed)
-                    if lethal:
+                with TimeIt() as wait_timer:
+                    # When we recieved None this means we need to stop because the pool is terminating
+                    if (next_chunked_args := self._get_new_task()) is None:
+                        if self.enable_prints:
+                            print(f"Worker-{self.worker_id} received None, stopping")
                         return
-                    continue
-
-                # Update the map parameters of this function when new parameters are provided
-                elif next_chunked_args == NEW_MAP_PARAMS_PILL:
-                    func = self._handle_new_map_params()
-                    if func is None:
-                        return
-                    continue
-
-                # When an apply pill is received, we simply execute the function and put the result in the results queue
-                elif next_chunked_args == APPLY_PILL:
-                    apply_func, next_chunked_args = self._handle_apply_pill()
-                    if apply_func is None:
-                        return
-                    is_apply_func = True
-
-                # When we recieved None this means we need to stop because of an exception in the main process
-                elif next_chunked_args is None:
-                    return
 
                 # Execute jobs in this chunk
                 try:
                     job_id, next_chunked_args = next_chunked_args
-
-                    # Run initialization function. If it returns True it means an exception occurred and we should exit.
-                    # This is only run if the init function hasn't been run yet.
-                    if self.map_params.worker_init and self._run_init_func():
-                        return
-
-                    # We only set the is_apply_func flag when we are not running the init/exit functions
-                    self.is_apply_func = is_apply_func
+                    
+                    # A job could have been removed in the meantime (e.g., when a skip job pill was received)
+                    if job_id not in self.task_params:
+                        continue
+                    
+                    # Start up time only counts for the first job
+                    if start_up_time > 0.0:
+                        self.task_worker_comms[job_id].add_duration(WorkerStatsType.START_UP_TIME, start_up_time)
+                        start_up_time = 0.0
+                
+                    # Update waiting time
+                    self.task_worker_comms[job_id].add_duration(WorkerStatsType.WAITING_TIME, wait_timer.duration)
+                    
+                    # When we're dealing with a map function the first argument is an index, so we need to unpack it
+                    if self.task_params[job_id].type == JobType.MAP:
+                        batch_idx, next_chunked_args = next_chunked_args
+                    else:
+                        batch_idx = None
+                        
+                    if self.enable_prints:
+                        print(f"Worker-{self.worker_id} is about to proceess job {job_id} with batch idx {batch_idx} and args {next_chunked_args}")
 
                     results = []
+                    success = True
                     for args in next_chunked_args:
 
-                        # Try to run this function and save results
-                        results_part, success, send_results, should_shut_down = self._run_func(
-                            apply_func if is_apply_func else func, job_id, args
-                        )
-                        if should_shut_down:
-                            return
-                        if send_results:
-                            results.append((job_id, success, results_part))
+                        # Try to run this function and save results. If we got a failed result, we break the loop as 
+                        # there's no point in processing the remaining tasks in the batch
+                        run_results = self._run_func(job_id, args)
+                        if run_results.send_results:
+                            results.append(run_results.results)
+                        if not run_results.success:
+                            success = False
+                            break
 
-                        # Update progress bar info
-                        if not is_apply_func:
-                            self._update_progress_bar()
+                        # Send progress bar info and insights updates for map tasks
+                        if self.task_params[job_id].type == JobType.MAP:
+                            self._send_progress_bar_update(job_id)
+                            self._send_max_duration_tasks_update(job_id)
 
                     # Send results back to main process
                     if results:
-                        self.worker_comms.add_results(self.worker_id, results)
-                    n_tasks_executed += len(results)
+                        if self.enable_prints:
+                            print(f"Worker-{self.worker_id} adding results for job {job_id}")
+                        self.worker_comms.add_results(job_id, TaskType.TARGET_FUNC, success, batch_idx, results)
+                        self.n_tasks_executed[job_id] += len(results)
+                    
+                    # Remove task specific objects when the apply task is done or when a map task failed
+                    if self.task_params[job_id].type == JobType.APPLY:
+                        # Clean up task specific objects
+                        self.task_worker_comms[job_id].close_shm()
+                        del (self.task_params[job_id], self.task_function[job_id], self.task_worker_comms[job_id], 
+                             self.n_tasks_executed[job_id])
+                    elif not success:
+                        self._handle_job_done(job_id, job_is_skipped=True)
 
                 # In case an exception occurred and we need to return, we want to call task_done no matter what
                 finally:
-                    self.is_apply_func = False
-                    self.worker_comms.task_done(self.worker_id)
+                    self.worker_comms.task_done()
 
-                # Update task insights
-                self._update_task_insights()
+            # Max lifespan reached. Force send all updates and run exit functions in order
+            self._send_progress_bar_update(force_update=True)
+            self._send_max_duration_tasks_update(force_update=True)
+            for job_id, params in sorted(self.task_params.items()):
+                if params.worker_exit:
+                    self._run_exit_func(job_id)
 
-            # Max lifespan reached
-            self._update_task_insights(force_update=True)
-            self._update_progress_bar(force_update=True)
-            if self.map_params.worker_exit and self._run_exit_func():
-                return
-
+        except Exception as err:
+            # Print traceback
+            traceback.print_exc()
         finally:
             # Wait until all results have been received, otherwise the main process might deadlock
-            self.worker_comms.wait_for_all_results_received(self.worker_id)
+            # TODO: should also wait for max duration tasks and pbar updatees? For some reason sometimes a worker doesn't start again            
+            if self.enable_prints:
+                print(f"Worker-{self.worker_id} waiting for all results to be received")
+            self.worker_comms.wait_for_all_results_received()
+            
+            # Close any remaining shared memory connections
+            if self.enable_prints:
+                print(f"Worker-{self.worker_id} closing shm connections")
+            for job_id in self.task_params:
+                self.task_worker_comms[job_id].close_shm()
 
-            # Notify WorkerPool to start a new worker
-            if (not self.worker_comms.exception_thrown() and self.map_params.worker_lifespan is not None and
-                    n_tasks_executed >= self.map_params.worker_lifespan):
-                self.worker_comms.signal_worker_restart(self.worker_id)
+            # Notify parent process to start a new worker
+            if not self.worker_comms.should_terminate() and any(
+                task_params.worker_lifespan is not None 
+                and self.n_tasks_executed[job_id] >= task_params.worker_lifespan 
+                for job_id, task_params in self.task_params.items()
+            ):
+                if self.enable_prints:
+                    print(f"Worker-{self.worker_id} requesting restart")
+                self.worker_comms.signal_worker_restart()
 
-            self.worker_comms.signal_worker_dead(self.worker_id)
+            if self.enable_prints:
+                print(f"Worker-{self.worker_id} finished")
+            self.worker_comms.signal_worker_dead()
 
     def _set_signal_handlers(self) -> None:
         """
@@ -228,42 +267,34 @@ class AbstractWorker:
         exception_thrown() is set and will shutdown the pool.
         """
         err = RuntimeError(f"Worker-{self.worker_id} was killed")
-        with self.worker_comms.get_worker_running_task_lock(self.worker_id):
-            if self.worker_comms.get_worker_running_task(self.worker_id):
+        with self.worker_comms.get_running_task_lock():
+            if self.worker_comms.get_running_task():
                 raise err
-            else:
-                self._raise(self.last_job_id, None, err)
 
     def _on_exception_exit_gracefully(self, *_) -> None:
         """
-        This function is called when the main process sends a kill signal to this process. This can mean two things:
-        - Another child process encountered an error in either the init/exit or map function which means we should exit
+        This function is called when the main process sends a kill signal to this process. This can mean a few things:
+        - A keyboard interrupt was issued by the user and we should stop the worker
+        - An exception was encountered in another worker and this worker is running a task for the same job, so we
+          should interrupt it
         - The current task timed out and we should interrupt it
 
         When on Windows, this function can be invoked when no function is running. This means we will need to check if
-        there is a running task and only raise if there is. Otherwise, the exception thrown event will be set and the
-        worker will exit gracefully itself.
+        there is a running task and only raise if there is. If we don't do that, we could interrupt the worker while,
+        for example, it is busy adding results to the queue, which could lead to a deadlock. If the worker is not 
+        running a function, the worker will have received a signal to stop working or cancel the current job in another
+        way.
         
-        On other platforms, this signal is only send when either the user defined function, worker init or worker exit
-        function is running. In such cases, a StopWorker exception is raised, which is caught by the ``_run_safely()``
-        function, so we can quit gracefully.
+        When a function is running, the exception thrown here will be caught by the ``_run_safely()`` function, which
+        handles the exception accordingly.
         """            
-        exception_job_id = self.worker_comms.get_exception_thrown_job_id()
-        if RUNNING_WINDOWS:
-            with self.worker_comms.get_worker_running_task_lock(self.worker_id):
-                if self.worker_comms.get_worker_running_task(self.worker_id):
-                    self.worker_comms.set_worker_running_task(self.worker_id, False)
-                    if exception_job_id in {INIT_FUNC, EXIT_FUNC} or not self.is_apply_func:
-                        self.worker_comms.signal_kill_signal_received()
-                        raise StopWorker
-                    else:
-                        raise InterruptWorker
-        else:
-            if exception_job_id in {INIT_FUNC, EXIT_FUNC} or not self.is_apply_func:
-                self.worker_comms.signal_kill_signal_received()
-                raise StopWorker
-            else:
-                raise InterruptWorker
+        with self.worker_comms.get_running_task_lock():
+            if self.worker_comms.get_running_task():
+                self.worker_comms.set_running_task(False)
+                if self.worker_comms.should_terminate():
+                    raise StopWorker
+                else:
+                    raise InterruptWorker
 
     def _on_exception_exit_gracefully_windows(self) -> None:
         """
@@ -271,18 +302,165 @@ class AbstractWorker:
         function is started in a thread. We wait for a kill signal (Event object) and interrupt the main thread if we
         got it (derived from https://stackoverflow.com/a/40281422) and only when a function is running. This will raise
         a KeyboardInterrupt, which is then caught by the signal handler, which in turn checks if we need to raise a 
-        StopWorker or InterruptWorker. When no function is running, the exception thrown event will be set and the 
-        worker will exit gracefully itself.
+        StopWorker or InterruptWorker. If the worker is not running a function, the worker will have received a signal 
+        to stop working or cancel the current job in another way.
 
         Note: functions that release the GIL won't be interupted by this procedure (e.g., time.sleep). If graceful
         shutdown takes too long the process will be terminated by the main process.
         """
-        while self.worker_comms.is_worker_alive(self.worker_id):
-            if self.worker_comms.wait_for_exception_thrown(timeout=0.1):
-                with self.worker_comms.get_worker_running_task_lock(self.worker_id):
-                    if self.worker_comms.get_worker_running_task(self.worker_id):
+        while self.worker_comms.is_worker_alive():
+            if self.worker_comms.wait_for_terminate_pool(timeout=0.1):
+                with self.worker_comms.get_running_task_lock():
+                    if self.worker_comms.get_running_task():
                         _thread.interrupt_main()
                 return
+            
+    def _get_new_task(self):
+        """
+        Obtain new chunk of tasks. Occassionally, we check for new control signals.
+        """
+        job_id = chunk_of_task = None
+        while not self.worker_comms.should_terminate() and (not self.poison_pill_received or self.task_params):
+            
+            # Obtain control signals
+            if (control_signal := self.worker_comms.get_control_signal(block=False)) is not None:
+                if self.enable_prints:
+                    print(f"Worker-{self.worker_id} got control signal: {control_signal}")
+                self._handle_control_signal(*control_signal)
+                
+            # Obtain new task
+            try:
+                job_id, chunk_of_task = self.worker_comms.get_task(block=True, timeout=0.01)
+                if self.enable_prints:
+                    print(f"Worker-{self.worker_id} got: {job_id}, {chunk_of_task}")
+            except queue.Empty:
+                continue
+            
+            # When we don't have the task parameters yet and the job is not skipped, obtain the task parameters
+            while (not self.worker_comms.should_terminate() and job_id not in self.task_params 
+                and job_id not in self.skipped_job_ids):
+                if (
+                    (control_signal := self.worker_comms.get_control_signal(block=True, timeout=0.01))
+                    is not None
+                ):
+                    if self.enable_prints:
+                        print(f"Worker-{self.worker_id} got control signal: {control_signal}")
+                    self._handle_control_signal(*control_signal)
+                
+            # Return job ID and chunk of task when we have a valid job ID
+            if job_id is not None and job_id in self.task_params:
+                return job_id, chunk_of_task
+            
+        return None
+        
+    def _handle_control_signal(self, control_signal: str, metadata: Any) -> None:
+        """
+        Handle control signals
+        
+        :param control_signal: Control signal
+        :param metadata: Metadata for this signal
+        """
+        # New task parameters
+        if control_signal == NEW_TASK_PARAMS_PILL:
+            job_id, task_params = metadata
+            if self.enable_prints:
+                print(f"Worker-{self.worker_id} received new task params for job {job_id}")
+            self._handle_new_task_params(job_id, task_params)
+            
+        # Job done
+        elif control_signal == JOB_DONE_PILL:
+            job_id = metadata
+            if self.enable_prints:
+                print(f"Worker-{self.worker_id} received job done pill for job {job_id}")
+            self._handle_job_done(job_id, job_is_skipped=False)
+        
+        # Skip job
+        elif control_signal == SKIP_JOB_PILL:
+            job_id = metadata
+            if self.enable_prints:
+                print(f"Worker-{self.worker_id} received skip job pill for job {job_id}")
+            self._handle_job_done(job_id, job_is_skipped=True)
+            
+        # Poison pill
+        elif control_signal == POISON_PILL:
+            if self.enable_prints:
+                print(f"Worker-{self.worker_id} received poison pill")
+            self.poison_pill_received = True
+            
+        self.worker_comms.task_done_control_signal()
+        
+    def _handle_new_task_params(self, job_id: int, task_params: WorkerTaskParams) -> None:
+        """
+        Handle new task parameters.
+
+        :param job_id: Job ID
+        :param task_params: Task parameters
+        """
+        if self.enable_prints:
+            print(f"Worker-{self.worker_id} initializing task worker comms for job {job_id} with shm {task_params.task_comms_shm_names[self.worker_id]}")
+        
+        # A worker could get restarted while the last job it was processing just finished. This means the shared memory
+        # object has been cleaned up, while we're still trying to connect to it here. If connecting fails, we can 
+        # assume the task has been completed
+        try:
+            task_worker_comms = TaskWorkerComms(job_id, self.worker_comms.task_comms_lock,
+                                                task_params.task_comms_shm_names[self.worker_id])
+        except FileNotFoundError:
+            if self.enable_prints:
+                print(f"Worker-{self.worker_id} failed to connect to shm. Skipping job {job_id}")
+            return
+        
+        self.task_params[job_id] = task_params
+        self.task_function[job_id] = partial(self._call_func, partial(task_params.func, *self.additional_args))
+        self.task_worker_comms[job_id] = task_worker_comms
+        self.n_tasks_executed[job_id] = 0
+        
+        if self.enable_prints:
+            print(f"Worker-{self.worker_id} initialized task worker comms with shm {task_params.task_comms_shm_names[self.worker_id]}, pbar n: {self.task_worker_comms[job_id].progress_bar_n_tasks_completed}")
+        
+        # Run init function when available
+        if task_params.worker_init:
+            self._run_init_func(job_id)
+            
+    def _handle_job_done(self, job_id: int, job_is_skipped: bool = False) -> None:
+        """
+        When a job done or skip job pill is received, we send a final progress bar and max duration tasks update, and 
+        run the exit function if available. In case of a job done, we wait for the progress bar to be done. Finally, 
+        the task specific objects are removed
+        
+        :param job_id: Job ID
+        :param job_is_skipped: Whether the job was skipped
+        :param call_task_done: Whether to call task_done
+        """
+        if job_id in self.task_params:
+            # Send progress bar info and max duration tasks updates
+            self._send_progress_bar_update(job_id, force_update=True)
+            self._send_max_duration_tasks_update(job_id, force_update=True)
+            
+            # Run exit function when available
+            if self.task_params[job_id].worker_exit:
+                self._run_exit_func()
+                
+            # Wait until progress bar data has been received
+            if not job_is_skipped and self.task_params[job_id].progress_bar:
+                self.task_worker_comms[job_id].wait_for_progress_bar_complete()
+                
+            # Close shared memory connection
+            self.task_worker_comms[job_id].close_shm()
+                
+            # Remove job ID
+            if job_id is not None:
+                del (self.task_params[job_id], self.task_function[job_id], self.task_worker_comms[job_id], 
+                     self.n_tasks_executed[job_id])
+                
+        # Let the pool know we're done with this job and wait for the main process to acknowledge. When the job is 
+        # skipped, this means this worker or another worker got an exception or a timeout and we don't need to signal
+        if not job_is_skipped:
+            self.worker_comms.add_results(job_id, TaskType.JOB_DONE, success=True, batch_idx=None, results=None)
+            self.worker_comms.wait_for_all_results_received()
+                
+        else:
+            self.skipped_job_ids.add(job_id)
 
     def _set_additional_args(self) -> None:
         """
@@ -298,237 +476,145 @@ class AbstractWorker:
 
     def _get_func(self, func: Callable, is_apply_func: bool = False) -> Callable:
         """
-        Determine what function to call. If we have to keep in mind the order (for map) we use the helper function with
-        idx support which deals with the provided idx variable. However, if we are dealing with an apply function, we
-        ignore this as it doesn't matter.
+        Determine what function to call. If we're dealing with a map function we use the helper function with idx 
+        support which deals with the provided idx variable. If we are dealing with an apply function, however, we don't
+        get an idx variable.
 
         :param func: Function to call
         :param is_apply_func: Whether this is an apply function
         :return: Function to call
         """
-        helper_func = (self._helper_func_with_idx if not is_apply_func and self.worker_comms.keep_order() else
-                       self._helper_func)
-        return partial(helper_func, partial(func, *self.additional_args))
+        return partial(self._call_func, partial(func, *self.additional_args))
 
-    def _handle_poison_pill(self, lethal: bool, n_tasks_executed: int) -> None:
-        """
-        Force update task insights and progress bar when we got a (non-lethal) poison pill. For a lethal poison pill, we
-        run the worker exit function if this worker actually did some work, and wait for the progress bar to be done.
-        For a non-lethal poison pill, we simply continue.
-
-        :param lethal: Whether this is a lethal poison pill
-        """
-        self._update_task_insights(force_update=True)
-        self._update_progress_bar(force_update=True)
-        self.worker_comms.task_done(self.worker_id)
-        if lethal:
-            if self.map_params.worker_exit and n_tasks_executed > 0:
-                self._run_exit_func()
-            if self.map_params.progress_bar:
-                self.worker_comms.wait_until_progress_bar_is_complete()
-
-    def _handle_new_map_params(self) -> Optional[Callable]:
-        """
-        Handle new map parameters. This means we need to update the map parameters and get the new function to call.
-
-        :return: Function to call
-        """
-        self.worker_comms.task_done(self.worker_id)
-        map_params = self.worker_comms.get_task(self.worker_id)
-
-        # It can happen that at the moment we get a new map params pill, an exception occurred in another process.
-        # Therefore, get_task will return None
-        if map_params is None:
-            return None
-
-        self.map_params = map_params
-        func = self._get_func(self.map_params.func)
-        self.worker_comms.task_done(self.worker_id)
-        return func
-
-    def _handle_apply_pill(self) -> Union[Tuple[Callable, Any], Tuple[None, None]]:
-        """
-        Handle apply pill. This means we need to get the next task and return the function to call and the next chunked
-        args to process
-
-        :return: Function to call and next chunked args to process
-        """
-        self.worker_comms.task_done(self.worker_id)
-        task = self.worker_comms.get_task(self.worker_id)
-
-        # It can happen that at the moment we get an apply pill, an exception occurred in another process. Therefore,
-        # get_task will return None
-        if task is None:
-            return None, None
-
-        job_id, (apply_func, args) = task
-        func = self._get_func(apply_func, is_apply_func=True)
-        next_chunked_args = job_id, (args,)
-
-        return func, next_chunked_args
-
-    def _run_init_func(self) -> bool:
+    def _run_init_func(self, job_id: int) -> None:
         """
         Runs the init function when provided.
 
-        :return: True when the worker needs to shut down, False otherwise
+        :param job_id: Job ID
         """
-        if self.init_func_completed:
+        if not self.task_params[job_id].worker_init:
             return False
-
-        self.worker_comms.signal_worker_working_on_job(self.worker_id, INIT_FUNC)
-        self.last_job_id = INIT_FUNC
+        
+        self.worker_comms.signal_working_on_job(job_id, TaskType.WORKER_INIT)
+        self.last_job_id = job_id
+        self.last_task_type = TaskType.WORKER_INIT
 
         def _init_func():
-            with TimeIt(self.worker_insights.worker_init_time, self.worker_id):
-                self.map_params.worker_init(*self.additional_args)
+            with TimeIt(self.task_worker_comms[job_id], WorkerStatsType.INIT_TIME):
+                self.task_params[job_id].worker_init(*self.additional_args)
 
         # Optionally update timeout info
-        if self.map_params.worker_init_timeout is not None:
+        if self.task_params[job_id].worker_init_timeout is not None:
             try:
-                self.worker_comms.signal_worker_init_started(self.worker_id)
-                _, _, _, should_shut_down = self._run_safely(_init_func, INIT_FUNC)
+                self.worker_comms.signal_worker_init_started()
+                self._run_safely(_init_func)
             finally:
-                self.worker_comms.signal_worker_init_completed(self.worker_id)
+                self.worker_comms.signal_worker_init_completed()
         else:
-            _, _, _, should_shut_down = self._run_safely(_init_func, INIT_FUNC)
+            self._run_safely(_init_func)
 
-        self.init_func_completed = True
-        return should_shut_down
-
-    def _run_func(self, func: Callable, job_id: Optional[int], args: Optional[List]) -> Tuple[Any, bool, bool, bool]:
+    def _run_func(self, job_id: Optional[int], args: Optional[List]) -> RunResult:
         """
         Runs the main function when provided.
 
-        :param func: Function to call
         :param job_id: Job ID
         :param args: Args to pass to the function
-        :return: Tuple containing results from the function and boolean values indicating whether the function was run
-            successfully, whether the results should send on the queue, and indicating whether the worker needs to shut
-            down
+        :return: Run results
         """
-        if self.last_job_id != job_id:
-            self.worker_comms.signal_worker_working_on_job(self.worker_id, job_id)
+        if self.last_job_id != job_id or self.last_task_type != TaskType.TARGET_FUNC:
+            self.worker_comms.signal_working_on_job(job_id, TaskType.TARGET_FUNC)
             self.last_job_id = job_id
+            self.last_task_type = TaskType.TARGET_FUNC
 
         def _func():
-            with TimeIt(self.worker_insights.worker_working_time, self.worker_id, self.max_task_duration_list,
-                        lambda: self._format_args(args, separator=' | ')):
-                _results = func(*args) if self.is_apply_func else func(args)
-            self.worker_insights.update_n_completed_tasks(self.worker_id)
+            func = self.task_function[job_id]
+            with TimeIt(self.task_worker_comms[job_id], WorkerStatsType.WORKING_TIME, track_max_duration=True, 
+                        format_args_func=lambda: self._format_args(args, separator=' | ')):
+                _results = func(*args) if self.task_params[job_id].type == JobType.APPLY else func(args)
+            self.task_worker_comms[job_id].task_completed()
             return _results
 
-        # Update timeout info
-        try:
-            self.worker_comms.signal_worker_task_started(self.worker_id)
-            results, success, send_results, should_shut_down = self._run_safely(_func, job_id, args)
-        finally:
-            self.worker_comms.signal_worker_task_completed(self.worker_id)
+        # Optionally update timeout info
+        if self.task_params[job_id].task_timeout is not None:
+            try:
+                self.worker_comms.signal_worker_task_started()
+                result = self._run_safely(_func, args)
+            finally:
+                self.worker_comms.signal_worker_task_completed()
+        else:
+            result = self._run_safely(_func, args)
 
-        return results, success, send_results, should_shut_down
+        return result
 
-    def _run_exit_func(self) -> bool:
+    def _run_exit_func(self, job_id) -> None:
         """
         Runs the exit function when provided and stores its results.
 
-        :return: True when the worker needs to shut down, False otherwise
+        :param job_id: Job ID
         """
-        self.worker_comms.signal_worker_working_on_job(self.worker_id, EXIT_FUNC)
-        self.last_job_id = EXIT_FUNC
+        self.worker_comms.signal_working_on_job(job_id, TaskType.WORKER_EXIT)
+        self.last_job_id = job_id
+        self.last_task_type = TaskType.WORKER_EXIT
 
         def _exit_func():
-            with TimeIt(self.worker_insights.worker_exit_time, self.worker_id):
-                return self.map_params.worker_exit(*self.additional_args)
+            with TimeIt(self.task_worker_comms[job_id], WorkerStatsType.EXIT_TIME):
+                return self.task_params[job_id].worker_exit(*self.additional_args)
 
         # Optionally update timeout info
-        if self.map_params.worker_exit_timeout is not None:
+        if self.task_params[job_id].worker_exit_timeout is not None:
             try:
-                self.worker_comms.signal_worker_exit_started(self.worker_id)
-                results, success, send_results, should_shut_down = self._run_safely(_exit_func, EXIT_FUNC)
+                self.worker_comms.signal_worker_exit_started()
+                result = self._run_safely(_exit_func)
             finally:
-                self.worker_comms.signal_worker_exit_completed(self.worker_id)
+                self.worker_comms.signal_worker_exit_completed()
         else:
-            results, success, send_results, should_shut_down = self._run_safely(_exit_func, EXIT_FUNC)
+            result = self._run_safely(_exit_func)
 
-        if should_shut_down:
-            return True
-        elif send_results:
-            self.worker_comms.add_results(self.worker_id, [(EXIT_FUNC, True, results)])
-        return False
+        if result.send_results:
+            self.worker_comms.add_results(job_id, TaskType, True, None, result.results)
 
-    def _run_safely(
-        self, func: Callable, job_id: Optional[int], exception_args: Optional[Any] = None
-    ) -> Tuple[Any, bool, bool, bool]:
+    def _run_safely(self, func: Callable, exception_args: Optional[Any] = None) -> RunResult:
         """
         A rather complex locking and exception mechanism is used here so we can make sure we only raise an exception
         when we should. See `_exit_gracefully` for more information.
 
         :param func: Function to run
-        :param job_id: Job ID
         :param exception_args: Arguments to pass to `_format_args` when an exception occurred
-        :return: Tuple containing results from the function and boolean values indicating whether the function was run
-            successfully, whether the results should send on the queue, and indicating whether the worker needs to shut
-            down
+        :return: Run results
         """
-        if self.worker_comms.exception_thrown():
-            return None, True, False, True
+        if self.worker_comms.should_terminate():
+            return RunResult(results=None, success=True, send_results=False)
 
         try:
 
             try:
                 # Obtain lock and try to run the function. During this block a StopWorker exception from the parent
                 # process can come through to signal we should stop
-                self.worker_comms.set_worker_running_task(self.worker_id, True)
+                self.worker_comms.set_running_task(True)
                 results = func()
-                self.worker_comms.set_worker_running_task(self.worker_id, False)
+                self.worker_comms.set_running_task(False)
 
             except InterruptWorker:
                 # The main process tells us to interrupt the current task. This means a timeout has expired and we
                 # need to stop this task and continue with the next one
-                return None, False, False, False
+                return RunResult(results=None, success=False, send_results=False)
 
             except (Exception, SystemExit) as err:
-                # An exception occurred inside the provided function. Let the signal handler know it shouldn't raise any
-                # StopWorker or InterruptWorker exceptions from the parent process anymore, we got this.
-                self.worker_comms.set_worker_running_task(self.worker_id, False)
-
-                if self.is_apply_func:
-                    # Obtain exception and send it back as normal results. The first False indicates the job has failed
-                    exception = self._get_exception(exception_args, err)
-                    return exception, False, True, False
-                else:
-                    # Pass exception to parent process and stop
-                    self._raise(job_id, exception_args, err)
-                    raise StopWorker
+                # An exception occurred inside the provided function. Let the signal handler know it shouldn't raise 
+                # any StopWorker or InterruptWorker exceptions from the parent process anymore, we got this.
+                self.worker_comms.set_running_task(False)
+                
+                # Obtain exception and send it back as normal results
+                exception = self._get_exception(exception_args, err)
+                return RunResult(results=exception, success=False, send_results=True)
 
         except StopWorker:
-            # Either the main process tells us to stop working and kill all workers, or an exception occurred in this
-            # worker and we need to stop.
-            return None, False, False, True
+            # The main process tells us to stop working. If this happens the terminate pool event is set as well, so
+            # actual termination will happen soon
+            return RunResult(results=None, success=False, send_results=False)
 
         # Carry on
-        return results, True, True, False
-
-    def _raise(self, job_id: Optional[int], args: Optional[Any], err: Union[Exception, SystemExit]) -> None:
-        """
-        Create exception and pass it to the parent process. Let other processes know an exception is set
-
-        :param job_id: Job ID
-        :param args: Funtion arguments where exception was raised
-        :param err: Exception that should be passed on to parent process
-        """
-        # Only raise an exception when this process is the first one to raise. It is technically possible that multiple
-        # workers will get through this if statement, but that's fine, it won't cause any problems
-        if not self.worker_comms.exception_thrown():
-
-            # Let others know we need to stop
-            self.worker_comms.signal_exception_thrown(job_id)
-
-            # Get exception and traceback string
-            exception = self._get_exception(args, err)
-
-            # Add exception
-            self.worker_comms.add_results(self.worker_id, [(job_id, False, exception)])
+        return RunResult(results=results, success=True, send_results=True)
 
     def _get_exception(self, args: Optional[Any], err: Union[Exception, SystemExit]) -> Tuple[type, Tuple, Dict, str]:
         """
@@ -564,10 +650,10 @@ class AbstractWorker:
         :return: String containing the task arguments
         """
         # Determine function arguments
-        if self.is_apply_func:
+        if self.task_params[self.last_job_id].type == JobType.APPLY:
             func_args, func_kwargs = args
         else:
-            func_args = args[1] if args and self.worker_comms.keep_order() else args
+            func_args = args
             func_kwargs = None
 
         func_args, func_kwargs = self._convert_args_kwargs(func_args, func_kwargs)
@@ -578,28 +664,6 @@ class AbstractWorker:
         formatted_args.extend([f"Arg {str(key)}: {repr(value)}" for key, value in func_kwargs.items()])
 
         return separator.join(formatted_args)
-
-    def _helper_func_with_idx(self, func: Callable, args: Tuple[int, Any]) -> Tuple[int, Any]:
-        """
-        Helper function which calls the function `func` but preserves the order index
-
-        :param func: Function to call each time new task arguments become available
-        :param args: Tuple of ``(idx, _args)`` where ``_args`` correspond to the arguments to pass on to the function.
-            ``idx`` is used to preserve order
-        :return: (idx, result of calling the function with the given arguments) tuple
-        """
-        return args[0], self._call_func(func, args[1])
-
-    def _helper_func(self, func: Callable, args: Any, kwargs: Optional[Dict] = None) -> Any:
-        """
-        Helper function which calls the function `func`
-
-        :param func: Function to call each time new task arguments become available
-        :param args: Arguments to pass on to the function
-        :param kwargs: Keyword arguments to pass to the function
-        :return: Result of calling the function with the given arguments) tuple
-        """
-        return self._call_func(func, args, kwargs)
 
     def _call_func(self, func: Callable, args: Any, kwargs: Optional[Dict] = None) -> Any:
         """
@@ -640,27 +704,33 @@ class AbstractWorker:
 
         return args, kwargs
 
-    def _update_progress_bar(self, force_update: bool = False) -> None:
+    def _send_progress_bar_update(self, job_id: Optional[int] = None, force_update: bool = False) -> None:
         """
-        Update the progress bar data
+        Send progress bar update
 
+        :param job_id: Job ID or None when to send all progress bars updates
         :param force_update: Whether to force an update
         """
-        if self.map_params.progress_bar:
-            (self.progress_bar_last_updated,
-             self.progress_bar_n_tasks_completed) = self.worker_comms.task_completed_progress_bar(
-                self.worker_id, self.progress_bar_last_updated, self.progress_bar_n_tasks_completed, force_update
-             )
+        if self.enable_prints:
+            print(f"Worker-{self.worker_id} sending progress bar update for job {job_id} with force update: {force_update}")
+        for job_id_ in [job_id] if job_id is not None else self.task_params.keys():
+            if self.task_params[job_id_].progress_bar:
+                self.task_worker_comms[job_id_].send_progress_bar_update(
+                    Comms.progress_bar_update_interval, force_update
+                )
 
-    def _update_task_insights(self, force_update: bool = False) -> None:
+    def _send_max_duration_tasks_update(self, job_id: Optional[int] = None, force_update: bool = False) -> None:
         """
-        Update the task insights data
+        Send max duration tasks update
 
+        :param job_id: Job ID or None when to send all max duration tasks updates
         :param force_update: Whether to force an update
         """
-        self.max_task_duration_last_updated = self.worker_insights.update_task_insights(
-            self.worker_id, self.max_task_duration_last_updated, self.max_task_duration_list, force_update=force_update
-        )
+        if self.pool_params.insights_enabled:
+            for job_id_ in [job_id] if job_id is not None else self.task_params.keys():
+                self.worker_comms.send_max_duration_tasks_update(
+                    job_id_, self.task_worker_comms[job_id_], force_update
+                )
 
 
 if FORK_AVAILABLE:
