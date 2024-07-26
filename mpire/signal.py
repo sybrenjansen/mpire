@@ -9,6 +9,7 @@ class DelayedKeyboardInterrupt:
 
     def __init__(self) -> None:
         self.signal_received = None
+        self.old_handler = None
 
     def __enter__(self) -> None:
         # When we're in a thread we can't use signal handling
@@ -20,7 +21,7 @@ class DelayedKeyboardInterrupt:
         self.signal_received = (sig, frame)
 
     def __exit__(self, exc_type: Type, exc_val: Exception, exc_tb: Traceback) -> None:
-        if current_thread() == main_thread():
+        if current_thread() == main_thread() and self.old_handler is not None:
             signal_(SIGINT, self.old_handler)
             if self.signal_received:
                 self.old_handler(*self.signal_received)

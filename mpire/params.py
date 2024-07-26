@@ -139,28 +139,6 @@ class WorkerTaskParams:
     # Shared memory names for worker insights
     task_comms_shm_names: List[str] = field(default_factory=list)
 
-    def __eq__(self, other: WorkerTaskParams) -> bool:
-        """
-        :param other: Other WorkerMapConfig
-        :return: Whether the configs are the same
-        """
-        if other.worker_init != self.worker_init or other.worker_exit != self.worker_exit:
-            warnings.warn("You're changing either the worker_init and/or worker_exit function while keep_alive is "
-                          "enabled. Be aware this can have undesired side-effects as worker_init functions are only "
-                          "executed when a worker is started and worker_exit functions when a worker is terminated.",
-                          RuntimeWarning, stacklevel=2)  # TODO: I guess this can go, we always add new map params
-
-        return (other.func == self.func and
-                other.worker_init == self.worker_init and
-                other.worker_exit == self.worker_exit and
-                other.order_results == self.order_results and
-                other.worker_lifespan == self.worker_lifespan and
-                other.progress_bar == self.progress_bar and
-                other.task_timeout == self.task_timeout and
-                other.worker_init_timeout == self.worker_init_timeout and
-                other.worker_exit_timeout == self.worker_exit_timeout and
-                other.task_comms_shm_names == self.task_comms_shm_names)
-
 
 def check_map_parameters(pool_params: WorkerPoolParams, iterable_of_args: Union[Sized, Iterable],
                          iterable_len: Optional[int], max_tasks_active: Optional[int],

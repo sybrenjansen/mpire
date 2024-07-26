@@ -123,741 +123,820 @@ class MapTest(unittest.TestCase):
                         self.assertIsInstance(results_list, result_type)
                         self.assertEqual(len(self.test_desired_output), len(list(results_list)))
 
-#     def test_numpy_input(self):
-#         """
-#         Test map with numpy input
-#         """
-#         print()
-#         for n_jobs, n_tasks_max_active, worker_lifespan, chunk_size, n_splits in tqdm([
-#             (None, None, None, None, None),
-#             (1, None, None, None, None),
-#             (2, None, None, None, None),
-#             (2, 2, None, None, None),
-#             (2, None, 2, None, None),
-#             (2, None, None, 3, None),
-#             (2, None, None, None, 3),
-#             (2, None, None, 3, 3),
-#             (2, None, 1, 3, None)
-#         ]):
-#             with WorkerPool(n_jobs=n_jobs) as pool:
-
-#                 # Test numpy input. map should concatenate chunks of numpy output to a single output array if we
-#                 # instruct it to
-#                 with self.subTest(concatenate_numpy_output=True, map_function='map', n_jobs=n_jobs,
-#                                   n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
-#                                   chunk_size=chunk_size, n_splits=n_splits):
-#                     results = pool.map(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
-#                                        worker_lifespan=worker_lifespan, concatenate_numpy_output=True)
-#                     self.assertIsInstance(results, np.ndarray)
-#                     np.testing.assert_array_equal(results, self.test_desired_output_numpy)
-
-#                 # If we disable it we should get back chunks of the original array
-#                 with self.subTest(concatenate_numpy_output=False, map_function='map', n_jobs=n_jobs,
-#                                   n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
-#                                   chunk_size=chunk_size, n_splits=n_splits):
-#                     results = pool.map(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
-#                                        worker_lifespan=worker_lifespan, concatenate_numpy_output=False)
-#                     self.assertIsInstance(results, list)
-#                     np.testing.assert_array_equal(np.concatenate(results), self.test_desired_output_numpy)
-
-#                 # Numpy concatenation doesn't exist for the other functions
-#                 with self.subTest(map_function='imap', n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active,
-#                                   worker_lifespan=worker_lifespan, chunk_size=chunk_size, n_splits=n_splits):
-#                     results = pool.imap(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
-#                                         worker_lifespan=worker_lifespan)
-#                     self.assertIsInstance(results, types.GeneratorType)
-#                     np.testing.assert_array_equal(np.concatenate(list(results)), self.test_desired_output_numpy)
-
-#                 # map_unordered and imap_unordered cannot be checked for correctness as we don't know the order of the
-#                 # returned results, except when n_jobs=1. In the other cases we could, however, check if all the values
-#                 # (numpy rows) that are returned are present (albeit being in a different order)
-#                 for map_func, result_type in ((pool.map_unordered, list), (pool.imap_unordered, types.GeneratorType)):
-
-#                     with self.subTest(map_function=map_func, n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active,
-#                                       worker_lifespan=worker_lifespan, chunk_size=chunk_size, n_splits=n_splits):
-
-#                         results = map_func(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
-#                                            worker_lifespan=worker_lifespan)
-#                         self.assertIsInstance(results, result_type)
-#                         concattenated_results = np.concatenate(list(results))
-#                         if n_jobs == 1:
-#                             np.testing.assert_array_equal(concattenated_results, self.test_desired_output_numpy)
-#                         else:
-#                             # We sort the expected and actual results using lexsort, which sorts using a sequence of
-#                             # keys. We transpose the array to sort on columns instead of rows.
-#                             np.testing.assert_array_equal(
-#                                 concattenated_results[np.lexsort(concattenated_results.T)],
-#                                 self.test_desired_output_numpy[np.lexsort(self.test_desired_output_numpy.T)]
-#                             )
-
-#     def test_dictionary_input(self):
-#         """
-#         Test map with dictionary input
-#         """
-#         with WorkerPool(n_jobs=1) as pool:
-
-#             # Should work
-#             with self.subTest('correct input'):
-#                 results_list = pool.map(subtract, [{'x': 5, 'y': 2}, {'y': 5, 'x': 2}])
-#                 self.assertEqual(results_list, [3, -3])
-
-#             # Should throw
-#             with self.subTest("missing 'y', unknown parameter 'z'"), self.assertRaises(TypeError):
-#                 pool.map(subtract, [{'x': 5, 'z': 2}])
-
-#             # Should throw
-#             with self.subTest("unknown parameter 'z'"), self.assertRaises(TypeError):
-#                 pool.map(subtract, [{'x': 5, 'y': 2, 'z': 2}])
-
-#     def test_start_methods(self):
-#         """
-#         Test different start methods. All should work just fine
-#         """
-#         print()
-#         for start_method in tqdm(TEST_START_METHODS):
-#             with self.subTest(start_method=start_method, map='map'), WorkerPool(2, start_method=start_method) as pool:
-#                 results_list = pool.map(square, self.test_data)
-#                 self.assertIsInstance(results_list, list)
-#                 self.assertEqual(self.test_desired_output, results_list)
-
-#             with self.subTest(start_method=start_method, map='map_unordered'), \
-#                     WorkerPool(2, start_method=start_method) as pool:
-#                 results_list = pool.map_unordered(square, self.test_data)
-#                 self.assertIsInstance(results_list, list)
-#                 self.assertEqual(self.test_desired_output, sorted(results_list, key=lambda tup: tup[0]))
-
-#             with self.subTest(start_method=start_method, map='imap'), WorkerPool(2, start_method=start_method) as pool:
-#                 results_list = pool.imap(square, self.test_data)
-#                 self.assertIsInstance(results_list, types.GeneratorType)
-#                 self.assertListEqual(list(results_list), self.test_desired_output)
-
-#             with self.subTest(start_method=start_method, map='imap_unordered'), \
-#                     WorkerPool(2, start_method=start_method) as pool:
-#                 results_list = pool.imap_unordered(square, self.test_data)
-#                 self.assertIsInstance(results_list, types.GeneratorType)
-#                 self.assertEqual(self.test_desired_output, sorted(results_list, key=lambda tup: tup[0]))
-
-#     def test_mixing_map_calls(self):
-#         """
-#         When using the same pool, mixing map calls should raise
-#         """
-#         with WorkerPool(2) as pool:
-#             imap_results = pool.imap(square, self.test_data)
-#             next(imap_results)  # Actually start the pool
-#             with self.assertRaises(RuntimeError):
-#                 pool.map(square, self.test_data)
-
-#         with WorkerPool(2) as pool:
-#             imap_results = pool.imap_unordered(square, self.test_data)
-#             next(imap_results)  # Actually start the pool
-#             with self.assertRaises(RuntimeError):
-#                 next(pool.imap(square, self.test_data))
-
-#     def test_terminate(self):
-#         """
-#         When a lazy map call is running and the pool is terminated, exhausting the results should raise
-#         """
-#         with self.subTest("calling terminate() explicitly"), WorkerPool(1) as pool:
-#             imap_results = pool.imap(square, self.test_data)
-#             next(imap_results)  # Actually start the pool
-#             pool.terminate()
-#             with self.assertRaises(RuntimeError):
-#                 list(imap_results)
-
-#         with self.subTest("calling terminate() implicitly"):
-#             with WorkerPool(1) as pool:
-#                 imap_results = pool.imap(square, self.test_data)
-#                 next(imap_results)  # Actually start the pool
-#             with self.assertRaises(RuntimeError):
-#                 list(imap_results)
-
-#         # Before, this could cause a deadlock once all tests were done
-#         print()
-#         with self.subTest("calling terminate() implicitly, with progress bar"):
-#             with WorkerPool(1) as pool:
-#                 imap_results = pool.imap(square, self.test_data, progress_bar=True)
-#                 next(imap_results)  # Actually start the pool
-#             with self.assertRaises(RuntimeError):
-#                 list(imap_results)
-
-
-# class PoolInThreadTest(unittest.TestCase):
-
-#     def setUp(self):
-#         self.test_data = [1, 2, 3, 5, 6, 9, 37, 42, 1337, 0, 3, 5, 0]
-#         self.test_desired_output = [self._square(x) for x in self.test_data]
-
-#     def test_start_methods(self):
-#         """
-#         Test that a WorkerPool can be started inside a thread, which isn't the main thread. Test for different start
-#         methods. All should work just fine
-#         """
-#         for start_method in TEST_START_METHODS:
-#             with self.subTest(start_method=start_method):
-#                 t = Thread(target=self._map_thread, args=(start_method,))
-#                 t.start()
-#                 t.join()
-
-#     def _map_thread(self, start_method):
-#         """
-#         This function is called from within a thread
-#         """
-#         self.assertNotEqual(current_thread(), main_thread())
-#         with WorkerPool(2, start_method=start_method) as pool:
-#             results_list = pool.map(self._square, self.test_data)
-#             self.assertIsInstance(results_list, list)
-#             self.assertListEqual(self.test_desired_output, results_list)
-
-#     @staticmethod
-#     def _square(x):
-#         return x * x
-
-
-# class ApplyTest(unittest.TestCase):
-
-#     def test_apply_async_call(self):
-#         """
-#         Test that apply simply calls apply_async
-#         """
-#         with WorkerPool(1) as pool, patch.object(pool, 'apply_async') as mock_apply_async:
-#             pool.apply(subtract, (1,), {'y': 2}, self._callback, self._error_callback,
-#                        self._init, self._exit, 0.1, 0.2, 0.3)
-#             mock_apply_async.assert_called_once_with(subtract, (1,), {'y': 2}, self._callback, self._error_callback,
-#                                                      self._init, self._exit, 0.1, 0.2, 0.3)
-
-#     def test_result(self):
-#         """
-#         Test that apply returns the correct result
-#         """
-#         with WorkerPool(1) as pool:
-#             results = [pool.apply(self._square, (i,)) for i in range(10)]
-#             self.assertEqual(results, [self._square(i) for i in range(10)])
-
-#     @staticmethod
-#     def _callback(_):
-#         return 0
-
-#     @staticmethod
-#     def _error_callback(_):
-#         return 1
-
-#     @staticmethod
-#     def _init():
-#         return
-
-#     @staticmethod
-#     def _exit():
-#         return 2
-
-#     @staticmethod
-#     def _square(x):
-#         return x * x
-
-
-# class ApplyAsyncTest(unittest.TestCase):
-
-#     def test_result(self):
-#         """
-#         Test that apply_async returns the correct result. Calling get multiple times should also work
-#         """
-#         with WorkerPool(2) as pool:
-#             results = [pool.apply_async(self._square, (i,)) for i in range(10)]
-#             [self.assertIsInstance(result, AsyncResult) for result in results]
-#             self.assertListEqual([result.get() for result in results], [self._square(i) for i in range(10)])
-#             self.assertListEqual([result.get() for result in results], [self._square(i) for i in range(10)])
-
-#     def test_args_kwargs(self):
-#         """
-#         Test that apply_async works with args and kwargs
-#         """
-#         with WorkerPool(2) as pool:
-#             results = [pool.apply_async(subtract, (i * i,), {'y': i}) for i in range(10)]
-#             self.assertListEqual([result.get() for result in results], [subtract(i * i, i) for i in range(10)])
-
-#             results = [pool.apply_async(subtract, (), {'x': i * i, 'y': i}) for i in range(10)]
-#             self.assertListEqual([result.get() for result in results], [subtract(i * i, i) for i in range(10)])
-
-#     def test_callback(self):
-#         """
-#         Test that apply_async calls the callback function on success
-#         """
-#         callback = Mock()
-#         with WorkerPool(1) as pool:
-#             pool.apply_async(self._square, (42,), callback=callback).get()
-#             callback.assert_called_once_with(42 * 42)
-
-#     def test_callback_error(self):
-#         """
-#         Test that apply_async calls the error callback function on error
-#         """
-#         callback = Mock()
-#         with WorkerPool(1) as pool:
-#             value_error = ValueError('test')
-#             with self.assertRaises(ValueError):
-#                 pool.apply_async(self._raise_exception, (value_error,), error_callback=callback).get()
-#             self.assertIsInstance(callback.call_args[0][0], ValueError)
-
-#     def test_second_apply_raises(self):
-#         """
-#         When a second apply task raises an exception, the first task should still be able to complete. I.e., the second
-#         worker shouldn't cause the entire pool to shutdown
-#         """
-#         with self.subTest("exception is raised"), WorkerPool(2) as pool:
-#             event = pool.ctx.Event()
-#             pool.set_shared_objects(event)
-#             first_result = pool.apply_async(self._wait_and_return, (42,))
-#             with self.assertRaises(ValueError):
-#                 pool.apply_async(self._raise_exception_2).get()
-#             self.assertFalse(first_result.ready())
-#             event.set()
-#             self.assertEqual(first_result.get(), 42)
-
-#         with self.subTest("timeout is raised"), WorkerPool(2) as pool:
-#             event = pool.ctx.Event()
-#             pool.set_shared_objects(event)
-#             first_result = pool.apply_async(self._wait_and_return, (42,))
-#             with self.assertRaises(TimeoutError):
-#                 pool.apply_async(self._wait_and_return, (1337,), task_timeout=0.01).get()
-#             self.assertFalse(first_result.ready())
-#             event.set()
-#             self.assertEqual(first_result.get(), 42)
-
-#     @staticmethod
-#     def _square(x):
-#         return x * x
-
-#     @staticmethod
-#     def _raise_exception(exception):
-#         raise exception
-
-#     @staticmethod
-#     def _raise_exception_2(_):
-#         raise ValueError
-
-#     @staticmethod
-#     def _wait_and_return(e, x):
-#         e.wait()
-#         return x
-
-
-# class WorkerIDTest(unittest.TestCase):
-
-#     def test_by_config_function(self):
-#         """
-#         Test setting passing on the worker ID using the pass_on_worker_id function
-#         """
-#         for n_jobs, pass_worker_id in product([1, 3], [True, False]):
-
-#             with self.subTest(n_jobs=n_jobs, pass_worker_id=pass_worker_id, config_type='function'), \
-#                  WorkerPool(n_jobs=n_jobs) as pool:
-
-#                 pool.pass_on_worker_id(pass_worker_id)
-
-#                 # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
-#                 # or when the shared objects are not equal to the given arguments
-#                 f = self._f1 if pass_worker_id else self._f2
-#                 self.assertListEqual(pool.map(f, ((n_jobs,) for _ in range(10)), iterable_len=10), [True] * 10)
-
-#     def test_by_constructor(self):
-#         """
-#         Test setting passing on the worker ID in the constructor
-#         """
-#         for n_jobs, pass_worker_id in product([1, 3], [True, False]):
-
-#             with self.subTest(n_jobs=n_jobs, pass_worker_id=pass_worker_id, config_type='constructor'), \
-#                  WorkerPool(n_jobs=n_jobs, pass_worker_id=pass_worker_id) as pool:
-
-#                 # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
-#                 # or when the shared objects are not equal to the given arguments
-#                 f = self._f1 if pass_worker_id else self._f2
-#                 self.assertListEqual(pool.map(f, ((n_jobs,) for _ in range(10)), iterable_len=10), [True] * 10)
-
-#     def test_start_methods(self):
-#         """
-#         Test for different start methods
-#         """
-#         for start_method in TEST_START_METHODS:
-#             with self.subTest(start_method=start_method), \
-#                     WorkerPool(n_jobs=2, pass_worker_id=True, start_method=start_method) as pool:
-#                 self.assertListEqual(pool.map(self._f1, ((2,) for _ in range(10)), iterable_len=10), [True] * 10)
-
-#     @staticmethod
-#     def _f1(_wid, _n_jobs):
-#         """
-#         Function with worker ID
-#         """
-#         tests_succeed = True
-#         tests_succeed &= isinstance(_wid, int)
-#         tests_succeed &= _wid >= 0
-#         tests_succeed &= _wid <= _n_jobs
-#         return tests_succeed
-
-#     @staticmethod
-#     def _f2(_n_jobs):
-#         """
-#         Function without worker ID (simply tests if WorkerPool correctly handles pass_worker_id=False)
-#         """
-#         return True
-
-
-# class SharedObjectsTest(unittest.TestCase):
-
-#     def test_by_config_function(self):
-#         """
-#         Tests passing shared objects using the set_shared_objects function
-#         """
-#         for n_jobs, shared_objects in product([1, 3], [None, (37, 42), ({'1', '2', '3'})]):
-
-#             with self.subTest(n_jobs=n_jobs, shared_objects=shared_objects, config_type='function'), \
-#                  WorkerPool(n_jobs=n_jobs) as pool:
-
-#                 # Configure pool
-#                 pool.set_shared_objects(shared_objects)
-
-#                 # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
-#                 # or when the shared objects are not equal to the given arguments
-#                 f = self._f1 if shared_objects else self._f2
-#                 self.assertListEqual(pool.map(f, ((shared_objects,) for _ in range(10)), iterable_len=10), [True] * 10)
-
-#     def test_by_constructor(self):
-#         """
-#         Tests passing shared objects in the constructor
-#         """
-#         for n_jobs, shared_objects in product([1, 3], [None, (37, 42), ({'1', '2', '3'})]):
-
-#             # Pass on arguments using the constructor instead
-#             with self.subTest(n_jobs=n_jobs, shared_objects=shared_objects, config_type='constructor'), \
-#                  WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects) as pool:
-
-#                 # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
-#                 # or when the shared objects are not equal to the given arguments
-#                 f = self._f1 if shared_objects else self._f2
-#                 self.assertListEqual(pool.map(f, ((shared_objects,) for _ in range(10)), iterable_len=10), [True] * 10)
-
-#     def test_start_methods(self):
-#         """
-#         Tests for different start methods
-#         """
-#         for start_method in TEST_START_METHODS:
-#             with self.subTest(start_method=start_method), \
-#                     WorkerPool(n_jobs=2, shared_objects=({'1', '2', '3'}), start_method=start_method) as pool:
-#                 self.assertListEqual(pool.map(self._f1, (({'1', '2', '3'},) for _ in range(10)), iterable_len=10),
-#                                      [True] * 10)
-
-#     @staticmethod
-#     def _f1(_sobjects, _args):
-#         """
-#         Function with shared objects
-#         """
-#         return _sobjects == _args
-
-#     @staticmethod
-#     def _f2(_args):
-#         """
-#         Function without shared objects (simply tests if WorkerPool correctly handles shared_objects=None)
-#         """
-#         return True
-
-
-# class WorkerStateTest(unittest.TestCase):
-
-#     def test_by_config_function(self):
-#         """
-#         Tests setting worker state using the set_use_worker_state function
-#         """
-#         for n_jobs, use_worker_state, n_tasks in product([1, 3], [False, True], [0, 1, 150]):
-
-#             with self.subTest(n_jobs=n_jobs, use_worker_state=use_worker_state, n_tasks=n_tasks),\
-#                  WorkerPool(n_jobs=n_jobs, pass_worker_id=True) as pool:
-
-#                 pool.set_use_worker_state(use_worker_state)
-
-#                 # When use_worker_state is set, the final (worker_id, n_args) of each worker should add up to the
-#                 # number of given tasks
-#                 f = self._f1 if use_worker_state else self._f2
-#                 results = pool.map(f, range(n_tasks), chunk_size=2)
-#                 if use_worker_state:
-#                     n_processed_per_worker = [0] * n_jobs
-#                     for wid, n_processed, tests_succeed in results:
-#                         n_processed_per_worker[wid] = n_processed
-#                         self.assertTrue(tests_succeed)
-#                     self.assertEqual(sum(n_processed_per_worker), n_tasks)
-
-#     def test_by_constructor(self):
-#         """
-#         Tests setting worker state in the constructor
-#         """
-#         for n_jobs, use_worker_state, n_tasks in product([1, 3], [False, True], [0, 1, 150]):
-
-#             with self.subTest(n_jobs=n_jobs, use_worker_state=use_worker_state, n_tasks=n_tasks), \
-#                  WorkerPool(n_jobs=n_jobs, pass_worker_id=True, use_worker_state=use_worker_state) as pool:
-
-#                 # When use_worker_state is set, the final (worker_id, n_args) of each worker should add up to the
-#                 # number of given tasks
-#                 f = self._f1 if use_worker_state else self._f2
-#                 results = pool.map(f, range(n_tasks), chunk_size=2)
-#                 if use_worker_state:
-#                     n_processed_per_worker = [0] * n_jobs
-#                     for wid, n_processed, tests_succeed in results:
-#                         n_processed_per_worker[wid] = n_processed
-#                         self.assertTrue(tests_succeed)
-#                     self.assertEqual(sum(n_processed_per_worker), n_tasks)
-
-#     def test_start_methods(self):
-#         """
-#         Test for different start methods
-#         """
-#         for start_method in TEST_START_METHODS:
-#             with self.subTest(start_method=start_method), \
-#                     WorkerPool(n_jobs=2, pass_worker_id=True, use_worker_state=True, start_method=start_method) as pool:
-#                 results = pool.map(self._f1, range(10), chunk_size=2)
-#                 n_processed_per_worker = [0, 0, 0]
-#                 for wid, n_processed, tests_succeed in results:
-#                     n_processed_per_worker[wid] = n_processed
-#                     self.assertTrue(tests_succeed)
-#                 self.assertEqual(sum(n_processed_per_worker), 10)
-
-#     @staticmethod
-#     def _f1(_wid, _wstate, _arg):
-#         """
-#         Function with worker ID and worker state
-#         """
-#         tests_succeed = True
-#         tests_succeed &= isinstance(_wstate, dict)
-
-#         # Worker id should always be the same
-#         _wstate.setdefault('worker_id', set()).add(_wid)
-#         tests_succeed &= _wstate['worker_id'] == {_wid}
-
-#         # Should contain previous args
-#         _wstate.setdefault('args', []).append(_arg)
-#         return _wid, len(_wstate['args']), tests_succeed
-
-#     @staticmethod
-#     def _f2(_wid, _):
-#         """
-#         Function with worker ID (simply tests if WorkerPool correctly handles use_worker_state=False)
-#         """
-#         pass
-
-
-# class InitFuncTest(unittest.TestCase):
-
-#     def setUp(self) -> None:
-#         self.test_data = range(10)
-#         self.test_desired_output = [42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
-
-#     def test_no_init_func(self):
-#         """
-#         If the init func is not provided, then `worker_state['test']` should fail
-#         """
-#         with self.assertRaises(KeyError), WorkerPool(n_jobs=4, shared_objects=(None,), use_worker_state=True) as pool:
-#             pool.map(self._f, range(10), worker_init=None)
-
-#     def test_init_func(self):
-#         """
-#         Test if init func is called. If it is, then `worker_state['test']` should be available. Due to the barrier we
-#         know for sure that the init func should be called as many times as there are workers
-#         """
-#         for n_jobs in [1, 3]:
-#             shared_objects = Barrier(n_jobs), Value('i', 0)
-#             with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects,
-#                                                          use_worker_state=True) as pool:
-#                 results = pool.map(self._f, self.test_data, worker_init=self._init, chunk_size=1)
-#                 self.assertListEqual(results, self.test_desired_output)
-#                 self.assertEqual(shared_objects[1].value, n_jobs)
-
-#     def test_worker_lifespan(self):
-#         """
-#         When workers have a limited lifespan they are spawned multiple times. Each time a worker starts it should call
-#         the init function. Due to the chunk size we know for sure that the init func should be called at least once for
-#         each task. However, when all tasks have been processed the workers are terminated and we don't know exactly how
-#         many workers restarted. We only know for sure that the init func should be called between 10 and 10 + n_jobs
-#         times
-#         """
-#         for n_jobs in [1, 3]:
-#             shared_objects = Barrier(n_jobs), Value('i', 0)
-#             with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects,
-#                                                          use_worker_state=True) as pool:
-#                 results = pool.map(self._f, self.test_data, worker_init=self._init, chunk_size=1, worker_lifespan=1)
-#                 self.assertListEqual(results, self.test_desired_output)
-#                 self.assertGreaterEqual(shared_objects[1].value, 10)
-#                 self.assertLessEqual(shared_objects[1].value, 10 + n_jobs)
-
-#     def test_error(self):
-#         """
-#         When an exception occurs in the init function it should properly shut down
-#         """
-#         with self.subTest("map"), self.assertRaises(ValueError), \
-#                 WorkerPool(n_jobs=4, shared_objects=(None,), use_worker_state=True) as pool:
-#             pool.map(self._f, self.test_data, worker_init=self._init_error)
-
-#         with self.subTest("apply"), self.assertRaises(ValueError), \
-#                 WorkerPool(n_jobs=2, shared_objects=(None,), use_worker_state=True) as pool:
-#             pool.apply(self._f, args=(0,), worker_init=self._init_error)
-
-#     def test_start_methods(self):
-#         """
-#         Test for different start methods
-#         """
-#         for start_method in TEST_START_METHODS:
-#             with self.subTest(start_method=start_method), \
-#                     WorkerPool(n_jobs=2, use_worker_state=True, start_method=start_method) as pool:
-#                 shared_objects = pool.ctx.Barrier(2), pool.ctx.Value('i', 0)
-#                 pool.set_shared_objects(shared_objects)
-#                 results = pool.map(self._f, self.test_data, worker_init=self._init, chunk_size=1)
-#                 self.assertListEqual(results, self.test_desired_output)
-#                 self.assertEqual(shared_objects[1].value, 2)
-
-#     @staticmethod
-#     def _init(shared_objects, worker_state):
-#         barrier, call_count = shared_objects
-
-#         # Only wait for the other workers the first time around (it will hang when worker_lifespan=1, otherwise)
-#         if call_count.value == 0:
-#             barrier.wait()
-
-#         with call_count.get_lock():
-#             call_count.value += 1
-#         worker_state['test'] = 42
-
-#     @staticmethod
-#     def _init_error(*_):
-#         raise ValueError(":(")
-
-#     @staticmethod
-#     def _f(_, worker_state, x):
-#         return worker_state['test'] + x
-
-
-# class ExitFuncTest(unittest.TestCase):
-
-#     def setUp(self) -> None:
-#         self.test_data = range(10)
-#         self.test_desired_output = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-
-#     def test_no_exit_func(self):
-#         """
-#         If the exit func is not provided, then exit results shouldn't be available
-#         """
-#         shared_objects = Barrier(4), Value('i', 0)
-#         with WorkerPool(n_jobs=4, shared_objects=shared_objects, use_worker_state=True) as pool:
-#             results = pool.map(self._f1, range(10), worker_init=self._init, worker_exit=None)
-#             self.assertListEqual(results, self.test_desired_output)
-#             self.assertListEqual(pool.get_exit_results(), [])
-
-#     def test_exit_func(self):
-#         """
-#         Test if exit func is called. If it is, then exit results should be available. It should have as many elements
-#         as the number of jobs and should have the right content.
-#         """
-#         for n_jobs in [1, 3]:
-#             shared_objects = Barrier(n_jobs), Value('i', 0)
-#             with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects,
-#                                                          use_worker_state=True) as pool:
-#                 results = pool.map(self._f1, self.test_data, worker_init=self._init, worker_exit=self._exit)
-#                 self.assertListEqual(results, self.test_desired_output)
-#                 self.assertEqual(shared_objects[1].value, n_jobs)
-#                 self.assertEqual(len(pool.get_exit_results()), n_jobs)
-#                 self.assertEqual(sum(pool.get_exit_results()), sum(range(10)))
-
-#     def test_worker_lifespan(self):
-#         """
-#         When workers have a limited lifespan they are spawned multiple times. Each time a worker exits it should call
-#         the exit function. Due to the chunk size we know for sure that the exit func should be called at least once for
-#         each task. However, when all tasks have been processed the workers are terminated and we don't know exactly how
-#         many workers restarted. We only know for sure that the exit func should be called between 10 and 10 + n_jobs
-#         times
-#         """
-#         for n_jobs in [1, 3]:
-#             shared_objects = Barrier(n_jobs), Value('i', 0)
-#             with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects,
-#                                                          use_worker_state=True) as pool:
-#                 results = pool.map(self._f1, self.test_data, worker_init=self._init, worker_exit=self._exit,
-#                                    chunk_size=1, worker_lifespan=1)
-#                 self.assertListEqual(results, self.test_desired_output)
-#                 self.assertGreaterEqual(shared_objects[1].value, 10)
-#                 self.assertLessEqual(shared_objects[1].value, 10 + n_jobs)
-#                 self.assertEqual(len(pool.get_exit_results()), shared_objects[1].value)
-#                 self.assertEqual(sum(pool.get_exit_results()), sum(range(10)))
-
-#     def test_exit_func_big_payload(self):
-#         """
-#         Multiprocessing Pipes have a maximum buffer size (depending on the system it can be anywhere between 16-1024kb).
-#         Results from the pipe need to be received from the other end, before the workers are joined. Otherwise the
-#         process can hang indefinitely. Because exit results are fetched in a different way as regular results, we test
-#         that here. We send a payload of 10_000kb.
-#         """
-#         for n_jobs, worker_lifespan in product([1, 3], [None, 2]):
-#             with self.subTest(n_jobs=n_jobs, worker_lifespan=worker_lifespan), WorkerPool(n_jobs=n_jobs) as pool:
-#                 results = pool.map(self._f2, self.test_data, worker_exit=self._exit_big_payloud, chunk_size=1,
-#                                    worker_lifespan=worker_lifespan)
-#                 self.assertListEqual(results, self.test_desired_output)
-#                 self.assertTrue(bool(pool.get_exit_results()))
-#                 for exit_result in pool.get_exit_results():
-#                     self.assertEqual(len(exit_result), 10_000 * 1024)
-
-#     def test_error(self):
-#         """
-#         When an exception occurs in the exit function it should properly shut down
-#         """
-#         for worker_lifespan in [None, 2]:
-#             with self.subTest("map", worker_lifespan=worker_lifespan), self.assertRaises(ValueError), \
-#                     WorkerPool(n_jobs=4) as pool:
-#                 pool.map(self._f2, range(10), worker_lifespan=worker_lifespan, worker_exit=self._exit_error)
-
-#         with self.subTest("apply"), self.assertRaises(ValueError), WorkerPool(n_jobs=2) as pool:
-#             pool.apply(self._f2, args=(0,), worker_exit=self._exit_error)
-#             pool.stop_and_join()
-
-#     def test_start_methods(self):
-#         """
-#         Test for different start methods
-#         """
-#         for start_method in TEST_START_METHODS:
-#             with self.subTest(start_method=start_method), \
-#                     WorkerPool(n_jobs=2, use_worker_state=True, start_method=start_method) as pool:
-#                 shared_objects = pool.ctx.Barrier(2), pool.ctx.Value('i', 0)
-#                 pool.set_shared_objects(shared_objects)
-#                 results = pool.map(self._f1, self.test_data, worker_init=self._init, worker_exit=self._exit)
-#                 self.assertListEqual(results, self.test_desired_output)
-#                 self.assertEqual(shared_objects[1].value, 2)
-#                 self.assertEqual(len(pool.get_exit_results()), 2)
-#                 self.assertEqual(sum(pool.get_exit_results()), sum(range(10)))
-
-#     @staticmethod
-#     def _init(shared_objects, worker_state):
-#         barrier, call_count = shared_objects
-
-#         # Only wait for the other workers the first time around (it will hang when worker_lifespan=1, otherwise)
-#         if call_count.value == 0:
-#             barrier.wait()
-
-#         worker_state['count'] = 0
-
-#     @staticmethod
-#     def _f1(_, worker_state, x):
-#         worker_state['count'] += x
-#         return x
-
-#     @staticmethod
-#     def _f2(x):
-#         return x
-
-#     @staticmethod
-#     def _exit(shared_objects, worker_state):
-#         _, call_count = shared_objects
-#         with call_count.get_lock():
-#             call_count.value += 1
-#         return worker_state['count']
-
-#     @staticmethod
-#     def _exit_big_payloud():
-#         return np.random.bytes(10_000 * 1024)
-
-#     @staticmethod
-#     def _exit_error():
-#         raise ValueError(":'(")
+    def test_numpy_input(self):
+        """
+        Test map with numpy input
+        """
+        print()
+        for n_jobs, n_tasks_max_active, worker_lifespan, chunk_size, n_splits in tqdm([
+            (None, None, None, None, None),
+            (1, None, None, None, None),
+            (2, None, None, None, None),
+            (2, 2, None, None, None),
+            (2, None, 2, None, None),
+            (2, None, None, 3, None),
+            (2, None, None, None, 3),
+            (2, None, None, 3, 3),
+            (2, None, 1, 3, None)
+        ]):
+            with WorkerPool(n_jobs=n_jobs) as pool:
+
+                # Test numpy input. map should concatenate chunks of numpy output to a single output array if we
+                # instruct it to
+                with self.subTest(concatenate_numpy_output=True, map_function='map', n_jobs=n_jobs,
+                                  n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
+                                  chunk_size=chunk_size, n_splits=n_splits):
+                    results = pool.map(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
+                                       worker_lifespan=worker_lifespan, concatenate_numpy_output=True)
+                    self.assertIsInstance(results, np.ndarray)
+                    np.testing.assert_array_equal(results, self.test_desired_output_numpy)
+
+                # If we disable it we should get back chunks of the original array
+                with self.subTest(concatenate_numpy_output=False, map_function='map', n_jobs=n_jobs,
+                                  n_tasks_max_active=n_tasks_max_active, worker_lifespan=worker_lifespan,
+                                  chunk_size=chunk_size, n_splits=n_splits):
+                    results = pool.map(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
+                                       worker_lifespan=worker_lifespan, concatenate_numpy_output=False)
+                    self.assertIsInstance(results, list)
+                    np.testing.assert_array_equal(np.concatenate(results), self.test_desired_output_numpy)
+
+                # Numpy concatenation doesn't exist for the other functions
+                with self.subTest(map_function='imap', n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active,
+                                  worker_lifespan=worker_lifespan, chunk_size=chunk_size, n_splits=n_splits):
+                    results = pool.imap(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
+                                        worker_lifespan=worker_lifespan)
+                    self.assertIsInstance(results, types.GeneratorType)
+                    np.testing.assert_array_equal(np.concatenate(list(results)), self.test_desired_output_numpy)
+
+                # map_unordered and imap_unordered cannot be checked for correctness as we don't know the order of the
+                # returned results, except when n_jobs=1. In the other cases we could, however, check if all the values
+                # (numpy rows) that are returned are present (albeit being in a different order)
+                for map_func, result_type in ((pool.map_unordered, list), (pool.imap_unordered, types.GeneratorType)):
+
+                    with self.subTest(map_function=map_func, n_jobs=n_jobs, n_tasks_max_active=n_tasks_max_active,
+                                      worker_lifespan=worker_lifespan, chunk_size=chunk_size, n_splits=n_splits):
+
+                        results = map_func(square_numpy, self.test_data_numpy, max_tasks_active=n_tasks_max_active,
+                                           worker_lifespan=worker_lifespan)
+                        self.assertIsInstance(results, result_type)
+                        concattenated_results = np.concatenate(list(results))
+                        if n_jobs == 1:
+                            np.testing.assert_array_equal(concattenated_results, self.test_desired_output_numpy)
+                        else:
+                            # We sort the expected and actual results using lexsort, which sorts using a sequence of
+                            # keys. We transpose the array to sort on columns instead of rows.
+                            np.testing.assert_array_equal(
+                                concattenated_results[np.lexsort(concattenated_results.T)],
+                                self.test_desired_output_numpy[np.lexsort(self.test_desired_output_numpy.T)]
+                            )
+
+    def test_dictionary_input(self):
+        """
+        Test map with dictionary input
+        """
+        with WorkerPool(n_jobs=1) as pool:
+
+            # Should work
+            with self.subTest('correct input'):
+                results_list = pool.map(subtract, [{'x': 5, 'y': 2}, {'y': 5, 'x': 2}])
+                self.assertEqual(results_list, [3, -3])
+
+            # Should throw
+            with self.subTest("missing 'y', unknown parameter 'z'"), self.assertRaises(TypeError):
+                pool.map(subtract, [{'x': 5, 'z': 2}])
+
+            # Should throw
+            with self.subTest("unknown parameter 'z'"), self.assertRaises(TypeError):
+                pool.map(subtract, [{'x': 5, 'y': 2, 'z': 2}])
+
+    def test_start_methods(self):
+        """
+        Test different start methods. All should work just fine
+        """
+        print()
+        for start_method in tqdm(TEST_START_METHODS):
+            with self.subTest(start_method=start_method, map='map'), WorkerPool(2, start_method=start_method) as pool:
+                results_list = pool.map(square, self.test_data)
+                self.assertIsInstance(results_list, list)
+                self.assertEqual(self.test_desired_output, results_list)
+
+            with self.subTest(start_method=start_method, map='map_unordered'), \
+                    WorkerPool(2, start_method=start_method) as pool:
+                results_list = pool.map_unordered(square, self.test_data)
+                self.assertIsInstance(results_list, list)
+                self.assertEqual(self.test_desired_output, sorted(results_list, key=lambda tup: tup[0]))
+
+            with self.subTest(start_method=start_method, map='imap'), WorkerPool(2, start_method=start_method) as pool:
+                results_list = pool.imap(square, self.test_data)
+                self.assertIsInstance(results_list, types.GeneratorType)
+                self.assertListEqual(list(results_list), self.test_desired_output)
+
+            with self.subTest(start_method=start_method, map='imap_unordered'), \
+                    WorkerPool(2, start_method=start_method) as pool:
+                results_list = pool.imap_unordered(square, self.test_data)
+                self.assertIsInstance(results_list, types.GeneratorType)
+                self.assertEqual(self.test_desired_output, sorted(results_list, key=lambda tup: tup[0]))
+
+    def test_mixing_map_calls_keep_alive(self):
+        """
+        When using the same pool and keep_alive is True, mixing map calls is fine
+        """
+        with WorkerPool(2, keep_alive=True) as pool:
+            imap_results = pool.imap(square, self.test_data)
+            first_result = next(imap_results)  # Actually start the pool
+            map_results = pool.map(square_numpy, self.test_data_numpy, concatenate_numpy_output=True)
+            imap_results = [first_result] + list(imap_results)
+            self.assertListEqual(imap_results, self.test_desired_output)
+            np.testing.assert_array_equal(map_results, self.test_desired_output_numpy)
+
+    def test_mixing_map_calls_no_keep_alive(self):
+        """
+        When using the same pool and keep_alive is False, mixing map calls is not allowed. However, the first map
+        call should just continue working
+        """
+        with WorkerPool(2, keep_alive=False) as pool:
+            imap_results = pool.imap(square, self.test_data)
+            first_result = next(imap_results)  # Actually start the pool
+            with self.assertRaises(RuntimeError):
+                pool.map(square_numpy, self.test_data_numpy, concatenate_numpy_output=True)
+            imap_results = [first_result] + list(imap_results)
+            self.assertListEqual(imap_results, self.test_desired_output)
+
+    def test_terminate(self):
+        """
+        When a lazy map call is running and the pool is terminated, exhausting the results should raise
+        """
+        with self.subTest("calling terminate() explicitly"), WorkerPool(1) as pool:
+            imap_results = pool.imap(square, self.test_data)
+            next(imap_results)  # Actually start the pool
+            pool.terminate()
+            with self.assertRaises(RuntimeError):
+                list(imap_results)
+
+        with self.subTest("calling terminate() implicitly"):
+            with WorkerPool(1) as pool:
+                imap_results = pool.imap(square, self.test_data)
+                next(imap_results)  # Actually start the pool
+            with self.assertRaises(RuntimeError):
+                list(imap_results)
+
+        # Before, this could cause a deadlock once all tests were done
+        print()
+        with self.subTest("calling terminate() implicitly, with progress bar"):
+            with WorkerPool(1) as pool:
+                imap_results = pool.imap(square, self.test_data, progress_bar=True)
+                next(imap_results)  # Actually start the pool
+            with self.assertRaises(RuntimeError):
+                list(imap_results)
+
+
+class PoolInThreadTest(unittest.TestCase):
+
+    def setUp(self):
+        self.test_data = [1, 2, 3, 5, 6, 9, 37, 42, 1337, 0, 3, 5, 0]
+        self.test_desired_output = [self._square(x) for x in self.test_data]
+
+    def test_start_methods(self):
+        """
+        Test that a WorkerPool can be started inside a thread, which isn't the main thread. Test for different start
+        methods. All should work just fine
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method):
+                t = Thread(target=self._map_thread, args=(start_method,))
+                t.start()
+                t.join()
+
+    def _map_thread(self, start_method):
+        """
+        This function is called from within a thread
+        """
+        self.assertNotEqual(current_thread(), main_thread())
+        with WorkerPool(2, start_method=start_method) as pool:
+            results_list = pool.map(self._square, self.test_data)
+            self.assertIsInstance(results_list, list)
+            self.assertListEqual(self.test_desired_output, results_list)
+
+    @staticmethod
+    def _square(x):
+        return x * x
+
+
+class ApplyTest(unittest.TestCase):
+
+    def test_apply_async_call(self):
+        """
+        Test that apply simply calls apply_async
+        """
+        with WorkerPool(1) as pool, patch.object(pool, 'apply_async') as mock_apply_async:
+            pool.apply(subtract, (1,), {'y': 2}, self._callback, self._error_callback,
+                       self._init, self._exit, 0.1, 0.2, 0.3)
+            mock_apply_async.assert_called_once_with(subtract, (1,), {'y': 2}, self._callback, self._error_callback,
+                                                     self._init, self._exit, 0.1, 0.2, 0.3)
+
+    def test_result(self):
+        """
+        Test that apply returns the correct result
+        """
+        with WorkerPool(1) as pool:
+            results = [pool.apply(self._square, (i,)) for i in range(10)]
+            self.assertEqual(results, [self._square(i) for i in range(10)])
+
+    @staticmethod
+    def _callback(_):
+        return 0
+
+    @staticmethod
+    def _error_callback(_):
+        return 1
+
+    @staticmethod
+    def _init():
+        return
+
+    @staticmethod
+    def _exit():
+        return 2
+
+    @staticmethod
+    def _square(x):
+        return x * x
+
+
+class ApplyAsyncTest(unittest.TestCase):
+
+    def test_result(self):
+        """
+        Test that apply_async returns the correct result. Calling get multiple times should also work
+        """
+        with WorkerPool(2) as pool:
+            results = [pool.apply_async(self._square, (i,)) for i in range(10)]
+            [self.assertIsInstance(result, AsyncResult) for result in results]
+            self.assertListEqual([result.get() for result in results], [self._square(i) for i in range(10)])
+            self.assertListEqual([result.get() for result in results], [self._square(i) for i in range(10)])
+
+    def test_args_kwargs(self):
+        """
+        Test that apply_async works with args and kwargs
+        """
+        with WorkerPool(2) as pool:
+            results = [pool.apply_async(subtract, (i * i,), {'y': i}) for i in range(10)]
+            self.assertListEqual([result.get() for result in results], [subtract(i * i, i) for i in range(10)])
+
+            results = [pool.apply_async(subtract, (), {'x': i * i, 'y': i}) for i in range(10)]
+            self.assertListEqual([result.get() for result in results], [subtract(i * i, i) for i in range(10)])
+
+    def test_callback(self):
+        """
+        Test that apply_async calls the callback function on success
+        """
+        callback = Mock()
+        with WorkerPool(1) as pool:
+            pool.apply_async(self._square, (42,), callback=callback).get()
+            callback.assert_called_once_with(42 * 42)
+
+    def test_callback_error(self):
+        """
+        Test that apply_async calls the error callback function on error
+        """
+        callback = Mock()
+        with WorkerPool(1) as pool:
+            value_error = ValueError('test')
+            with self.assertRaises(ValueError):
+                pool.apply_async(self._raise_exception, (value_error,), error_callback=callback).get()
+            self.assertIsInstance(callback.call_args[0][0], ValueError)
+
+    def test_second_apply_raises(self):
+        """
+        When a second apply task raises an exception, the first task should still be able to complete. I.e., the second
+        worker shouldn't cause the entire pool to shutdown
+        """
+        with self.subTest("exception is raised"), WorkerPool(2) as pool:
+            event = pool.ctx.Event()
+            pool.set_shared_objects(event)
+            first_result = pool.apply_async(self._wait_and_return, (42,))
+            with self.assertRaises(ValueError):
+                pool.apply_async(self._raise_exception_2).get()
+            self.assertFalse(first_result.ready())
+            event.set()
+            self.assertEqual(first_result.get(), 42)
+
+        with self.subTest("timeout is raised"), WorkerPool(2) as pool:
+            event = pool.ctx.Event()
+            pool.set_shared_objects(event)
+            first_result = pool.apply_async(self._wait_and_return, (42,))
+            with self.assertRaises(TimeoutError):
+                pool.apply_async(self._wait_and_return, (1337,), task_timeout=0.01).get()
+            self.assertFalse(first_result.ready())
+            event.set()
+            self.assertEqual(first_result.get(), 42)
+
+    @staticmethod
+    def _square(x):
+        return x * x
+
+    @staticmethod
+    def _raise_exception(exception):
+        raise exception
+
+    @staticmethod
+    def _raise_exception_2(_):
+        raise ValueError
+
+    @staticmethod
+    def _wait_and_return(e, x):
+        e.wait()
+        return x
+
+
+class WorkerIDTest(unittest.TestCase):
+
+    def test_by_config_function(self):
+        """
+        Test setting passing on the worker ID using the pass_on_worker_id function
+        """
+        for n_jobs, pass_worker_id in product([1, 3], [True, False]):
+
+            with self.subTest(n_jobs=n_jobs, pass_worker_id=pass_worker_id, config_type='function'), \
+                 WorkerPool(n_jobs=n_jobs) as pool:
+
+                pool.pass_on_worker_id(pass_worker_id)
+
+                # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
+                # or when the shared objects are not equal to the given arguments
+                f = self._f1 if pass_worker_id else self._f2
+                self.assertListEqual(pool.map(f, ((n_jobs,) for _ in range(10)), iterable_len=10), [True] * 10)
+
+    def test_by_constructor(self):
+        """
+        Test setting passing on the worker ID in the constructor
+        """
+        for n_jobs, pass_worker_id in product([1, 3], [True, False]):
+
+            with self.subTest(n_jobs=n_jobs, pass_worker_id=pass_worker_id, config_type='constructor'), \
+                 WorkerPool(n_jobs=n_jobs, pass_worker_id=pass_worker_id) as pool:
+
+                # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
+                # or when the shared objects are not equal to the given arguments
+                f = self._f1 if pass_worker_id else self._f2
+                self.assertListEqual(pool.map(f, ((n_jobs,) for _ in range(10)), iterable_len=10), [True] * 10)
+
+    def test_start_methods(self):
+        """
+        Test for different start methods
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, pass_worker_id=True, start_method=start_method) as pool:
+                self.assertListEqual(pool.map(self._f1, ((2,) for _ in range(10)), iterable_len=10), [True] * 10)
+
+    @staticmethod
+    def _f1(_wid, _n_jobs):
+        """
+        Function with worker ID
+        """
+        tests_succeed = True
+        tests_succeed &= isinstance(_wid, int)
+        tests_succeed &= _wid >= 0
+        tests_succeed &= _wid <= _n_jobs
+        return tests_succeed
+
+    @staticmethod
+    def _f2(_n_jobs):
+        """
+        Function without worker ID (simply tests if WorkerPool correctly handles pass_worker_id=False)
+        """
+        return True
+
+
+# TODO: additional tests for apply?
+class SharedObjectsTest(unittest.TestCase):
+
+    def test_by_config_function(self):
+        """
+        Tests passing shared objects using the set_shared_objects function
+        """
+        for n_jobs, shared_objects in product([1, 3], [None, (37, 42), ({'1', '2', '3'})]):
+
+            with self.subTest(n_jobs=n_jobs, shared_objects=shared_objects, config_type='function'), \
+                 WorkerPool(n_jobs=n_jobs) as pool:
+
+                # Configure pool
+                pool.set_shared_objects(shared_objects)
+
+                # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
+                # or when the shared objects are not equal to the given arguments
+                f = self._f1 if shared_objects else self._f2
+                self.assertListEqual(pool.map(f, ((shared_objects,) for _ in range(10)), iterable_len=10), [True] * 10)
+
+    def test_by_constructor(self):
+        """
+        Tests passing shared objects in the constructor
+        """
+        for n_jobs, shared_objects in product([1, 3], [None, (37, 42), ({'1', '2', '3'})]):
+
+            # Pass on arguments using the constructor instead
+            with self.subTest(n_jobs=n_jobs, shared_objects=shared_objects, config_type='constructor'), \
+                 WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects) as pool:
+
+                # Tests should fail when number of arguments in function is incorrect, worker ID is not within range,
+                # or when the shared objects are not equal to the given arguments
+                f = self._f1 if shared_objects else self._f2
+                self.assertListEqual(pool.map(f, ((shared_objects,) for _ in range(10)), iterable_len=10), [True] * 10)
+
+    def test_start_methods(self):
+        """
+        Tests for different start methods
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, shared_objects=({'1', '2', '3'}), start_method=start_method) as pool:
+                self.assertListEqual(pool.map(self._f1, (({'1', '2', '3'},) for _ in range(10)), iterable_len=10),
+                                     [True] * 10)
+
+    @staticmethod
+    def _f1(_sobjects, _args):
+        """
+        Function with shared objects
+        """
+        return _sobjects == _args
+
+    @staticmethod
+    def _f2(_args):
+        """
+        Function without shared objects (simply tests if WorkerPool correctly handles shared_objects=None)
+        """
+        return True
+
+
+# TODO: additional tests for apply?
+class WorkerStateTest(unittest.TestCase):
+
+    def test_by_config_function(self):
+        """
+        Tests setting worker state using the set_use_worker_state function
+        """
+        for n_jobs, use_worker_state, n_tasks in product([1, 3], [False, True], [0, 1, 150]):
+            with self.subTest(n_jobs=n_jobs, use_worker_state=use_worker_state, n_tasks=n_tasks),\
+                 WorkerPool(n_jobs=n_jobs, pass_worker_id=True) as pool:
+
+                pool.set_use_worker_state(use_worker_state)
+
+                # When use_worker_state is set, the final (worker_id, n_args) of each worker should add up to the
+                # number of given tasks
+                f = self._f1 if use_worker_state else self._f2
+                results = pool.map(f, range(n_tasks), chunk_size=2)
+                if use_worker_state:
+                    n_processed_per_worker = [0] * n_jobs
+                    for wid, n_processed, tests_succeed in results:
+                        n_processed_per_worker[wid] = n_processed
+                        self.assertTrue(tests_succeed)
+                    self.assertEqual(sum(n_processed_per_worker), n_tasks)
+
+    def test_by_constructor(self):
+        """
+        Tests setting worker state in the constructor
+        """
+        for n_jobs, use_worker_state, n_tasks in product([1, 3], [False, True], [0, 1, 150]):
+
+            with self.subTest(n_jobs=n_jobs, use_worker_state=use_worker_state, n_tasks=n_tasks), \
+                 WorkerPool(n_jobs=n_jobs, pass_worker_id=True, use_worker_state=use_worker_state) as pool:
+
+                # When use_worker_state is set, the final (worker_id, n_args) of each worker should add up to the
+                # number of given tasks
+                f = self._f1 if use_worker_state else self._f2
+                results = pool.map(f, range(n_tasks), chunk_size=2)
+                if use_worker_state:
+                    n_processed_per_worker = [0] * n_jobs
+                    for wid, n_processed, tests_succeed in results:
+                        n_processed_per_worker[wid] = n_processed
+                        self.assertTrue(tests_succeed)
+                    self.assertEqual(sum(n_processed_per_worker), n_tasks)
+
+    def test_start_methods(self):
+        """
+        Test for different start methods
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, pass_worker_id=True, use_worker_state=True, start_method=start_method) as pool:
+                results = pool.map(self._f1, range(10), chunk_size=2)
+                n_processed_per_worker = [0, 0, 0]
+                for wid, n_processed, tests_succeed in results:
+                    n_processed_per_worker[wid] = n_processed
+                    self.assertTrue(tests_succeed)
+                self.assertEqual(sum(n_processed_per_worker), 10)
+
+    @staticmethod
+    def _f1(_wid, _wstate, _arg):
+        """
+        Function with worker ID and worker state
+        """
+        tests_succeed = True
+        tests_succeed &= isinstance(_wstate, dict)
+
+        # Worker id should always be the same
+        _wstate.setdefault('worker_id', set()).add(_wid)
+        tests_succeed &= _wstate['worker_id'] == {_wid}
+
+        # Should contain previous args
+        _wstate.setdefault('args', []).append(_arg)
+        return _wid, len(_wstate['args']), tests_succeed
+
+    @staticmethod
+    def _f2(_wid, _):
+        """
+        Function with worker ID (simply tests if WorkerPool correctly handles use_worker_state=False)
+        """
+        pass
+
+
+# TODO: additional tests for apply?
+class InitFuncTest(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.test_data = range(10)
+        self.test_desired_output = [42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
+
+    def test_no_init_func(self):
+        """
+        If the init func is not provided, then `worker_state['test']` should fail
+        """
+        with self.assertRaises(KeyError), WorkerPool(n_jobs=4, shared_objects=(None,), use_worker_state=True) as pool:
+            pool.map(self._f, range(10), worker_init=None)
+
+    def test_init_func(self):
+        """
+        Test if init func is called. If it is, then `worker_state['test']` should be available. Due to the barrier we
+        know for sure that the init func should be called as many times as there are workers
+        """
+        for n_jobs in [1, 3]:
+            shared_objects = Barrier(n_jobs), Value('i', 0)
+            with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects,
+                                                         use_worker_state=True) as pool:
+                results = pool.map(self._f, self.test_data, worker_init=self._init, chunk_size=1)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertEqual(shared_objects[1].value, n_jobs)
+
+    def test_worker_lifespan(self):
+        """
+        When workers have a limited lifespan they are spawned multiple times. Each time a worker starts it should call
+        the init function. Due to the chunk size we know for sure that the init func should be called at least once for
+        each task. However, when all tasks have been processed the workers are terminated and we don't know exactly how
+        many workers restarted. We only know for sure that the init func should be called between 10 and 10 + n_jobs
+        times
+        """
+        for n_jobs in [1, 3]:
+            shared_objects = Barrier(n_jobs), Value('i', 0)
+            with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects,
+                                                         use_worker_state=True) as pool:
+                results = pool.map(self._f, self.test_data, worker_init=self._init, chunk_size=1, worker_lifespan=1)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertGreaterEqual(shared_objects[1].value, 10)
+                self.assertLessEqual(shared_objects[1].value, 10 + n_jobs)
+
+    def test_error(self):
+        """
+        When an exception occurs in the init function it should properly shut down
+        """
+        with self.subTest("map"), self.assertRaises(ValueError), \
+                WorkerPool(n_jobs=4, shared_objects=(None,), use_worker_state=True) as pool:
+            pool.map(self._f, self.test_data, worker_init=self._init_error)
+
+        with self.subTest("apply"), self.assertRaises(ValueError), \
+                WorkerPool(n_jobs=2, shared_objects=(None,), use_worker_state=True) as pool:
+            pool.apply(self._f, args=(0,), worker_init=self._init_error)
+
+    def test_start_methods(self):
+        """
+        Test for different start methods
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, use_worker_state=True, start_method=start_method) as pool:
+                shared_objects = pool.ctx.Barrier(2), pool.ctx.Value('i', 0)
+                pool.set_shared_objects(shared_objects)
+                results = pool.map(self._f, self.test_data, worker_init=self._init, chunk_size=1)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertEqual(shared_objects[1].value, 2)
+
+    @staticmethod
+    def _init(shared_objects, worker_state):
+        barrier, call_count = shared_objects
+
+        # Only wait for the other workers the first time around (it will hang when worker_lifespan=1, otherwise)
+        if call_count.value == 0:
+            barrier.wait()
+
+        with call_count.get_lock():
+            call_count.value += 1
+        worker_state['test'] = 42
+
+    @staticmethod
+    def _init_error(*_):
+        raise ValueError(":(")
+
+    @staticmethod
+    def _f(_, worker_state, x):
+        return worker_state['test'] + x
+
+
+class ExitFuncTest(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.test_data = range(10)
+        self.test_desired_output = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+    def test_no_exit_func_map(self):
+        """
+        If the exit func is not provided, then exit results shouldn't be available
+        """
+        shared_objects = Barrier(4), Value('i', 0)
+        with WorkerPool(n_jobs=4, shared_objects=shared_objects, use_worker_state=True) as pool:
+            results = pool.map(self._f1, range(10), worker_init=self._init, worker_exit=None)
+            self.assertListEqual(results, self.test_desired_output)
+            with self.assertRaises(ValueError):
+                pool.get_exit_results()
+                
+    def test_no_exit_func_apply(self):
+        """
+        If the exit func is not provided, then exit results shouldn't be available. Note that the init function is only
+        ran once, for the worker that processes the task
+        """
+        shared_objects = Barrier(1), Value('i', 0)
+        with WorkerPool(n_jobs=4, shared_objects=shared_objects, use_worker_state=True) as pool:
+            results = pool.apply(self._f1, args=(0,), worker_init=self._init, worker_exit=None)
+            self.assertEqual(results, 0)
+            pool.stop_and_join()
+            with self.assertRaises(ValueError):
+                pool.get_exit_results()
+
+    def test_exit_func_map(self):
+        """
+        Test if exit func is called. If it is, then exit results should be available. It should have as many elements
+        as the number of jobs and should have the right content.
+        """
+        for n_jobs in [1, 3]:
+            shared_objects = Barrier(n_jobs), Value('i', 0)
+            with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects,
+                                                         use_worker_state=True) as pool:
+                results = pool.map(self._f1, self.test_data, worker_init=self._init, worker_exit=self._exit)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertEqual(shared_objects[1].value, n_jobs)
+                self.assertEqual(len(pool.get_exit_results()), n_jobs)
+                self.assertEqual(sum(pool.get_exit_results()), sum(range(10)))
+            
+    def test_exit_func_apply(self):
+        """
+        Test if exit func is called. If it is, then exit results should be available. It should be a list with a single
+        element
+        """
+        shared_objects = Barrier(1), Value('i', 0)
+        with WorkerPool(n_jobs=2, shared_objects=shared_objects, use_worker_state=True) as pool:
+            result = pool.apply(self._f1, args=(0,), worker_init=self._init, worker_exit=self._exit)
+            pool.stop_and_join()
+            self.assertEqual(result, 0)
+            self.assertEqual(len(pool.get_exit_results()), 1)
+            self.assertEqual(pool.get_exit_results()[0], 0)
+
+    def test_worker_lifespan(self):
+        """
+        When workers have a limited lifespan they are spawned multiple times. Each time a worker exits it should call
+        the exit function. Due to the chunk size we know for sure that the exit func should be called at least once for
+        each task. However, when all tasks have been processed the workers are terminated and we don't know exactly how
+        many workers restarted. We only know for sure that the exit func should be called between 10 and 10 + n_jobs
+        times
+        """
+        for n_jobs in [1, 3]:
+            shared_objects = Barrier(n_jobs), Value('i', 0)
+            with self.subTest(n_jobs=n_jobs), WorkerPool(n_jobs=n_jobs, shared_objects=shared_objects,
+                                                         use_worker_state=True) as pool:
+                results = pool.map(self._f1, self.test_data, worker_init=self._init, worker_exit=self._exit,
+                                   chunk_size=1, worker_lifespan=1)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertGreaterEqual(shared_objects[1].value, 10)
+                self.assertLessEqual(shared_objects[1].value, 10 + n_jobs)
+                self.assertEqual(len(pool.get_exit_results()), shared_objects[1].value)
+                self.assertEqual(sum(pool.get_exit_results()), sum(range(10)))
+
+    def test_exit_func_big_payload_map(self):
+        """
+        Multiprocessing Pipes have a maximum buffer size (depending on the system it can be anywhere between 16-1024kb).
+        Results from the pipe need to be received from the other end, before the workers are joined. Otherwise, the
+        process can hang indefinitely. We send a payload of 10_000kb.
+        """
+        for n_jobs, worker_lifespan in product([1, 3], [None, 2]):
+            with self.subTest(n_jobs=n_jobs, worker_lifespan=worker_lifespan), WorkerPool(n_jobs=n_jobs) as pool:
+                results = pool.map(self._f2, self.test_data, worker_exit=self._exit_big_payloud, chunk_size=1,
+                                   worker_lifespan=worker_lifespan)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertGreaterEqual(len(pool.get_exit_results()), n_jobs)
+                for exit_result in pool.get_exit_results():
+                    self.assertEqual(len(exit_result), 10_000 * 1024)
+                    
+    def test_exit_func_big_payload_apply(self):
+        """
+        Multiprocessing Pipes have a maximum buffer size (depending on the system it can be anywhere between 16-1024kb).
+        Results from the pipe need to be received from the other end, before the workers are joined. Otherwise, the
+        process can hang indefinitely. We send a payload of 10_000kb.
+        """
+        with WorkerPool(n_jobs=2) as pool:
+            result = pool.apply(self._f2, (0,), worker_exit=self._exit_big_payloud)
+            self.assertEqual(result, 0)
+            pool.stop_and_join()
+            self.assertEqual(len(pool.get_exit_results()), 1)
+            for exit_result in pool.get_exit_results():
+                self.assertEqual(len(exit_result), 10_000 * 1024)
+
+    def test_error_map(self):
+        """
+        When an exception occurs in the exit function it should be properly propagated. A user could get lucky when
+        worker_lifespan=None and the error occurs after all results have been processed. In that case, only retrieving
+        the exit results will raise the error. However, when the error occurs before all results have been processed 
+        (e.g., in the case workers get restarted), the error should be raised by the pool.map call
+        """
+        for worker_lifespan in [None, 2]:
+            with self.subTest(worker_lifespan=worker_lifespan), self.assertRaises(ValueError), \
+                    WorkerPool(n_jobs=4) as pool:
+                pool.map(self._f2, range(10), worker_lifespan=worker_lifespan, worker_exit=self._exit_error)
+                pool.get_exit_results()
+            
+    def test_error_apply(self):
+        """
+        When an exception occurs in the exit function it should be properly propagated. In the case of apply the result
+        should always be availble and the only way to know if an error occurred in the exit function is by obtaining
+        the exit results
+        """
+        with self.assertRaises(ValueError), WorkerPool(n_jobs=2) as pool:
+            result = pool.apply(self._f2, args=(0,), worker_exit=self._exit_error)
+            self.assertEqual(result, 0)
+            pool.stop_and_join()
+            pool.get_exit_results()
+
+    def test_start_methods_map(self):
+        """
+        Test for different start methods
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, use_worker_state=True, start_method=start_method) as pool:
+                shared_objects = pool.ctx.Barrier(2), pool.ctx.Value('i', 0)
+                pool.set_shared_objects(shared_objects)
+                results = pool.map(self._f1, self.test_data, worker_init=self._init, worker_exit=self._exit)
+                self.assertListEqual(results, self.test_desired_output)
+                self.assertEqual(shared_objects[1].value, 2)
+                self.assertEqual(len(pool.get_exit_results()), 2)
+                self.assertEqual(sum(pool.get_exit_results()), sum(range(10)))
+                
+    def test_start_methods_apply(self):
+        """
+        Test for different start methods
+        """
+        for start_method in TEST_START_METHODS:
+            with self.subTest(start_method=start_method), \
+                    WorkerPool(n_jobs=2, use_worker_state=True, start_method=start_method) as pool:
+                shared_objects = pool.ctx.Barrier(1), pool.ctx.Value('i', 0)
+                pool.set_shared_objects(shared_objects)
+                result = pool.apply(self._f1, (0,), worker_init=self._init, worker_exit=self._exit)
+                self.assertEqual(result, 0)
+                pool.stop_and_join()
+                self.assertEqual(shared_objects[1].value, 1)
+                self.assertEqual(len(pool.get_exit_results()), 1)
+                self.assertEqual(sum(pool.get_exit_results()), 0)
+
+    @staticmethod
+    def _init(shared_objects, worker_state):
+        barrier, call_count = shared_objects
+
+        # Only wait for the other workers the first time around (it will hang when worker_lifespan=1, otherwise)
+        if call_count.value == 0:
+            barrier.wait()
+
+        worker_state['count'] = 0
+
+    @staticmethod
+    def _f1(_, worker_state, x):
+        worker_state['count'] += x
+        return x
+
+    @staticmethod
+    def _f2(x):
+        return x
+
+    @staticmethod
+    def _exit(shared_objects, worker_state):
+        _, call_count = shared_objects
+        with call_count.get_lock():
+            call_count.value += 1
+        return worker_state['count']
+
+    @staticmethod
+    def _exit_big_payloud():
+        return np.random.bytes(10_000 * 1024)
+
+    @staticmethod
+    def _exit_error():
+        raise ValueError(":'(")
 
 
 # class DaemonTest(unittest.TestCase):

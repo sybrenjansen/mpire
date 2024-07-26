@@ -4,7 +4,25 @@ import queue
 import threading
 from typing import Any, Callable, Dict, List, Optional, Union
 
-job_counter = itertools.count()
+
+class JobCounter:
+    """JobCounter is a simpel auto-incrementing counter for job ids."""
+    
+    def __init__(self) -> None:
+        self.idx = 0
+        
+    def __next__(self) -> int:
+        self.idx += 1
+        return self.idx
+    
+    def last_job_id(self) -> Optional[int]:
+        return None if self.idx == 0 else self.idx
+    
+    def next_job_id(self) -> int:
+        return self.idx + 1
+    
+
+JOB_COUNTER = JobCounter()
 
 
 class AsyncResult:
@@ -13,6 +31,7 @@ class AsyncResult:
     def __init__(
         self,
         cache: Dict,
+        task_params_dict: Dict,
         callback: Optional[Callable],
         error_callback: Optional[Callable],
         job_id: Optional[int] = None,
@@ -21,6 +40,7 @@ class AsyncResult:
     ) -> None:
         """
         :param cache: Cache for storing intermediate results
+        :param task_params_dict: Dictionary with the parameters of the task
         :param callback: Callback function to call when the task is finished. The callback function receives the output
             of the function as its argument
         :param error_callback: Callback function to call when the task has failed. The callback function receives the
@@ -31,12 +51,13 @@ class AsyncResult:
             ``TimeoutError``. Use ``None`` to disable (default)
         """
         self._cache = cache
+        self._task_params_dict = task_params_dict
         self._callback = callback
         self._error_callback = error_callback
         self._delete_from_cache = delete_from_cache
         self._timeout = timeout
 
-        self.job_id = next(job_counter) if job_id is None else job_id
+        self.job_id = next(JOB_COUNTER) if job_id is None else job_id
         self._ready_event = threading.Event()
         self._success = None
         self._value = None
@@ -103,7 +124,7 @@ class AsyncResult:
 
         self._ready_event.set()
         if self._delete_from_cache:
-            del self._cache[self.job_id]
+            del self._cache[self.job_id], self._task_params_dict[self.job_id]
 
 
 class UnorderedAsyncResultIterator:
@@ -123,7 +144,7 @@ class UnorderedAsyncResultIterator:
         self._n_tasks = None
         self._timeout = timeout
 
-        self.job_id = next(job_counter) if job_id is None else job_id
+        self.job_id = next(JOB_COUNTER) if job_id is None else job_id
         self._items = collections.deque()
         self._condition = threading.Condition(lock=threading.Lock())
         self._n_received = 0
@@ -155,7 +176,7 @@ class UnorderedAsyncResultIterator:
             self._n_returned += 1
             r = self._items.popleft()
             if self.enable_prints:
-                print("Imap iterator: next returning (1):", r, self._n_tasks, self._n_returned)
+                print("Imap iterator: next returning (1):", str(r)[:500], self._n_tasks, self._n_returned)
             return r
 
         if self._n_tasks is not None and self._n_returned == self._n_tasks:
@@ -178,7 +199,7 @@ class UnorderedAsyncResultIterator:
             self._n_returned += 1
             r = self._items.popleft()
             if self.enable_prints:
-                print("Imap iterator: next returning (2):", r, self._n_tasks, self._n_returned)
+                print("Imap iterator: next returning (2):", str(r)[:500], self._n_tasks, self._n_returned)
             return r
 
     __next__ = next
@@ -246,29 +267,6 @@ class UnorderedAsyncResultIterator:
         del self._cache[self.job_id]
 
 
-class AsyncResultWithExceptionGetter(AsyncResult):
-
-    def __init__(self, cache: Dict, job_id: int) -> None:
-        super().__init__(
-            cache, callback=None, error_callback=None, job_id=job_id, delete_from_cache=False, timeout=None
-        )
-
-    def get_exception(self) -> Exception:
-        """
-        :return: The exception raised by the function
-        """
-        self.wait()
-        return self._value
-
-    def reset(self) -> None:
-        """
-        Reset the result object
-        """
-        self._success = None
-        self._value = None
-        self._ready_event.clear()
-
-
 class UnorderedAsyncExitResultIterator(UnorderedAsyncResultIterator):
 
     def __init__(self) -> None:
@@ -278,9 +276,10 @@ class UnorderedAsyncExitResultIterator(UnorderedAsyncResultIterator):
         """
         :return: List of exit results
         """
+        if self.exception_thrown():
+            raise self.get_exception()
+        
         return list(self._items)
 
 
-AsyncResultType = Union[
-    AsyncResult, AsyncResultWithExceptionGetter, UnorderedAsyncResultIterator, UnorderedAsyncExitResultIterator
-]
+AsyncResultType = Union[AsyncResult, UnorderedAsyncResultIterator, UnorderedAsyncExitResultIterator]

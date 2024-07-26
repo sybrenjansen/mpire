@@ -25,9 +25,6 @@ SKIP_JOB_PILL = '\2'
 # Pill for letting workers know that the next item in the queue are new map params
 NEW_TASK_PARAMS_PILL = '\3'
 
-# Fixed job ID for the main process, and fixed task IDs for the worker_init, target, and worker_exit functions
-MAIN_PROCESS = -1
-
 # The job done wait type is used to signal the main process that the worker has received the job done signal for a
 # specific job. The max duration tasks type is used to signal the main process that the worker has sent the max
 # duration tasks update.
@@ -39,13 +36,14 @@ class TaskType(Enum):
     MAX_DURATION_TASKS = auto()
     
 
-@dataclass
+@dataclass(init=True, frozen=True)
 class Result:
     worker_id: Optional[int] = None
     job_id: Optional[int] = None
     task_type: Optional[TaskType] = None
     success: bool = True
     batch_idx: Optional[int] = None
+    within_batch_idx: Optional[int] = None
     data: Any = None
     
     
@@ -93,6 +91,7 @@ class WorkerComms:
         # process that the worker needs to be restarted
         self.request_restart = ctx.Value(ctypes.c_bool, False, lock=ctx.RLock())
         self.request_restart_condition = request_worker_restart_condition
+        self.start_acknowledged = ctx.Event()
 
         # Value to indicate whether the worker is alive, which is used to check whether a worker was terminated by the 
         # OS
@@ -125,6 +124,7 @@ class WorkerComms:
         self.results_added = 0
         self.results_received = self.ctx.Value("L", 0, lock=self.ctx.RLock())
         self.request_restart = self.ctx.Value(ctypes.c_bool, False, lock=self.ctx.RLock())
+        self.start_acknowledged = self.ctx.Event()
         self.worker_dead = self.ctx.Value(ctypes.c_bool, True, lock=self.ctx.RLock())
         self.time_task_started = self.ctx.Array("d", 3, lock=self.ctx.RLock())
 
@@ -311,6 +311,8 @@ class WorkerComms:
         self.results_added += 1
         self.results_queue.put(Result(worker_id=self.worker_id, job_id=job_id, task_type=task_type, success=success,
                                       batch_idx=batch_idx, data=results))
+        if self.enable_prints:
+            print("WorkerComms: Added results:", str(results)[:500])
         
     def signal_result_received(self) -> None:
         """
@@ -386,14 +388,27 @@ class WorkerComms:
         :return: Whether the worker is alive
         """
         return not self.worker_dead.value
+    
+    def acknowledge_worker_started(self) -> None:
+        """
+        Acknowledge that the worker has started. This is used to ensure that the worker has started after a restart.
+        """
+        self.start_acknowledged.set()
+        
+    def wait_for_started_acknowledgement(self) -> None:
+        """
+        Wait for the worker to acknowledge that it has started
+        """
+        self.start_acknowledged.wait()
 
-    def join_task_queues(self) -> None:
+    def join_control_and_task_queues(self) -> None:
         """
         Join task queue
         """
-        self.task_queue.join()
-        self.task_queue.close()
-        self.task_queue.join_thread()
+        for q in (self.control_queue, self.task_queue):
+            q.join()
+            q.close()
+            q.join_thread()
 
     ################
     # Timeouts
@@ -560,6 +575,9 @@ class Comms:
         self._terminate_pool = self.ctx.Event()
         
         self.enable_prints = False
+        
+        # Initialize
+        self.init_comms()
 
     ################
     # Initialization
@@ -586,8 +604,11 @@ class Comms:
         multiprocessing.JoinableQueue for both the exception queue and progress bar tasks completed queue, because the
         progress bar handler needs process-aware objects.
         """
-        # TODO: Also try to maybe merge results and max_duration_tasks_queue into one queue. Then it's one thread less
-        #       to manage and less locks.
+        if self.is_initialized():
+            return
+        
+        # if self.enable_prints:
+        #     print("Comms: Initializing comms")
         
         # Task comms
         self._task_comms_locks = [self.ctx.Lock() for _ in range(self.n_jobs)]
@@ -610,6 +631,12 @@ class Comms:
                 terminate_pool_event=self._terminate_pool, task_comms_lock=self._task_comms_locks[worker_id]
             ) for worker_id in range(self.n_jobs)
         ]
+        
+        # init_comms is called when the pool is started for the first time. We need to acknowledge that the workers
+        # have started, so the workers know they can start working. Waiting for acknowledgement is only useful in case
+        # the workers are restarted.
+        for comms in self._worker_comms:
+            comms.acknowledge_worker_started()
 
         self._initialized = True
         
@@ -707,6 +734,15 @@ class Comms:
         :param max_duration_tasks: List of max duration tasks
         """
         self._task_comms[job_id].update_max_duration_tasks(max_duration_tasks)
+        
+    def get_all_task_insights(self, as_str: bool = False) -> Union[Dict, str]:
+        """
+        Obtain the task insights for all jobs
+        
+        :param as_str: Whether to return the insights as a string
+        :return: Task insights as a dict or string
+        """
+        return {job_id: self.get_task_insights(job_id, as_str=as_str) for job_id in self._task_comms}
         
     def get_task_insights(self, job_id: int, as_str: bool = False) -> Union[Dict, str]:
         """
@@ -846,6 +882,9 @@ class Comms:
                 result = self._results_queue.get(block=block, timeout=timeout)
                 self._results_queue.task_done()
                 
+                if self.enable_prints:
+                    print("Comms got result:", str(result)[:500])
+                
                 if result.worker_id is not None:
                     self._worker_comms[result.worker_id].signal_result_received()
                     self._last_completed_task_worker_id.append(result.worker_id)
@@ -855,8 +894,8 @@ class Comms:
                 batch = result.data if isinstance(result.data, list) else [result.data]
                 for idx, single_result in enumerate(batch):
                     yield Result(worker_id=result.worker_id, job_id=result.job_id, task_type=result.task_type,
-                                 success=result.success if idx == len(batch) - 1 else True, batch_idx=result.batch_idx, 
-                                 data=single_result)
+                                 success=result.success if idx == len(batch) - 1 else True, batch_idx=result.batch_idx,
+                                 within_batch_idx=idx, data=single_result)
                     
         except EOFError:
             # This can occur when an imap function was running, while at the same time terminate() was called
@@ -896,6 +935,15 @@ class Comms:
         """
         with self._worker_restart_condition:
             self._worker_restart_condition.notify()
+            
+    def get_worker_restart(self, worker_id: int) -> bool:
+        """
+        Obtain whether the worker needs to be restarted
+
+        :param worker_id: Worker ID
+        :return: Whether the worker needs to be restarted
+        """
+        return self._worker_comms[worker_id].get_worker_restart()
 
     def get_worker_restarts(self) -> List[int]:
         """
@@ -926,6 +974,15 @@ class Comms:
         """
         return self._worker_comms[worker_id].is_worker_alive()
     
+    def acknowledge_worker_started(self, worker_id: int) -> None:
+        """
+        Acknowledge a worker started. I.e., the worker has set the worker alive status to True. This is used to ensure
+        that the worker has started after a restart.
+        
+        :param worker_id: Worker ID
+        """
+        self._worker_comms[worker_id].acknowledge_worker_started()
+    
     def signal_worker_dead(self, worker_id: int) -> None:
         """
 `       Indicate that a worker is dead
@@ -945,12 +1002,12 @@ class Comms:
             self._results_queue.close()
             self._results_queue.join_thread()
 
-    def join_task_queues(self) -> None:
+    def join_control_and_task_queues(self) -> None:
         """
         Join task queues
         """
         for comms in self._worker_comms:
-            comms.join_task_queues()
+            comms.join_control_and_task_queues()
 
     def drain_results_queue_terminate_worker(self, dont_wait_event: threading.Event) -> None:
         """
@@ -977,8 +1034,14 @@ class Comms:
         Drain tasks and results queues
         """
         for comms in self._worker_comms:
+            st = time.time()
             self.drain_and_join_queue(comms.task_queue)
+            if self.enable_prints:
+                print("Draining task queue took:", time.time() - st)
+        st = time.time()
         self.drain_and_join_queue(self._results_queue)
+        if self.enable_prints:
+            print("Draining results queue took:", time.time() - st)
 
     def drain_and_join_queue(self, q: mp.JoinableQueue, join: bool = True) -> None:
         """
@@ -1009,8 +1072,8 @@ class Comms:
                 # Queue could be just closed when starting the drain_and_join_queue process
                 pass
 
-    @staticmethod
-    def _drain_and_join_queue(q: mp.JoinableQueue, join: bool = True) -> None:
+    # @staticmethod
+    def _drain_and_join_queue(self, q: mp.JoinableQueue, join: bool = True) -> None:
         """
         Drains a queue completely, such that it is joinable
 
@@ -1023,6 +1086,7 @@ class Comms:
 
         # Call task done up to the point where we get a ValueError. We need to do this when child processes already
         # started processing on some tasks and got terminated half-way.
+        st = time.time()
         n = 0
         try:
             while True:
@@ -1030,6 +1094,10 @@ class Comms:
                 n += 1
         except (OSError, ValueError):
             pass
+        
+        if self.enable_prints:
+            print("Drain queue task done called #:", n, "and took time:", time.time() - st)
+            st = time.time()
 
         try:
             while not q.empty() or n != 0:
@@ -1037,6 +1105,10 @@ class Comms:
                 n -= 1
         except (OSError, EOFError, queue.Empty, ValueError):
             pass
+        
+        if self.enable_prints:
+            print("Drain queue get called #:", n, "and took time:", time.time() - st)
+            st = time.time()
 
         # Join
         if join:
