@@ -160,6 +160,8 @@ class WorkerComms:
         :param job_id: Job ID
         :param task_params: New task params
         """
+        if self.enable_prints:
+            print(f"WorkerComms-{self.worker_id} - Adding task params:", job_id, task_params)
         self.control_queue.put((NEW_TASK_PARAMS_PILL, (job_id, task_params)))
             
     def add_job_done(self, job_id: int) -> None:
@@ -169,6 +171,8 @@ class WorkerComms:
         
         :param job_id: Job ID
         """
+        if self.enable_prints:
+            print(f"WorkerComms-{self.worker_id} - Adding job done:", job_id)
         self.control_queue.put((JOB_DONE_PILL, job_id))
     
     def add_skip_job(self, job_id: int) -> None:
@@ -177,12 +181,16 @@ class WorkerComms:
         
         :param job_id: Job ID
         """
+        if self.enable_prints:
+            print(f"WorkerComms-{self.worker_id} - Adding skip job:", job_id)
         self.control_queue.put((SKIP_JOB_PILL, job_id))
             
     def add_poison_pill(self) -> None:
         """
         'Tell' the worker it should wrap up and shut down.
         """
+        if self.enable_prints:
+            print(f"WorkerComms-{self.worker_id} - Adding poison pill")
         self.control_queue.put((POISON_PILL, None))
             
     def get_control_signal(self, block: bool = False, timeout: Optional[float] = None) -> Optional[Tuple[str, Any]]:
@@ -218,7 +226,7 @@ class WorkerComms:
         with DelayedKeyboardInterrupt():
             task = (job_id, task) if job_id is not None else task
             if self.enable_prints:
-                print("Adding task:", task)
+                print(f"WorkerComms-{self.worker_id} - Adding task:", task)
             self.task_queue.put(task, block=True)
 
     def add_apply_task(self, job_id: int, params: WorkerTaskParams, args: Tuple = (), kwargs: Optional[Dict] = None):
@@ -295,7 +303,10 @@ class WorkerComms:
         :return: Job ID and task type
         """
         with self.get_running_task_lock():
-            return self.working_on_job.value, TaskType(self.working_on_task.value)
+            return (
+                self.working_on_job.value, 
+                TaskType(self.working_on_task.value) if self.working_on_task.value != -1 else None
+            )
 
     def add_results(self, job_id: Optional[int], task_type: Optional[TaskType], success: bool, 
                     batch_idx: Optional[int], results: Any) -> None:
@@ -561,8 +572,8 @@ class Comms:
         self._task_comms: Dict[int, TaskComms] = {}
         self._task_comms_locks: List[mp.Lock] = []
 
-        # To keep track of which worker completed the last task
-        self._task_idx = 0
+        # To keep track of which worker completed the last task per job. The -1 job ID is used for apply tasks
+        self._task_idx: Dict[int, int] = {}
         self._last_completed_task_worker_id = collections.deque()
 
         # Queue where the child processes can pass on results
@@ -574,7 +585,7 @@ class Comms:
         # Event to indicate that the pool needs to terminate
         self._terminate_pool = self.ctx.Event()
         
-        self.enable_prints = False
+        self.enable_prints = not True
         
         # Initialize
         self.init_comms()
@@ -607,14 +618,14 @@ class Comms:
         if self.is_initialized():
             return
         
-        # if self.enable_prints:
-        #     print("Comms: Initializing comms")
+        if self.enable_prints:
+            print("Comms: Initializing comms")
         
         # Task comms
         self._task_comms_locks = [self.ctx.Lock() for _ in range(self.n_jobs)]
         
-        # Last task related
-        self._task_idx = 0
+        # Last task related. -1 is used for apply tasks
+        self._task_idx = {-1: 0}
         self._last_completed_task_worker_id.clear()
 
         # Results related
@@ -798,15 +809,17 @@ class Comms:
     # Tasks & results
     ################
 
-    def add_task(self, job_id: Optional[int], task: Any, worker_id: Optional[int] = None) -> None:
+    def add_task(self, job_id: int, task: Any, worker_id: Optional[int] = None) -> None:
         """
         Add a task to the queue so a worker can process it.
 
-        :param job_id: Job ID or None
+        :param job_id: Job ID
         :param task: A tuple of arguments to pass to a worker, which acts upon it
         :param worker_id: If provided, give the task to the worker ID
         """
-        worker_id = self._get_task_worker_id(worker_id)
+        worker_id = self._get_task_worker_id(job_id, worker_id)
+        if self.enable_prints:
+            print("Comms adding task:", job_id, task, worker_id, self.order_tasks)
         self._worker_comms[worker_id].add_task(job_id, task)
 
     def add_apply_task(self, job_id: int, params: WorkerTaskParams, args: Tuple = (), kwargs: Optional[Dict] = None):
@@ -818,10 +831,10 @@ class Comms:
         :param args: Arguments to pass to the function
         :param kwargs: Keyword arguments to pass to the function
         """
-        worker_id = self._get_task_worker_id()
+        worker_id = self._get_task_worker_id(job_id=-1)
         self._worker_comms[worker_id].add_apply_task(job_id, params, args, kwargs)
 
-    def _get_task_worker_id(self, worker_id: Optional[int] = None) -> int:
+    def _get_task_worker_id(self, job_id: int, worker_id: Optional[int] = None) -> int:
         """
         Get the worker ID for the next task.
 
@@ -829,12 +842,16 @@ class Comms:
         whether we got results already. If so, we give the next task to the worker who completed that task. Otherwise,
         we decide based on order
 
+        :param job_id: Job ID
+        :param worker_id: Worker ID or None. When worker ID is provided, we give the task to that worker
         :return: Worker ID
         """
         if worker_id is None:
             if self.order_tasks or not self._last_completed_task_worker_id:
-                worker_id = self._task_idx % self.n_jobs
-                self._task_idx += 1
+                if job_id not in self._task_idx:
+                    self._task_idx[job_id] = 0
+                worker_id = self._task_idx[job_id] % self.n_jobs
+                self._task_idx[job_id] += 1
             else:
                 worker_id = self._last_completed_task_worker_id.popleft()
 

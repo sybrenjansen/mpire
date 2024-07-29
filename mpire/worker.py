@@ -10,6 +10,7 @@ import time
 import traceback
 import _thread
 from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
 from threading import current_thread, main_thread, Thread
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
@@ -91,7 +92,7 @@ class AbstractWorker:
         self.last_job_id = None
         self.last_task_type = None
         
-        self.enable_prints = False
+        self.enable_prints = not True
 
     def run(self) -> None:
         """
@@ -99,7 +100,7 @@ class AbstractWorker:
         life span is not yet reached it will execute the new task and put the results in the results queue.
         """
         if self.enable_prints:
-            print(f"Worker-{self.worker_id} started", flush=True)
+            print(datetime.now().isoformat(), f"Worker-{self.worker_id} started", flush=True)
         
         # Register handlers for graceful shutdown
         self._set_signal_handlers()
@@ -129,7 +130,7 @@ class AbstractWorker:
                 # When we received a poison pill and there are no more tasks to execute, we can return
                 if self.poison_pill_received and not self.task_params:
                     if self.enable_prints:
-                        print(f"Worker-{self.worker_id} received poison pill and has no more tasks to execute, returning")
+                        print(datetime.now().isoformat(), f"Worker-{self.worker_id} received poison pill and has no more tasks to execute, returning")
                     return
 
                 # Obtain new chunk of jobs
@@ -137,7 +138,7 @@ class AbstractWorker:
                     # When we recieved None this means we need to stop because the pool is terminating
                     if (next_chunked_args := self._get_new_task()) is None:
                         if self.enable_prints:
-                            print(f"Worker-{self.worker_id} received None, stopping")
+                            print(datetime.now().isoformat(), f"Worker-{self.worker_id} received None, stopping")
                         return
 
                 # Execute jobs in this chunk
@@ -166,7 +167,7 @@ class AbstractWorker:
                         batch_idx = None
                         
                     if self.enable_prints:
-                        print(f"Worker-{self.worker_id} is about to proceess job {job_id} with batch idx {batch_idx} and args {str(next_chunked_args)[:500]}")
+                        print(datetime.now().isoformat(), f"Worker-{self.worker_id} is about to proceess job {job_id} with batch idx {batch_idx} and args {str(next_chunked_args)[:500]}")
 
                     results = []
                     success = True
@@ -189,20 +190,13 @@ class AbstractWorker:
                     # Send results back to main process
                     if results:
                         if self.enable_prints:
-                            print(f"Worker-{self.worker_id} adding results for job {job_id}")
+                            print(datetime.now().isoformat(), f"Worker-{self.worker_id} adding results for job {job_id}")
                         self.worker_comms.add_results(job_id, TaskType.TARGET_FUNC, success, batch_idx, results)
                         self.n_tasks_executed[job_id] += len(results)
                     
                     # A job is done when an apply task is done or when a map task failed
                     if self.task_params[job_id].type == JobType.APPLY or not success:
                         self._handle_job_done(job_id, job_is_skipped=True)
-                    
-                    # # Remove task specific objects when the apply task is done or when a map task failed
-                    # if self.task_params[job_id].type == JobType.APPLY:  # TODO: also needs exit function to run. I.e. don't throw away task params
-                    #     # Clean up task specific objects
-                    #     del (self.task_function[job_id], self.n_tasks_executed[job_id])
-                    # elif not success:
-                    #     self._handle_job_done(job_id, job_is_skipped=True)
 
                 # In case an exception occurred and we need to return, we want to call task_done no matter what
                 finally:
@@ -222,12 +216,12 @@ class AbstractWorker:
             # Wait until all results have been received, otherwise the main process might deadlock
             # TODO: should also wait for max duration tasks and pbar updatees? For some reason sometimes a worker doesn't start again            
             if self.enable_prints:
-                print(f"Worker-{self.worker_id} waiting for all results to be received")
+                print(datetime.now().isoformat(), f"Worker-{self.worker_id} waiting for all results to be received")
             self.worker_comms.wait_for_all_results_received()
             
             # Close any remaining shared memory connections
             if self.enable_prints:
-                print(f"Worker-{self.worker_id} closing shm connections")
+                print(datetime.now().isoformat(), f"Worker-{self.worker_id} closing shm connections")
             for comms in self.task_worker_comms.values():
                 comms.close_shm()
 
@@ -238,11 +232,11 @@ class AbstractWorker:
                 for job_id, task_params in self.task_params.items()
             ):
                 if self.enable_prints:
-                    print(f"Worker-{self.worker_id} requesting restart")
+                    print(datetime.now().isoformat(), f"Worker-{self.worker_id} requesting restart")
                 self.worker_comms.signal_worker_restart()
 
             if self.enable_prints:
-                print(f"Worker-{self.worker_id} finished")
+                print(datetime.now().isoformat(), f"Worker-{self.worker_id} finished")
             self.worker_comms.signal_worker_dead()
 
     def _set_signal_handlers(self) -> None:
@@ -272,6 +266,8 @@ class AbstractWorker:
         exception when a task is running. Otherwise, we call raise() ourselves with the exception. Both will ensure
         exception_thrown() is set and will shutdown the pool.
         """
+        if self.enable_prints:
+            print(datetime.now().isoformat(), f"Worker-{self.worker_id} was killed")
         err = RuntimeError(f"Worker-{self.worker_id} was killed")
         with self.worker_comms.get_running_task_lock():
             if self.worker_comms.get_running_task():
@@ -293,7 +289,9 @@ class AbstractWorker:
         
         When a function is running, the exception thrown here will be caught by the ``_run_safely()`` function, which
         handles the exception accordingly.
-        """            
+        """
+        if self.enable_prints:
+            print(datetime.now().isoformat(), f"Worker-{self.worker_id} got exception signal")
         with self.worker_comms.get_running_task_lock():
             if self.worker_comms.get_running_task():
                 self.worker_comms.set_running_task(False)
@@ -331,14 +329,14 @@ class AbstractWorker:
             # Obtain control signals
             if (control_signal := self.worker_comms.get_control_signal(block=False)) is not None:
                 if self.enable_prints:
-                    print(f"Worker-{self.worker_id} got control signal: {control_signal}")
+                    print(datetime.now().isoformat(), f"Worker-{self.worker_id} got control signal: {control_signal}")
                 self._handle_control_signal(*control_signal)
                 
             # Obtain new task
             try:
                 job_id, chunk_of_task = self.worker_comms.get_task(block=True, timeout=0.01)
                 if self.enable_prints:
-                    print(f"Worker-{self.worker_id} got: {job_id}, {str(chunk_of_task)[:500]}")
+                    print(datetime.now().isoformat(), f"Worker-{self.worker_id} got: {job_id}, {str(chunk_of_task)[:500]}")
             except queue.Empty:
                 continue
             
@@ -350,7 +348,7 @@ class AbstractWorker:
                     is not None
                 ):
                     if self.enable_prints:
-                        print(f"Worker-{self.worker_id} got control signal: {control_signal}")
+                        print(datetime.now().isoformat(), f"Worker-{self.worker_id} got control signal: {control_signal}")
                     self._handle_control_signal(*control_signal)
                 
             # Return job ID and chunk of task when we have a valid job ID
@@ -370,27 +368,27 @@ class AbstractWorker:
         if control_signal == NEW_TASK_PARAMS_PILL:
             job_id, task_params = metadata
             if self.enable_prints:
-                print(f"Worker-{self.worker_id} received new task params for job {job_id}")
+                print(datetime.now().isoformat(), f"Worker-{self.worker_id} received new task params for job {job_id}")
             self._handle_new_task_params(job_id, task_params)
             
         # Job done
         elif control_signal == JOB_DONE_PILL:
             job_id = metadata
             if self.enable_prints:
-                print(f"Worker-{self.worker_id} received job done pill for job {job_id}")
+                print(datetime.now().isoformat(), f"Worker-{self.worker_id} received job done pill for job {job_id}")
             self._handle_job_done(job_id, job_is_skipped=False)
         
         # Skip job
         elif control_signal == SKIP_JOB_PILL:
             job_id = metadata
             if self.enable_prints:
-                print(f"Worker-{self.worker_id} received skip job pill for job {job_id}")
+                print(datetime.now().isoformat(), f"Worker-{self.worker_id} received skip job pill for job {job_id}")
             self._handle_job_done(job_id, job_is_skipped=True)
             
         # Poison pill
         elif control_signal == POISON_PILL:
             if self.enable_prints:
-                print(f"Worker-{self.worker_id} received poison pill")
+                print(datetime.now().isoformat(), f"Worker-{self.worker_id} received poison pill")
             self.poison_pill_received = True
             
         self.worker_comms.task_done_control_signal()
@@ -404,7 +402,7 @@ class AbstractWorker:
         """
         if task_params.type == JobType.MAP:
             if self.enable_prints:
-                print(f"Worker-{self.worker_id} initializing task worker comms for job {job_id} with shm {task_params.task_comms_shm_names[self.worker_id]}")
+                print(datetime.now().isoformat(), f"Worker-{self.worker_id} initializing task worker comms for job {job_id} with shm {task_params.task_comms_shm_names[self.worker_id]}")
             
             # A worker could get restarted while the last job it was processing just finished. This means the shared memory
             # object has been cleaned up, while we're still trying to connect to it here. If connecting fails, we can 
@@ -414,11 +412,11 @@ class AbstractWorker:
                                                                  task_params.task_comms_shm_names[self.worker_id])
             except FileNotFoundError:
                 if self.enable_prints:
-                    print(f"Worker-{self.worker_id} failed to connect to shm. Skipping job {job_id}")
+                    print(datetime.now().isoformat(), f"Worker-{self.worker_id} failed to connect to shm. Skipping job {job_id}")
                 return
             
             if self.enable_prints:
-                print(f"Worker-{self.worker_id} initialized task worker comms with shm {task_params.task_comms_shm_names[self.worker_id]}, pbar n: {self.task_worker_comms[job_id].progress_bar_n_tasks_completed}")
+                print(datetime.now().isoformat(), f"Worker-{self.worker_id} initialized task worker comms with shm {task_params.task_comms_shm_names[self.worker_id]}, pbar n: {self.task_worker_comms[job_id].progress_bar_n_tasks_completed}")
         
         self.task_params[job_id] = task_params
         self.task_function[job_id] = partial(self._call_func, partial(task_params.func, *self.additional_args))
@@ -506,7 +504,7 @@ class AbstractWorker:
             return False
         
         if self.enable_prints:
-            print(f"Worker-{self.worker_id} is about to run init function for job {job_id}")
+            print(datetime.now().isoformat(), f"Worker-{self.worker_id} is about to run init function for job {job_id}")
         
         self.worker_comms.signal_working_on_job(job_id, TaskType.WORKER_INIT)
         self.last_job_id = job_id
@@ -527,12 +525,12 @@ class AbstractWorker:
             result = self._run_safely(_init_func)
             
         if self.enable_prints:
-            print(f"Worker-{self.worker_id} finished running init function for job {job_id} with result {str(result)[:500]}")
+            print(datetime.now().isoformat(), f"Worker-{self.worker_id} finished running init function for job {job_id} with result {str(result)[:500]}")
             
-        # If the init function failed, let the main process know
-        if not result.success:
+        # If the init function failed and wasn't interrupt by the main process, let the main process know
+        if not result.success and result.send_results:
             if self.enable_prints:
-                print(f"Worker-{self.worker_id} failed running init function for job {job_id}, sending exception and skipping job")
+                print(datetime.now().isoformat(), f"Worker-{self.worker_id} failed running init function for job {job_id}, sending exception and skipping job")
             self.worker_comms.add_results(job_id, TaskType.WORKER_INIT, False, None, result.results)
             self._handle_job_done(job_id, job_is_skipped=True)
 
@@ -581,7 +579,7 @@ class AbstractWorker:
         self.last_task_type = TaskType.WORKER_EXIT
         
         if self.enable_prints:
-            print(f"Worker-{self.worker_id} is about to run exit function for job {job_id}")
+            print(datetime.now().isoformat(), f"Worker-{self.worker_id} is about to run exit function for job {job_id}")
 
         def _exit_func():
             with TimeIt(self.task_worker_comms.get(job_id), WorkerStatsType.EXIT_TIME):
@@ -598,7 +596,7 @@ class AbstractWorker:
             result = self._run_safely(_exit_func)
             
         if self.enable_prints:
-            print(f"Worker-{self.worker_id} finished running exit function for job {job_id} with result {str(result)[:500]}")
+            print(datetime.now().isoformat(), f"Worker-{self.worker_id} finished running exit function for job {job_id} with result {str(result)[:500]}")
 
         if result.send_results:
             self.worker_comms.add_results(job_id, TaskType.WORKER_EXIT, result.success, None, result.results)
@@ -743,7 +741,7 @@ class AbstractWorker:
         :param force_update: Whether to force an update
         """
         if self.enable_prints:
-            print(f"Worker-{self.worker_id} sending progress bar update for job {job_id} with force update: {force_update}")
+            print(datetime.now().isoformat(), f"Worker-{self.worker_id} sending progress bar update for job {job_id} with force update: {force_update}")
         for job_id_ in [job_id] if job_id is not None else self.task_params.keys():
             if self.task_params[job_id_].progress_bar:
                 self.task_worker_comms[job_id_].send_progress_bar_update(

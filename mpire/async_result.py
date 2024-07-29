@@ -31,7 +31,6 @@ class AsyncResult:
     def __init__(
         self,
         cache: Dict,
-        task_params_dict: Dict,
         callback: Optional[Callable],
         error_callback: Optional[Callable],
         job_id: Optional[int] = None,
@@ -40,7 +39,6 @@ class AsyncResult:
     ) -> None:
         """
         :param cache: Cache for storing intermediate results
-        :param task_params_dict: Dictionary with the parameters of the task
         :param callback: Callback function to call when the task is finished. The callback function receives the output
             of the function as its argument
         :param error_callback: Callback function to call when the task has failed. The callback function receives the
@@ -51,7 +49,6 @@ class AsyncResult:
             ``TimeoutError``. Use ``None`` to disable (default)
         """
         self._cache = cache
-        self._task_params_dict = task_params_dict
         self._callback = callback
         self._error_callback = error_callback
         self._delete_from_cache = delete_from_cache
@@ -124,7 +121,7 @@ class AsyncResult:
 
         self._ready_event.set()
         if self._delete_from_cache:
-            del self._cache[self.job_id], self._task_params_dict[self.job_id]
+            del self._cache[self.job_id]
 
 
 class UnorderedAsyncResultIterator:
@@ -190,6 +187,8 @@ class UnorderedAsyncResultIterator:
         # We still expect results. Wait until the next result is available
         with self._condition:
             while not self._items:
+                if self.enable_prints:
+                    print("Imap iterator: waiting for next result:", block, timeout)
                 timed_out = not self._condition.wait(timeout=timeout)
                 if timed_out:
                     raise queue.Empty

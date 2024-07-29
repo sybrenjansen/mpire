@@ -6,6 +6,7 @@ import signal
 import threading
 import time
 from collections import defaultdict
+from datetime import datetime
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Set, Sized, Union
 
 try:
@@ -145,7 +146,7 @@ class WorkerPool:
         # Progress bar handler, in case it is used
         self._progress_bar_handler: Dict[int, ProgressBarHandler] = {}
         
-        self.enable_prints = False
+        self.enable_prints = not True
 
     def pass_on_worker_id(self, pass_on: bool = True) -> None:
         """
@@ -239,11 +240,10 @@ class WorkerPool:
         # Disable the interrupt signal. We let the process die gracefully if it needs to
         with DisableKeyboardInterruptSignal():
             # Obtain active map task parameters, so we can send them to the worker
-            active_task_params = {
-                job_id: params for job_id, params in self._task_params.items() if params.type == JobType.MAP
-            }
+            active_task_params = {job_id: self._task_params[job_id] for job_id in list(self._cache.keys()) 
+                                  if self._task_params[job_id].job_type == JobType.MAP}
             if self.enable_prints:
-                print(f"Pool: Starting worker {worker_id} with active job IDs:", active_task_params.keys())
+                print(datetime.now().isoformat(), f"Pool: Starting worker {worker_id} with active job IDs:", active_task_params.keys())
             
             # Create worker
             self._workers[worker_id] = self.Worker(
@@ -256,11 +256,65 @@ class WorkerPool:
             self._workers[worker_id].start()
             
             if self.enable_prints:
-                print(f"Pool: Started worker {worker_id}")
+                print(datetime.now().isoformat(), f"Pool: Started worker {worker_id}")
 
         # Pin CPU if desired
         if self.pool_params.cpu_ids:
             set_cpu_affinity(self._workers[worker_id].pid, self.pool_params.cpu_ids[worker_id])
+            
+    def _restart_worker(self, worker_id: int) -> None:
+        """
+        Restarts a single worker, makes sure it actually restarted, and retries a few times if it failed
+
+        :param worker_id: ID of the worker
+        """
+        try_count = 0
+        while try_count < 3:
+            
+            # Start worker
+            self._comms.reinit_worker_comms(worker_id)
+            self._start_worker(worker_id)
+            
+            # Wait at most 1 second for worker to be alive
+            start_time = time.time()
+            while not self._comms.is_worker_alive(worker_id) and time.time() - start_time < 1:
+                if self.enable_prints:
+                    print(datetime.now().isoformat(), f"Pool: Worker-{worker_id} is not alive yet, waiting")
+                time.sleep(0.001)
+                
+            # Acknowledge worker started if it's alive
+            if self._comms.is_worker_alive(worker_id):
+                if self.enable_prints:
+                    print(datetime.now().isoformat(), f"Pool: Worker-{worker_id} is alive, acking restart")
+                self._comms.acknowledge_worker_started(worker_id)
+                break
+            
+            # Worker is not alive, so terminate it and try again
+            else:
+                if self.enable_prints:
+                    print(datetime.now().isoformat(), f"------ Pool: Worker-{worker_id} is not alive!! We should actually restart it again {self._workers[worker_id].is_alive()}, {self._workers[worker_id].exitcode}")
+                if self._workers[worker_id].is_alive():
+                    if self.enable_prints:
+                        print(datetime.now().isoformat(), f"Pool: Worker-{worker_id} terminating")
+                    self._workers[worker_id].terminate()
+                    if self.enable_prints:
+                        print(datetime.now().isoformat(), f"Pool: Worker-{worker_id} terminated, joining")
+                    self._workers[worker_id].join()
+                    if self.enable_prints:
+                        print(datetime.now().isoformat(), f"Pool: Worker-{worker_id} joined, starting new worker")
+                elif self.enable_prints:
+                    print(datetime.now().isoformat(), f"Pool: Worker-{worker_id} is not alive, but not alive either, starting new worker")
+                try_count += 1
+                
+        # If we tried 3 times and it's still not alive, raise a RuntimeError
+        if try_count == 3:
+            if self.enable_prints:
+                print(datetime.now().isoformat(), f"Pool: Worker-{worker_id} is not alive after 3 tries, raising RuntimeError")
+            for job_id in self._task_params.keys():
+                self._cache[job_id]._set(
+                    success=False, 
+                    result=RuntimeError(f"Can't restart worker {worker_id} for unknown reasons. Giving up")
+                )
 
     def _results_handler(self) -> None:
         """
@@ -268,7 +322,7 @@ class WorkerPool:
         store them in the exit results object instead.
         """
         if self.enable_prints:
-            print("Pool: Results handler started")
+            print(datetime.now().isoformat(), "Pool: Results handler started")
         
         job_done_received = defaultdict(int)
         
@@ -277,15 +331,18 @@ class WorkerPool:
             for result in results_batch:
                 
                 if self.enable_prints:
-                    print("Pool: Received results in handler:", str(result)[:500])
+                    print(datetime.now().isoformat(), "Pool: Received results in handler:", str(result)[:500])
 
                 # Poison pill, stop the listener. Set any remaining tasks to failed, which will also remove them from
                 # the cache
                 if isinstance(result.data, str) and result.data == POISON_PILL:
                     if self.enable_prints:
-                        print("Pool: Active job IDs:", self._task_params.keys())
-                    for job_id in self._task_params.keys():
-                        self._cache[job_id]._set(success=False, result=RuntimeError("Worker pool terminated"))
+                        print(datetime.now().isoformat(), "Pool: Active job IDs:", self._cache.keys())
+                    for job_id in list(self._cache.keys()):
+                        try:
+                            self._cache[job_id]._set(success=False, result=RuntimeError("Worker pool terminated"))
+                        except KeyError:
+                            pass
                     return
 
                 try:
@@ -325,7 +382,7 @@ class WorkerPool:
                     # function which fails at that point. But this is not a problem, as the worker will just continue 
                     # with the next job
                     if self.enable_prints:
-                        print(f"Pool: KeyError for job ID {result.job_id} in results handler")
+                        print(datetime.now().isoformat(), f"Pool: KeyError for job ID {result.job_id} in results handler")
                     pass
 
     def _restart_handler(self) -> None:
@@ -340,62 +397,23 @@ class WorkerPool:
                 # in the meantime, so we need to check if we need to stop again
                 if self._comms.should_terminate() or self._handler_threads_stop_event.is_set():
                     if self.enable_prints:
-                        print(f"Pool: Worker-{worker_id} asked for restart, but we need to stop")
+                        print(datetime.now().isoformat(), f"Pool: Worker-{worker_id} asked for restart, but we need to stop")
                     return
 
                 # Join worker. This can take a while as the worker could still be holding on to data it needs to send
                 # over the results queue
                 if self.enable_prints:
-                    print(f"Pool: Worker-{worker_id} asked for restart, joining worker")
+                    print(datetime.now().isoformat(), f"Pool: Worker-{worker_id} asked for restart, joining worker")
                 try:
                     self._workers[worker_id].join()
-                except OSError:
+                except (OSError, ValueError):
                     # This can happen if the worker has already died (e.g., killed by the OS)
                     pass
 
-                # Start new worker
+                # Restart worker
                 if self.enable_prints:
-                    print(f"Pool: Worker-{worker_id} asked for restart, starting new worker")
-                
-                # So, start worker, then wait for it to be alive, worker, after setting alive status to True waits until main thread acknowlewedges it's alive, then it can continue. Can slow things down?
-                # TODO: refactor, max tries of 3? Then terminate and raise RuntimeError
-                try_count = 0
-                while try_count < 3:
-                    self._comms.reinit_worker_comms(worker_id)
-                    self._start_worker(worker_id)
-                    st = time.time()
-                    while not self._comms.is_worker_alive(worker_id) and time.time() - st < 1:
-                        if self.enable_prints:
-                            print(f"Pool: Worker-{worker_id} is not alive yet, waiting")
-                        time.sleep(0.001)
-                    if self._comms.is_worker_alive(worker_id):
-                        if self.enable_prints:
-                            print(f"Pool: Worker-{worker_id} is alive, acking restart")
-                        self._comms.acknowledge_worker_started(worker_id)
-                        break
-                    else:
-                        if self.enable_prints:
-                            print(f"------ Pool: Worker-{worker_id} is not alive!! We should actually restart it again {self._workers[worker_id].is_alive()}, {self._workers[worker_id].exitcode}")
-                        if self._workers[worker_id].is_alive():
-                            if self.enable_prints:
-                                print(f"Pool: Worker-{worker_id} terminating")
-                            self._workers[worker_id].terminate()
-                            if self.enable_prints:
-                                print(f"Pool: Worker-{worker_id} terminated, joining")
-                            self._workers[worker_id].join()
-                            if self.enable_prints:
-                                print(f"Pool: Worker-{worker_id} joined, starting new worker")
-                        elif self.enable_prints:
-                            print(f"Pool: Worker-{worker_id} is not alive, but not alive either, starting new worker")
-                        try_count += 1
-                if try_count == 3:
-                    if self.enable_prints:
-                        print(f"Pool: Worker-{worker_id} is not alive after 3 tries, raising RuntimeError")
-                    for job_id in self._task_params.keys():
-                        self._cache[job_id]._set(
-                            success=False, 
-                            result=RuntimeError(f"Can't restart worker {worker_id} for unknown reasons. Giving up")
-                        )
+                    print(datetime.now().isoformat(), f"Pool: Worker-{worker_id} asked for restart, starting new worker")
+                self._restart_worker(worker_id)
 
     def _unexpected_death_handler(self) -> None:
         """
@@ -429,13 +447,10 @@ class WorkerPool:
                         f"Worker-{worker_id} died unexpectedly. This usually means the OS/kernel killed the process "
                         "due to running out of memory"
                     )
-                    if self._cache[job_id]._delete_from_cache:
-                        self._task_params.pop(job_id)
                     self._cache[job_id]._set(success=False, result=err)
 
                     # Restart the worker and continue
-                    self._comms.reinit_worker_comms(worker_id)
-                    self._start_worker(worker_id)
+                    self._restart_worker(worker_id)
 
             # Check this every once in a while
             time.sleep(0.1)
@@ -454,39 +469,63 @@ class WorkerPool:
                 for params in self._task_params.copy().values()
             ):
                 # No timeouts set, so no need to check
+                if self.enable_prints:
+                    print(datetime.now().isoformat(), "Pool: No timeouts set, not checking")
                 time.sleep(0.1)
                 continue
+            
+            if self.enable_prints:
+                print(datetime.now().isoformat(), "Pool: Checking for timeouts")
 
             for worker_id in range(self.pool_params.n_jobs):
                 # Obtain what the worker is working on and obtain corresponding timeout setting
                 job_id, task_type = self._comms.get_worker_working_on_job(worker_id)
                 
-                # Obtain the timeout settings
-                if task_type == TaskType.WORKER_INIT:
-                    timeout_func_name = "worker_init"
-                    timeout_var = self._task_params[job_id].worker_init_timeout
-                    has_timed_out_func = self._comms.has_worker_init_timed_out
-                elif task_type == TaskType.WORKER_EXIT:
-                    timeout_func_name = "worker_exit"
-                    timeout_var = self._task_params[job_id].worker_exit_timeout
-                    has_timed_out_func = self._comms.has_worker_exit_timed_out
-                else:
-                    timeout_func_name = "task"
-                    timeout_var = self._task_params[job_id].task_timeout
-                    has_timed_out_func = self._comms.has_worker_task_timed_out
+                try:
+                    # Obtain the timeout settings
+                    if task_type == TaskType.WORKER_INIT:
+                        timeout_func_name = "worker_init"
+                        timeout_var = self._task_params[job_id].worker_init_timeout
+                        has_timed_out_func = self._comms.has_worker_init_timed_out
+                    elif task_type == TaskType.TARGET_FUNC:
+                        timeout_func_name = "task"
+                        timeout_var = self._task_params[job_id].task_timeout
+                        has_timed_out_func = self._comms.has_worker_task_timed_out
+                    elif task_type == TaskType.WORKER_EXIT:
+                        timeout_func_name = "worker_exit"
+                        timeout_var = self._task_params[job_id].worker_exit_timeout
+                        has_timed_out_func = self._comms.has_worker_exit_timed_out
+                    elif task_type is None:
+                        # Worker is not working on anything yet, so no need to check
+                        continue
 
-                # If timeout has expired set job to failed
-                if timeout_var is not None and has_timed_out_func(worker_id, timeout_var):
+                    # If timeout has expired set job to failed
+                    if timeout_var is not None and has_timed_out_func(worker_id, timeout_var):
+                        
+                        if self.enable_prints:
+                            print(datetime.now().isoformat(), f"Pool: Worker-{worker_id} {timeout_func_name} timed out (timeout={timeout_var}) for job {job_id}")
 
-                    # Interrupt all workers that are working on the same job and tell them to skip the job
-                    self._comms.add_skip_job(job_id)
-                    for worker_id_ in range(self.pool_params.n_jobs):
-                        if self._comms.get_worker_working_on_job(worker_id_)[0] == job_id:
-                            self._send_kill_signal_to_worker(worker_id_)
+                        # Interrupt all workers that are working on the same job and tell them to skip the job. Adding
+                        # a skip job after an exit timeout is not necessary, as it's the last thing a worker does for 
+                        # that job anyway. And it could cause control signals lingering around and never being 
+                        # processed
+                        if task_type != TaskType.WORKER_EXIT:
+                            self._comms.add_skip_job(job_id)
+                        for worker_id_ in range(self.pool_params.n_jobs):
+                            if self._comms.get_worker_working_on_job(worker_id_)[0] == job_id:
+                                self._send_kill_signal_to_worker(worker_id_)
 
-                    # Set error message
-                    err = TimeoutError(f"Worker-{worker_id} {timeout_func_name} timed out (timeout={timeout_var})")
-                    self._cache[job_id]._set(success=False, result=err)
+                        # Set error message
+                        err = TimeoutError(f"Worker-{worker_id} {timeout_func_name} timed out (timeout={timeout_var})")
+                        if task_type == TaskType.WORKER_EXIT:
+                            if self.enable_prints:
+                                print(datetime.now().isoformat(), f"Pool: Setting worker exit timeout for job {job_id}")
+                            self._exit_results[job_id]._set(success=False, result=err)
+                        self._cache[job_id]._set(success=False, result=err)
+                        
+                except KeyError:
+                    # Job has been removed from the cache already, so we don't need to do anything
+                    continue
 
             # Check this every once in a while
             time.sleep(0.1)
@@ -559,7 +598,7 @@ class WorkerPool:
                                            progress_bar_options, progress_bar_style, order_results=True))
         
         if self.enable_prints:
-            print("Pool: Finished map")
+            print(datetime.now().isoformat(), "Pool: Finished map")
 
         # Convert back to numpy if necessary
         return (np.concatenate(results) if NUMPY_INSTALLED and results and concatenate_numpy_output and
@@ -726,11 +765,9 @@ class WorkerPool:
         :param order_results: When ``True`` it will order the results. This can be slower than the unordered version
         :return: Generator yielding unordered results
         """
-        # TODO: can we get the job ID somewhere? Because exit results are stored per job ID
-        
         # Check if we can start a new map function
         if not self.pool_params.keep_alive and any(
-            params.type == JobType.MAP for params in self._task_params.values()
+            self._task_params[job_id].type == JobType.MAP for job_id in self._cache.keys()
         ):
             raise RuntimeError("Only one map function can be active at a time when keep_alive=False. Either wait for "
                                "the other map function to finish or set keep_alive=True")
@@ -827,13 +864,13 @@ class WorkerPool:
                         ):
                             try:
                                 if self.enable_prints:
-                                    print(f"Pool: Waiting for results for job {job_id} in imap {imap_iterator._n_tasks}, {imap_iterator._n_received}")
+                                    print(datetime.now().isoformat(), f"Pool: Waiting for results for job {job_id} in imap {imap_iterator._n_tasks}, {imap_iterator._n_received}")
                                 idx, result = imap_iterator.next(block=True, timeout=0.01)
                                 if self.enable_prints:
-                                    print(f"Pool: Got result for job {job_id} in imap:", idx, str(result)[:500])
+                                    print(datetime.now().isoformat(), f"Pool: Got result for job {job_id} in imap:", idx, str(result)[:500])
                                 if not order_results or next_idx == idx:
                                     if self.enable_prints:
-                                        print(f"Pool: Yielding result for {job_id}: {next_idx}")
+                                        print(datetime.now().isoformat(), f"Pool: Yielding result for {job_id}: {next_idx}")
                                     yield result
                                     if next_idx[1] == n_tasks_per_batch[next_idx[0]] - 1:
                                         next_idx = (next_idx[0] + 1, 0)
@@ -843,7 +880,7 @@ class WorkerPool:
                                     tmp_results[idx] = result
                                 n_active -= 1
                                 if self.enable_prints:
-                                    print(f"Pool: job {job_id}: n_active:", n_active, "max_tasks_active:", max_tasks_active, "len(chunk_of_tasks):", len(chunk_of_tasks[1]))
+                                    print(datetime.now().isoformat(), f"Pool: job {job_id}: n_active:", n_active, "max_tasks_active:", max_tasks_active, "len(chunk_of_tasks):", len(chunk_of_tasks[1]))
                             except queue.Empty:
                                 pass
                             
@@ -851,7 +888,7 @@ class WorkerPool:
                         if order_results:
                             while not imap_iterator.exception_thrown() and next_idx in tmp_results:
                                 if self.enable_prints:
-                                    print(f"Pool: Yielding result for {job_id}: {next_idx}")
+                                    print(datetime.now().isoformat(), f"Pool: Yielding result for {job_id}: {next_idx}")
                                 yield tmp_results.pop(next_idx)
                                 if next_idx[1] == n_tasks_per_batch[next_idx[0]] - 1:
                                     next_idx = (next_idx[0] + 1, 0)
@@ -863,46 +900,46 @@ class WorkerPool:
                             break
 
                         if self.enable_prints:
-                            print(f"Pool: Adding {chunk_of_tasks} task to worker comms for job {job_id}")
+                            print(datetime.now().isoformat(), f"Pool: Adding {chunk_of_tasks} task to worker comms for job {job_id}")
                         self._comms.add_task(job_id, chunk_of_tasks)
                         n_active += len(chunk_of_tasks[1])
                         
                     if self.enable_prints:
-                        print(f"Pool: Finished adding all tasks for job {job_id}, obtaining remaining results")
+                        print(datetime.now().isoformat(), f"Pool: Finished adding all tasks for job {job_id}, obtaining remaining results")
 
                     # Obtain the results not yet obtained
                     if not imap_iterator.exception_thrown():
                         if self.enable_prints:
-                            print("Pool: setting length of imap iterator to", sum(n_tasks_per_batch))
+                            print(datetime.now().isoformat(), "Pool: setting length of imap iterator to", sum(n_tasks_per_batch))
                         imap_iterator.set_length(sum(n_tasks_per_batch))
                         self._progress_bar_handler[job_id].set_new_total(sum(n_tasks_per_batch))
                     while not imap_iterator.exception_thrown():
                         got_result = False
                         try:
                             if self.enable_prints:
-                                print(f"Pool: Waiting for results in imap for job {job_id}: {imap_iterator._n_tasks}, {imap_iterator._n_received}")
+                                print(datetime.now().isoformat(), f"Pool: Waiting for results in imap for job {job_id}: {imap_iterator._n_tasks}, {imap_iterator._n_received}")
                             idx, result = imap_iterator.next(block=True, timeout=0.1)
                             got_result = True
                         except queue.Empty:
                             pass
                         except StopIteration:
                             if self.enable_prints:
-                                print(f"Pool: Got stop iteration for job {job_id}")
+                                print(datetime.now().isoformat(), f"Pool: Got stop iteration for job {job_id}")
                             break
                         
                         # Yield the result
                         if not order_results and got_result:
                             if self.enable_prints:
-                                print(f"Pool: Got result in imap for job {job_id}:", idx, str(result)[:500])
+                                print(datetime.now().isoformat(), f"Pool: Got result in imap for job {job_id}:", idx, str(result)[:500])
                             if self.enable_prints:
-                                print(f"Pool: Yielding result for {job_id}: {next_idx}")
+                                print(datetime.now().isoformat(), f"Pool: Yielding result for {job_id}: {next_idx}")
                             yield result
                         else:
                             if got_result:
                                 tmp_results[idx] = result
                             while not imap_iterator.exception_thrown() and next_idx in tmp_results:
                                 if self.enable_prints:
-                                    print(f"Pool: Yielding result for {job_id}: {next_idx}")
+                                    print(datetime.now().isoformat(), f"Pool: Yielding result for {job_id}: {next_idx}")
                                 yield tmp_results.pop(next_idx)
                                 if next_idx[1] == n_tasks_per_batch[next_idx[0]] - 1:
                                     next_idx = (next_idx[0] + 1, 0)
@@ -910,7 +947,7 @@ class WorkerPool:
                                     next_idx = (next_idx[0], next_idx[1] + 1)
                                 
                     if self.enable_prints:
-                        print(f"Pool: Got all results in imap for job {job_id}:", tmp_results.keys(), next_idx, imap_iterator._n_tasks)
+                        print(datetime.now().isoformat(), f"Pool: Got all results in imap for job {job_id}:", tmp_results.keys(), next_idx, imap_iterator._n_tasks)
 
                     # Terminate if exception has been thrown at this point
                     if imap_iterator.exception_thrown():
@@ -922,10 +959,10 @@ class WorkerPool:
                     # Wait until job done pills are received. Then we know all workers are done restarting, all exit
                     # results are in and shared memory connections are closed
                     if self.enable_prints:
-                        print(f"Pool: Waiting for all workers to receive job done for job {job_id}")
+                        print(datetime.now().isoformat(), f"Pool: Waiting for all workers to receive job done for job {job_id}")
                     self._job_done_received_event[job_id].wait()
                     if self.enable_prints:
-                        print(f"Pool: All workers have received job done for job {job_id}")
+                        print(datetime.now().isoformat(), f"Pool: All workers have received job done for job {job_id}")
                         
                     # Add poison pill if keep_alive is False
                     if not self.pool_params.keep_alive:
@@ -934,10 +971,10 @@ class WorkerPool:
                     # Wait for the progress bar to finish, before we clean it up
                     if progress_bar:
                         if self.enable_prints:
-                            print(f"Pool: Waiting for progress bar to finis for job {job_id}h")
+                            print(datetime.now().isoformat(), f"Pool: Waiting for progress bar to finis for job {job_id}h")
                         self._comms.wait_until_progress_bar_is_complete(job_id)
                         if self.enable_prints:
-                            print(f"Pool: Progress bar finished for job {job_id}")
+                            print(datetime.now().isoformat(), f"Pool: Progress bar finished for job {job_id}")
 
                 except KeyboardInterrupt:
                     self._handle_exception(job_id, keyboard_interrupt=True)
@@ -945,18 +982,19 @@ class WorkerPool:
         finally:
             if tqdm_manager_owner:
                 if self.enable_prints:
-                    print(f"Pool: Stopping tqdm manager for job {job_id}")
+                    print(datetime.now().isoformat(), f"Pool: Stopping tqdm manager for job {job_id}")
                 tqdm.set_lock(original_tqdm_lock)
                 TqdmManager.stop_manager()
 
             if imap_iterator is not None:
                 if self.enable_prints:
-                    print(f"Pool: Cleaning up imap iterator and task comms for job {job_id}")
+                    print(datetime.now().isoformat(), f"Pool: Cleaning up imap iterator and task comms for job {job_id}")
                 imap_iterator.remove_from_cache()
                 self._comms.clean_up_task_comms_shm(job_id)                
 
-            # We keep task_comms and exit_results in case we want to retrieve insights or exit results
-            for container in (self._task_params, self._job_done_received_event, self._progress_bar_handler):
+            # We keep task_comms and exit_results in case we want to retrieve insights or exit results. We also keep
+            # task_params as that's needed to check for timeouts in the exit function
+            for container in (self._job_done_received_event, self._progress_bar_handler):
                 if job_id in container:
                     del container[job_id]
 
@@ -965,7 +1003,7 @@ class WorkerPool:
             logger.debug(self._comms.get_task_insights(job_id, as_str=True))
             
         if self.enable_prints:
-            print(f"Pool: Done with imap for job {job_id}")
+            print(datetime.now().isoformat(), f"Pool: Done with imap for job {job_id}")
 
     def apply(self, func: Callable, args: Any = (), kwargs: Dict = None, callback: Optional[Callable] = None,
               error_callback: Optional[Callable] = None, worker_init: Optional[Callable] = None,
@@ -1045,8 +1083,8 @@ class WorkerPool:
             
         # Create result objects
         if self.enable_prints:
-            print("Pool: Creating async result object")
-        result = AsyncResult(self._cache, self._task_params, callback, error_callback, timeout=task_timeout)
+            print(datetime.now().isoformat(), "Pool: Creating async result object")
+        result = AsyncResult(self._cache, callback, error_callback, timeout=task_timeout)
         self._task_params[result.job_id] = WorkerTaskParams(
             JobType.APPLY, func, worker_init, worker_exit, None, False, task_timeout, worker_init_timeout, 
             worker_exit_timeout
@@ -1056,7 +1094,7 @@ class WorkerPool:
         
         # Add task to the queue
         if self.enable_prints:
-            print("Pool: Adding apply task to worker comms")
+            print(datetime.now().isoformat(), "Pool: Adding apply task to worker comms")
         self._comms.add_apply_task(result.job_id, self._task_params[result.job_id], args, kwargs)
         return result
 
@@ -1068,7 +1106,7 @@ class WorkerPool:
         :param keyboard_interrupt: Whether the exception is a KeyboardInterrupt
         """
         if self.enable_prints:
-            print("Pool: Handling exception")
+            print(datetime.now().isoformat(), "Pool: Handling exception")
         
         # Obtain exception
         if keyboard_interrupt:
@@ -1085,7 +1123,7 @@ class WorkerPool:
         # the progress bar can show a proper error message
         progress_bar_job_ids = self._progress_bar_handler.keys() if keyboard_interrupt else [job_id]
         if self.enable_prints:
-            print("Pool: Setting progress bar exception for job IDs", progress_bar_job_ids)
+            print(datetime.now().isoformat(), "Pool: Setting progress bar exception for job IDs", progress_bar_job_ids)
         for job_id_ in progress_bar_job_ids:
             if self._progress_bar_handler[job_id_] is not None:
                 self._progress_bar_handler[job_id_].set_exception(cause or exception, keyboard_interrupt)
@@ -1093,13 +1131,13 @@ class WorkerPool:
         # Terminate pool
         if keyboard_interrupt:
             if self.enable_prints:
-                print("Pool: Signaling terminate pool")
+                print(datetime.now().isoformat(), "Pool: Signaling terminate pool")
             self._comms.signal_terminate_pool()
             self.terminate()
             
         # Wait until progress bars are done
         if self.enable_prints:
-            print("Pool: Waiting for progress bars to finish")
+            print(datetime.now().isoformat(), "Pool: Waiting for progress bars to finish")
         for job_id_ in progress_bar_job_ids:
             if self._progress_bar_handler[job_id_] is not None:
                 if self._progress_bar_handler[job_id_].thread is not None:
@@ -1107,7 +1145,7 @@ class WorkerPool:
                     self._progress_bar_handler[job_id_] = None
                     
         if self.enable_prints:
-            print("Pool: Progress bars finished, raising exception")
+            print(datetime.now().isoformat(), "Pool: Progress bars finished, raising exception")
 
         # Raise
         raise exception
@@ -1121,6 +1159,8 @@ class WorkerPool:
         """
         if self._workers:
             # Insert poison pill
+            if self.enable_prints:
+                print(datetime.now().isoformat(), "Pool: Adding poison pill from stop_and_join")
             self._comms.add_poison_pill()
 
             # Wait until all poison pills have been consumed. When a worker's lifetime has been reached just before 
@@ -1129,6 +1169,8 @@ class WorkerPool:
             #  workers correctly stay alive, but there are no more tasks added on the queue, until the other imap
             #  continues
             #  I guess keep_alive needs to be True for this to work? But what do we do when keep_alive=False?? Throw?
+            if self.enable_prints:
+                print(datetime.now().isoformat(), "Pool: Waiting for poison pills to be consumed")
             t = threading.Thread(target=self._comms.join_control_and_task_queues)
             t.daemon = True
             t.start()
@@ -1136,6 +1178,8 @@ class WorkerPool:
                 t.join(timeout=0.01)
                 if not t.is_alive():
                     break
+            if self.enable_prints:
+                print(datetime.now().isoformat(), "Pool: Poison pills consumed. Joining workers")
 
             # Join workers
             for worker_process in self._workers:
@@ -1156,17 +1200,23 @@ class WorkerPool:
                         worker_process.close()
                     except ValueError:
                         pass
+            if self.enable_prints:
+                print(datetime.now().isoformat(), "Pool: Workers joined. Joining results queues")
             self._workers = []
 
             # Join the results queue, but do not close it. All results should be in the cache at this point (including
             # exit results, because the workers joined successfully or keep_alive=True and the exit function isn't
             # called), but we still need this queue for closing the results listener thread
             self._comms.join_results_queues(keep_alive=True)
+            if self.enable_prints:
+                print(datetime.now().isoformat(), "Pool: Results queues joined. Stopping handler threads")
 
             # Stop handler threads and join and close the results queue
             self._stop_handler_threads()
             self._comms.join_results_queues(keep_alive=False)
             self._comms.reset()
+            if self.enable_prints:
+                print(datetime.now().isoformat(), "Pool: Stopped and joined")
 
     join = stop_and_join
 
@@ -1176,7 +1226,7 @@ class WorkerPool:
         send a sigkill.
         """
         if self.enable_prints:
-            print("Pool: Terminating")
+            print(datetime.now().isoformat(), "Pool: Terminating")
         
         if not self._workers:
             return
@@ -1184,13 +1234,13 @@ class WorkerPool:
         # Set exception thrown so workers know to stop fetching new tasks
         if not self._comms.should_terminate():
             if self.enable_prints:
-                print("Pool: Signaling terminate pool")
+                print(datetime.now().isoformat(), "Pool: Signaling terminate pool")
             self._comms.signal_terminate_pool()
 
         # If this function is called from handle_exception, the progress bar is already terminated. If not, we need to
         # terminate it here
         if self.enable_prints:
-            print(f"Pool: Terminating progress bars {self._progress_bar_handler.keys()}")
+            print(datetime.now().isoformat(), f"Pool: Terminating progress bars {self._progress_bar_handler.keys()}")
         for progress_bar_handler in self._progress_bar_handler.values():
             if progress_bar_handler is not None:
                 progress_bar_handler.set_exception(RuntimeError("Pool was terminated"), False)
@@ -1210,18 +1260,18 @@ class WorkerPool:
 
         # Wait until cleanup threads are done
         if self.enable_prints:
-            print("Pool: Waiting for cleanup threads to finish")
+            print(datetime.now().isoformat(), "Pool: Waiting for cleanup threads to finish")
         for t in threads:
             t.join()
 
         # Stop handler threads. The results handler will remove any active task from the cache
         if self.enable_prints:
-            print("Pool: Stopping handler threads")
+            print(datetime.now().isoformat(), "Pool: Stopping handler threads")
         self._stop_handler_threads()
 
         # Drain and join the queues
         if self.enable_prints:
-            print("Pool: Draining and joining queues")  # TODO: this takes quite a while.. see if we can increase speed!
+            print(datetime.now().isoformat(), "Pool: Draining and joining queues")  # TODO: this takes quite a while.. see if we can increase speed!
         # self._worker_comms.drain_queues()  # TODO: is this really necessary? For the tests I have now removing it the speed goes from 53 -> 45 seconds! Leaving it out for now and see if it is needed
         self._comms.reset()
 
@@ -1229,7 +1279,7 @@ class WorkerPool:
         self._workers = []
         
         if self.enable_prints:
-            print("Pool: Terminated")
+            print(datetime.now().isoformat(), "Pool: Terminated")
 
     def _terminate_worker(self, worker_id: int, dont_wait_event: threading.Event) -> None:
         """
@@ -1362,7 +1412,7 @@ class WorkerPool:
         """
         job_id = self.last_job_id() if job_id is None else job_id
         if self.enable_prints:
-            print(f"Pool: Getting exit results for job ID {job_id}")
+            print(datetime.now().isoformat(), f"Pool: Getting exit results for job ID {job_id}")
         try:
             return self._exit_results[job_id].get_results()
         except KeyError:
