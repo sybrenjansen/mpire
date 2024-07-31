@@ -13,14 +13,6 @@ import numpy as np
 
 from mpire.utils import format_seconds
 
-# TODO: use shared memory for insights. Then we don't need the additional queue and the progress bar can make use of 
-# it!
-# TODO: but then we do still need the max duration tasks to be communicated somehow. For that we will need to use the 
-#   queue I guess. But only when insights are enabled!
-# TODO: make use of this! Is this mpire 3?
-# TODO: this still requires locking!!! Which we don't have
-    # Well, we only need a single lock per worker I guess :O, which is also used by the comms class
-
 
 class WorkerStatsType(Enum):
     START_UP_TIME = auto()
@@ -182,7 +174,9 @@ class TaskWorkerComms:
         """
         Close access to the shared memory, but don't destroy it
         """
-        self.stats[:] = self.stats_shm[:]
+        if self.stats_shm is not None:
+            with self.lock:
+                self.stats[:] = self.stats_shm[:]
         self.stats_shm = None
         self.shm.close()
             
@@ -190,8 +184,9 @@ class TaskWorkerComms:
         """
         Clean up the shared memory
         """
-        self.close_shm()
-        self.shm.unlink()
+        if self.stats_shm is not None:
+            self.close_shm()
+            self.shm.unlink()
 
 
 class TaskComms:

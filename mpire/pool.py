@@ -32,36 +32,23 @@ from mpire.worker import MP_CONTEXTS, worker_factory
 
 logger = logging.getLogger(__name__)
 
-# TODO: Next up:
-#  - Store map parameters and such in a worker per job id. Based on the job ID of the task, obtain and set the right
-#    parameters. We can remove map parameters once we get a clear pill (i.e., the worker has finished its task for that
-#    job). This will allow us to run multiple maps/applies at the same time with different parameters
+# TODO:
+#  - Update unit tests of all other files
+#  - Clean up unused functions
+#  - Test code on other platforms and python version
+#  - Refactor imap_unordered.. it's too big
+#  - Clean up print statements
+#  - Update docstrings/comments of all functions
+
+# TODO: Next up (later PR?):
 #  - Add two new map parameters: `error_callback` and `raise_on_error`. The first one is a function that is called when
 #    an error occurs. This implies that an error will not be raised, but that the workers will continue their work. The
-#    error is then returned instead of raised (and passed on the callback of course). The second one is a boolean that
-#    determines whether to raise an exception when an error occurs. It is similar to the first one, but instead of
+#    error is then returned instead of raised (and passed on to the callback of course). The second one is a boolean 
+#    that determines whether to raise an exception when an error occurs. It is similar to the first one, but instead of
 #    calling a function, it just returns the error. The default value is `True`, which means that an error will be
 #    raised.
 #  - Unexpected deaths will then also be handled based on the raise_on_error parameter. If False then it will simply
 #    return the error and restart the worker.
-
-# TODO: allow for different inits? and exits? 
-#  - If there are new map paremeters, first run the init (can be done immediately)
-#  - When a worker exits, run all exit functions in order of job id. What to do with the results? The get exit results
-#    function simply returns a list of exist results per job in order of job id. It's up to the user to determine which
-#    one is which. So also return job id when returning exit results
-#  - Whenever a worker restarts, we need to resend all currently active map task params (not the apply ones)
-
-
-
-# TODO: think about exceptions/interrupts and fix code for that
-#  - I.e., what to do when two imap's are running and there's a try/except around the first one while getting results.
-#    That one raises, but the second one should just be able to continue, right? Yes, like the apply jobs etc.
-#    So, whenever an exception occurs, interrupt workers, but don't kill them? Is that safe? Sometimes workers are just
-#    stuck and won't exit until you call terminate. But that's then the way it is. 
-#    In most cases you run just a single map, which then raises, and then the exit is called, which terminates the pool
-#    and the workers. So, that's fine. In case there are other things that are still being run, the stuck worker will
-#    just have to finish it's current task, after which it will get the heads up to terminate.
 
 class WorkerPool:
     """
@@ -211,6 +198,9 @@ class WorkerPool:
         """
         Spawns the workers and starts them so they're ready to start reading from the tasks queue.
         """
+        if self.enable_prints:
+            print(datetime.now().isoformat(), "Pool: Starting workers")
+        
         # Init communication primitives, if not already done
         self._comms.init_comms()
 
@@ -229,6 +219,9 @@ class WorkerPool:
         self._restart_handler_thread.start()
         self._timeout_handler_thread.start()
         self._unexpected_death_handler_thread.start()
+        
+        if self.enable_prints:
+            print(datetime.now().isoformat(), "Pool: Workers started")
 
     def _start_worker(self, worker_id: int) -> None:
         """
@@ -241,7 +234,7 @@ class WorkerPool:
         with DisableKeyboardInterruptSignal():
             # Obtain active map task parameters, so we can send them to the worker
             active_task_params = {job_id: self._task_params[job_id] for job_id in list(self._cache.keys()) 
-                                  if self._task_params[job_id].job_type == JobType.MAP}
+                                  if self._task_params[job_id].type == JobType.MAP}
             if self.enable_prints:
                 print(datetime.now().isoformat(), f"Pool: Starting worker {worker_id} with active job IDs:", active_task_params.keys())
             
@@ -260,7 +253,14 @@ class WorkerPool:
 
         # Pin CPU if desired
         if self.pool_params.cpu_ids:
-            set_cpu_affinity(self._workers[worker_id].pid, self.pool_params.cpu_ids[worker_id])
+            try:
+                set_cpu_affinity(self._workers[worker_id].pid, self.pool_params.cpu_ids[worker_id])
+            except AttributeError as e:
+                if self.enable_prints:
+                    print(datetime.now().isoformat(), f"Pool: Failed to set CPU affinity for worker {worker_id}")
+                raise RuntimeError(
+                    "Failed to set CPU affinity for worker. Threading doesn't support CPU pinning"
+                ) from e
             
     def _restart_worker(self, worker_id: int) -> None:
         """
@@ -951,7 +951,7 @@ class WorkerPool:
 
                     # Terminate if exception has been thrown at this point
                     if imap_iterator.exception_thrown():
-                        self._handle_exception(job_id)
+                        self._handle_exception(imap_iterator)
 
                     # All results are in, let the workers know this job is done
                     self._comms.add_job_done(job_id)
@@ -963,10 +963,6 @@ class WorkerPool:
                     self._job_done_received_event[job_id].wait()
                     if self.enable_prints:
                         print(datetime.now().isoformat(), f"Pool: All workers have received job done for job {job_id}")
-                        
-                    # Add poison pill if keep_alive is False
-                    if not self.pool_params.keep_alive:
-                        self.stop_and_join()
 
                     # Wait for the progress bar to finish, before we clean it up
                     if progress_bar:
@@ -977,7 +973,12 @@ class WorkerPool:
                             print(datetime.now().isoformat(), f"Pool: Progress bar finished for job {job_id}")
 
                 except KeyboardInterrupt:
-                    self._handle_exception(job_id, keyboard_interrupt=True)
+                    self._handle_exception(imap_iterator, keyboard_interrupt=True)
+                    
+                finally:
+                    # Add poison pill if keep_alive is False
+                    if not self.pool_params.keep_alive:
+                        self.stop_and_join()
 
         finally:
             if tqdm_manager_owner:
@@ -1098,11 +1099,11 @@ class WorkerPool:
         self._comms.add_apply_task(result.job_id, self._task_params[result.job_id], args, kwargs)
         return result
 
-    def _handle_exception(self, job_id: int, keyboard_interrupt: bool = False) -> None:
+    def _handle_exception(self, imap_iterator: UnorderedAsyncResultIterator, keyboard_interrupt: bool = False) -> None:
         """
         Handles exceptions thrown by workers and KeyboardInterrupts
         
-        :param job_id: Job ID of the job that threw the exception
+        :param imap_iterator: The iterator that threw the exception
         :param keyboard_interrupt: Whether the exception is a KeyboardInterrupt
         """
         if self.enable_prints:
@@ -1113,7 +1114,7 @@ class WorkerPool:
             exception = KeyboardInterrupt()
             cause = exception
         else:
-            exception = self._cache[job_id].get_exception()
+            exception = imap_iterator.get_exception()
             cause = exception.__cause__
 
         # Pass error to progress bar, if there is one. We are interested in the cause of the exception, as that 
@@ -1121,7 +1122,7 @@ class WorkerPool:
         # TimeoutError thrown in the timeout handler).
         # Note that setting the progress bar exception is needed before setting the terminate pool event because then
         # the progress bar can show a proper error message
-        progress_bar_job_ids = self._progress_bar_handler.keys() if keyboard_interrupt else [job_id]
+        progress_bar_job_ids = self._progress_bar_handler.keys() if keyboard_interrupt else [imap_iterator.job_id]
         if self.enable_prints:
             print(datetime.now().isoformat(), "Pool: Setting progress bar exception for job IDs", progress_bar_job_ids)
         for job_id_ in progress_bar_job_ids:
@@ -1163,25 +1164,9 @@ class WorkerPool:
                 print(datetime.now().isoformat(), "Pool: Adding poison pill from stop_and_join")
             self._comms.add_poison_pill()
 
-            # Wait until all poison pills have been consumed. When a worker's lifetime has been reached just before 
-            # consuming the poison pill, we need to restart them (which will happen in the restart handler)
-            # TODO: this will wait forever if there's another active task after the poison pill
-            #  workers correctly stay alive, but there are no more tasks added on the queue, until the other imap
-            #  continues
-            #  I guess keep_alive needs to be True for this to work? But what do we do when keep_alive=False?? Throw?
-            if self.enable_prints:
-                print(datetime.now().isoformat(), "Pool: Waiting for poison pills to be consumed")
-            t = threading.Thread(target=self._comms.join_control_and_task_queues)
-            t.daemon = True
-            t.start()
-            while not self._comms.should_terminate():
-                t.join(timeout=0.01)
-                if not t.is_alive():
-                    break
-            if self.enable_prints:
-                print(datetime.now().isoformat(), "Pool: Poison pills consumed. Joining workers")
-
             # Join workers
+            if self.enable_prints:
+                print(datetime.now().isoformat(), "Pool: Joining workers")
             for worker_process in self._workers:
                 try:
                     worker_process.join()
@@ -1229,6 +1214,8 @@ class WorkerPool:
             print(datetime.now().isoformat(), "Pool: Terminating")
         
         if not self._workers:
+            if self.enable_prints:
+                print(datetime.now().isoformat(), "Pool: No workers, returning")
             return
 
         # Set exception thrown so workers know to stop fetching new tasks
@@ -1258,25 +1245,24 @@ class WorkerPool:
                 t.start()
                 threads.append(t)
 
-        # Wait until cleanup threads are done
+        # Wait until cleanup threads are done. When using threading a worker can still be None when CPU pinning was
+        # used on worker 0, which throws a RuntimeError
         if self.enable_prints:
             print(datetime.now().isoformat(), "Pool: Waiting for cleanup threads to finish")
         for t in threads:
-            t.join()
+            if t is not None:
+                t.join()
 
         # Stop handler threads. The results handler will remove any active task from the cache
         if self.enable_prints:
             print(datetime.now().isoformat(), "Pool: Stopping handler threads")
         self._stop_handler_threads()
 
-        # Drain and join the queues
-        if self.enable_prints:
-            print(datetime.now().isoformat(), "Pool: Draining and joining queues")  # TODO: this takes quite a while.. see if we can increase speed!
-        # self._worker_comms.drain_queues()  # TODO: is this really necessary? For the tests I have now removing it the speed goes from 53 -> 45 seconds! Leaving it out for now and see if it is needed
-        self._comms.reset()
-
         # Reset workers
         self._workers = []
+        self._task_params.clear()
+        self._cache.clear()
+        self._comms.reset()
         
         if self.enable_prints:
             print(datetime.now().isoformat(), "Pool: Terminated")
@@ -1317,7 +1303,7 @@ class WorkerPool:
             # TODO: we do this as many times in parallel as there are workers.. not ideal it seems. We also already 
             #  have the results handler, no? We could set a timestamp on when the last result was obtained and check
             #  that here. If it's not too long ago, we wait
-            self._comms.drain_results_queue_terminate_worker(dont_wait_event)
+            self._comms.drain_results_queue(dont_wait_event)
             try_count -= 1
             if not dont_wait_event.is_set():
                 dont_wait_event.wait()

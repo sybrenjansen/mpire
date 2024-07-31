@@ -1,5 +1,4 @@
 import collections
-import itertools
 import queue
 import threading
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -263,7 +262,11 @@ class UnorderedAsyncResultIterator:
         """
         Remove the iterator from the cache
         """
-        del self._cache[self.job_id]
+        try:
+            del self._cache[self.job_id]
+        except KeyError:
+            # KeyError can occur when pool.terminate() was called while the iterator was still in use
+            pass
 
 
 class UnorderedAsyncExitResultIterator(UnorderedAsyncResultIterator):

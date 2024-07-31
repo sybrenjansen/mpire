@@ -14,7 +14,7 @@ from mpire.signal import DisableKeyboardInterruptSignal
 from mpire.tqdm_utils import get_tqdm, TqdmManager
 from mpire.utils import format_seconds
 
-# If a user has not installed the dashboard dependencies than the imports below will fail
+# If a user has not installed the dashboard dependencies the imports below will fail
 try:
     from mpire.dashboard.dashboard import DASHBOARD_STARTED_EVENT
     from mpire.dashboard.utils import get_function_details
@@ -71,7 +71,7 @@ class ProgressBarHandler:
         self.dashboard_details_dict = None
         self.start_t = None
         
-        self.enable_prints = False
+        self.enable_prints = not True
 
     def __enter__(self) -> 'ProgressBarHandler':
         """
@@ -151,7 +151,7 @@ class ProgressBarHandler:
                 # Show appropriate message on the progress bar
                 error_str = ("Keyboard interrupt" if self.exception_triggered_by_keyboard_interrupt else 
                              "Exception occurred")
-                progress_bar.set_description(f"{error_str}, terminating workers")
+                progress_bar.set_description(f"{error_str}, stopping job")
 
                 # Wait for exception traceback str to be set so we can send it to the dashboard
                 if self.enable_prints:
@@ -163,11 +163,6 @@ class ProgressBarHandler:
                     print("Pbar: got traceback_str")
                 self._send_dashboard_update(progress_bar, failed=True,
                                             traceback_str=self.exception_traceback_str)
-
-                # Final update of the progress bar
-                if self.enable_prints:
-                    print("Pbar: final refresh")
-                progress_bar.final_refresh(tqdm_position_register.get_highest_progress_bar_position())
                 break
 
             # Check if the total has been updated. It could be that we didn't know the total number of tasks at the
@@ -193,6 +188,11 @@ class ProgressBarHandler:
             # will make the dashboard a lot more responsive
             if progress_bar.n == progress_bar.last_print_n:
                 self._send_dashboard_update(progress_bar)
+                
+        # Final update of the progress bar
+        if self.enable_prints:
+            print("Pbar: final refresh")
+        progress_bar.final_refresh(tqdm_position_register.get_highest_progress_bar_position())
         
         if self.enable_prints:
             print("Pbar: done with loop")

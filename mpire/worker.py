@@ -41,10 +41,6 @@ class RunResult:
     results: Any
     success: bool
     send_results: bool
-    
-    
-# TODO: run with worker_lifespan. This is not working yet! This has to do with the pbar I think! The progress has been
-#       reset somehow. Because of the local? we create again?
 
 
 class AbstractWorker:
@@ -404,9 +400,9 @@ class AbstractWorker:
             if self.enable_prints:
                 print(datetime.now().isoformat(), f"Worker-{self.worker_id} initializing task worker comms for job {job_id} with shm {task_params.task_comms_shm_names[self.worker_id]}")
             
-            # A worker could get restarted while the last job it was processing just finished. This means the shared memory
-            # object has been cleaned up, while we're still trying to connect to it here. If connecting fails, we can 
-            # assume the task has been completed
+            # A worker could get restarted while the last job it was processing just finished. This means the shared 
+            # memory object has been cleaned up, while we're still trying to connect to it here. If connecting fails, 
+            # we can assume the task has been completed
             try:
                 self.task_worker_comms[job_id] = TaskWorkerComms(job_id, self.worker_comms.task_comms_lock,
                                                                  task_params.task_comms_shm_names[self.worker_id])
