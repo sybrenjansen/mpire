@@ -102,7 +102,7 @@ This will work just fine. See the unittest_ documentation for more information.
 Shutting down takes a long time on error
 ----------------------------------------
 
-When you issue a ``KeyboardInterrupt`` or when an error occured in the function that's run in parallel, there are
+When you issue a ``KeyboardInterrupt`` or when an error occurred in the function that's run in parallel, there are
 situations where MPIRE needs a few seconds to gracefully shutdown. This has to do with the fact that in these situations
 the task or results queue can be quite full, still. MPIRE drains these queues until they're completely empty, as to
 properly shutdown and clean up every communication channel.

@@ -124,7 +124,7 @@ Unreleased
 
 *(2023-04-14)*
 
-* Transfered ownership of the project from `Slimmer AI` to `sybrenjansen`
+* Transferred ownership of the project from `Slimmer AI` to `sybrenjansen`
 
 2.7.0
 -----
@@ -312,7 +312,7 @@ Unreleased
 * Workers now have their own task queue, which speeds up tasks with bigger payloads
 * Fixed progress bar showing error information when completed without error
 * Fixed progress bar and worker insights not displaying properly when using threading
-* Progress bar handling improved accross several scenarios
+* Progress bar handling improved across several scenarios
 * Dashboard can now handle progress bars when using ``spawn`` or ``forkserver`` as start method
 * Added closing of ``multiprocessing.JoinableQueue`` objects, to clean up intermediate junk
 * Removed ``numpy`` dependency
@@ -513,7 +513,7 @@ Unreleased
 
 *(2017-10-05)*
 
-* Workers can now be started as normal child processes (non-deamon) such that nested :obj:`mpire.WorkerPool` s are
+* Workers can now be started as normal child processes (non-daemon) such that nested :obj:`mpire.WorkerPool` s are
   possible
 
 0.3.0
