@@ -260,7 +260,7 @@ averaged over 5 runs.
 
 .. image:: images/benchmarks_averaged.png
     :width: 600px
-    :alt: Average normalized bechmark results
+    :alt: Average normalized benchmark results
 
 .. _blog post: https://towardsdatascience.com/mpire-for-python-multiprocessing-is-really-easy-d2ae7999a3e9
 .. _project: https://github.com/sybrenjansen/multiprocessing_benchmarks

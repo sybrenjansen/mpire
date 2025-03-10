@@ -94,7 +94,7 @@ structures:
 .. warning::
 
     Nested pools aren't production ready. Error handling and keyboard interrupts when using nested pools can, on some
-    rare occassions (~1% of the time), still cause deadlocks. Use at your own risk.
+    rare occasions (~1% of the time), still cause deadlocks. Use at your own risk.
 
     When a function is guaranteed to finish successfully, using nested pools is absolutely fine.
 
