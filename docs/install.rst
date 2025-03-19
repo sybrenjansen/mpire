@@ -1,9 +1,9 @@
 Installation
 ============
 
-:ref:`MPIRE <secret>` builds are distributed through PyPi_.
+:ref:`MPIRE <secret>` builds are distributed through PyPI_.
 
-.. _PyPi: https://pypi.org/
+.. _PyPI: https://pypi.org/
 
 MPIRE can be installed through pip:
 

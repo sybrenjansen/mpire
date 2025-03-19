@@ -369,7 +369,7 @@ Unreleased
 
 *(2020-09-03)*
 
-* First public release on Github and PyPi
+* First public release on Github and PyPI
 
 1.1.2
 -----
