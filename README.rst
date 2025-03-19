@@ -1,7 +1,7 @@
 MPIRE (MultiProcessing Is Really Easy)
 ======================================
 
-|Build status| |Docs status| |Pypi status| |Python versions|
+|Build status| |Docs status| |PyPI status| |Python versions|
 
 .. |Build status| image:: https://github.com/sybrenjansen/mpire/workflows/Build/badge.svg?branch=master
     :target: https://github.com/sybrenjansen/mpire/actions/workflows/python-package.yml
@@ -62,7 +62,7 @@ are documented in the Troubleshooting_ chapter.
 Installation
 ------------
 
-Through pip (PyPi):
+Through pip (PyPI):
 
 .. code-block:: bash
 
